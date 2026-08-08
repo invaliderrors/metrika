@@ -64,6 +64,8 @@
 
 **Files:**
 - Create: `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `.nvmrc`, `.python-version`, `.gitignore`, `.editorconfig`
+- Already exists (do not recreate): `mise.toml`
+- Already done (do not redo): the branch `feat/phase-0a-foundations` is checked out
 
 **Interfaces:**
 - Consumes: nothing
@@ -84,14 +86,23 @@ packages:
   - 'packages/*'
 ```
 
-`.nvmrc` — the exact Node 24 patch you installed. Get it with `mise install node@24 && mise use node@24 && node --version` (or the nvm equivalent), then write it without the leading `v`:
+mise is already installed and `mise.toml` already exists at the repo root (created during pre-flight) with `node = "24"` and `python = "3.12"`. Resolved versions on this machine are **Node v24.19.0** and **Python 3.12.13**. Verify with `mise exec -- node --version` before writing the files below.
+
+`.nvmrc` — committed so nvm users and `actions/setup-node@v4`'s `node-version-file` both work:
 ```
-24.10.0
+24.19.0
 ```
 
 `.python-version`:
 ```
-3.12.7
+3.12.13
+```
+
+`mise.toml` already exists; do not recreate it. Confirm it reads:
+```toml
+[tools]
+node = "24"
+python = "3.12"
 ```
 
 `.editorconfig`:
