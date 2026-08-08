@@ -20,3 +20,15 @@ describe('eslint-config typeChecked', () => {
     expect(await lintFixture('clean.ts')).toEqual([]);
   });
 });
+
+describe('contracts boundary', () => {
+  it('forbids node built-ins inside contracts', async () => {
+    const eslint = new ESLint({
+      cwd: import.meta.dirname,
+      overrideConfigFile: 'eslint.boundaries.config.js',
+    });
+    const [result] = await eslint.lintFiles(['fixtures/contracts-forbidden-import.ts']);
+    const rules = (result?.messages ?? []).map((m) => m.ruleId);
+    expect(rules).toContain('no-restricted-imports');
+  });
+});
