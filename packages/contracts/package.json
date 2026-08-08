@@ -1,0 +1,34 @@
+{
+  "name": "@metrika/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./brand": "./src/brand.ts",
+    "./ids": "./src/ids.ts",
+    "./money": "./src/money.ts",
+    "./units": "./src/units.ts",
+    "./result": "./src/result.ts",
+    "./errors": "./src/errors.ts",
+    "./canonical": "./src/canonical.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "lint": "eslint . --max-warnings=0",
+    "test:unit": "vitest run",
+    "emit:json-schema": "tsx scripts/emit-json-schema.ts",
+    "emit:pydantic": "tsx scripts/emit-pydantic.ts"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@metrika/eslint-config": "workspace:*",
+    "@metrika/typescript-config": "workspace:*",
+    "@types/node": "^22.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.0"
+  }
+}
