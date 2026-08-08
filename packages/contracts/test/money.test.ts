@@ -162,8 +162,6 @@ describe('Money', () => {
   });
 
   it('rejects an unlisted currency code', () => {
-    expect(Money.safeParse({ amountMinor: '0', currency: 'GBP', exponent: 0 }).success).toBe(
-      false,
-    );
+    expect(Money.safeParse({ amountMinor: '0', currency: 'GBP', exponent: 0 }).success).toBe(false);
   });
 });
