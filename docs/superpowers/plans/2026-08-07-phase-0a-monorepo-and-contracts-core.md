@@ -184,7 +184,7 @@ Replace `pnpm@9.12.3` with the output of `pnpm --version` after `corepack enable
 ```bash
 corepack enable
 pnpm install
-pnpm add -Dw -E turbo prettier
+pnpm add --workspace-root --save-dev --save-exact turbo prettier
 pnpm exec turbo run typecheck
 ```
 
@@ -367,8 +367,8 @@ Expected: FAIL — the package and its `base.json` do not exist yet.
 pnpm's node_modules is strict: a workspace package can only resolve dependencies it declares itself. Root devDependencies are **not** visible to `pnpm --filter <pkg> run …`, so `typescript` and `vitest` must be added to this package, not only to the root.
 
 ```bash
-pnpm add -Dw -E @types/node
-pnpm --filter @metrika/typescript-config add -DE typescript vitest
+pnpm add --workspace-root --save-dev --save-exact @types/node
+pnpm --filter @metrika/typescript-config add --save-dev --save-exact typescript vitest
 pnpm --filter @metrika/typescript-config test:unit
 ```
 
@@ -664,9 +664,9 @@ export { test } from './test.js';
 - [ ] **Step 4: Install and run the test**
 
 ```bash
-pnpm add -Dw -E eslint
-pnpm --filter @metrika/eslint-config add -E @eslint/js eslint-config-prettier typescript-eslint
-pnpm --filter @metrika/eslint-config add -DE @metrika/typescript-config@workspace:* eslint vitest
+pnpm add --workspace-root --save-dev --save-exact eslint
+pnpm --filter @metrika/eslint-config add --save-exact @eslint/js eslint-config-prettier typescript-eslint
+pnpm --filter @metrika/eslint-config add --save-dev --save-exact @metrika/typescript-config@workspace:* eslint vitest
 pnpm --filter @metrika/eslint-config test:unit
 ```
 
@@ -875,8 +875,8 @@ export default defineConfig({
 - [ ] **Step 4: Install and run the test**
 
 ```bash
-pnpm --filter @metrika/contracts add -E zod
-pnpm --filter @metrika/contracts add -DE @metrika/eslint-config@workspace:* \
+pnpm --filter @metrika/contracts add --save-exact zod
+pnpm --filter @metrika/contracts add --save-dev --save-exact @metrika/eslint-config@workspace:* \
   @metrika/typescript-config@workspace:* @vitest/coverage-v8 eslint typescript vitest
 pnpm --filter @metrika/contracts test:unit
 ```
@@ -1565,7 +1565,7 @@ Expected: PASS, 100% coverage.
 - [ ] **Step 5: Commit**
 
 ```bash
-pnpm --filter @metrika/contracts add -DE fast-check
+pnpm --filter @metrika/contracts add --save-dev --save-exact fast-check
 git add packages/contracts pnpm-lock.yaml
 git commit -m "feat(contracts): add canonical JSON serialisation and sha256 content hashing"
 ```
