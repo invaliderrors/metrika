@@ -469,7 +469,18 @@ git commit -m "chore: add prettier config and format repository"
 **Files:**
 
 - Create: `packages/eslint-config/package.json`, `src/base.js`, `src/type-checked.js`, `src/test.js`, `src/index.js`
+- Create: `.npmrc` (repo root)
 - Test: `packages/eslint-config/test/fixtures/*.ts`, `packages/eslint-config/test/rules.test.ts`
+
+**Also in this task — make the Node engine constraint actually bind.**
+
+`package.json` declares `engines.node: ">=24 <25"`, but pnpm's `engine-strict` defaults to `false`, so a mismatched Node emits a `[WARN] Unsupported engine` line and proceeds. That is not what the Global Constraints intend — a version mismatch must fail loudly rather than silently diverge from CI. Create `.npmrc` at the repo root:
+
+```ini
+engine-strict=true
+```
+
+Verify it actually bites: with mise active (`mise exec -- pnpm install`) the install succeeds on Node 24; running a plain `pnpm install` under the system Node 26 must now **fail** rather than warn. Report both outcomes. This belongs here because Task 4's theme is making the gates actually gate.
 
 **Interfaces:**
 
