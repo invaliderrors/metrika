@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.next/
+.turbo/
+out/
+build/
+coverage/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+*.min.js
+*.min.css
+.git/
+.husky/_/
+apps/workers/.venv/
+apps/workers/**/__pycache__/
+**/*.tsbuildinfo
