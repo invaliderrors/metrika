@@ -98,8 +98,8 @@ later plans. 0.6 (`packages/database`) has no code at all yet — it needs
 Postgres via `docker compose`, which Plan 0A deliberately does not stand up
 (see [Plan 0A](./superpowers/plans/2026-08-07-phase-0a-monorepo-and-contracts-core.md)'s
 deferred-work table) — it lands in Plan 0B along with `apps/`. 0.16's root docs
-(`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) predate this plan and were not
-produced by it; the ADRs it lists are still outstanding.
+(`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) and ADRs 0001–0018 in
+[`docs/adr/`](./adr/) all predate this plan and were not produced by it.
 
 **Contracts.** `Brand<T,K>`, every `*Id`, `Money`, `Millimeters`/`Grams`/`Seconds`/`CubicMillimeters`, `Result<T,E>`, `DomainErrorCode`, `canonicalJson()` + `sha256Canonical()`.
 
