@@ -10,15 +10,15 @@ Initial market: Colombia (`es-CO`, COP). Initial customers: architects and archi
 
 ## Start here
 
-| If you want to… | Read |
-|---|---|
-| Understand the whole system | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
-| Know what to build next | [docs/ROADMAP.md](./docs/ROADMAP.md) |
-| Understand the data model | [docs/DOMAIN_MODEL.md](./docs/DOMAIN_MODEL.md) |
-| Know why a decision was made | [docs/adr/](./docs/adr/) |
-| Get running locally | [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md) |
-| Contribute | [CONTRIBUTING.md](./CONTRIBUTING.md) |
-| Report a vulnerability | [SECURITY.md](./SECURITY.md) |
+| If you want to…              | Read                                                     |
+| ---------------------------- | -------------------------------------------------------- |
+| Understand the whole system  | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)           |
+| Know what to build next      | [docs/ROADMAP.md](./docs/ROADMAP.md)                     |
+| Understand the data model    | [docs/DOMAIN_MODEL.md](./docs/DOMAIN_MODEL.md)           |
+| Know why a decision was made | [docs/adr/](./docs/adr/)                                 |
+| Get running locally          | [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md) |
+| Contribute                   | [CONTRIBUTING.md](./CONTRIBUTING.md)                     |
+| Report a vulnerability       | [SECURITY.md](./SECURITY.md)                             |
 
 Deep dives: [3D pipeline](./docs/3D_PIPELINE.md) · [slicing](./docs/SLICING.md) · [pricing engine](./docs/PRICING_ENGINE.md) · [contracts & API](./docs/CONTRACTS_AND_API.md) · [workflows & events](./docs/WORKFLOWS.md) · [security & threat model](./docs/SECURITY.md) · [observability](./docs/OBSERVABILITY.md) · [testing](./docs/TESTING.md) · [TypeScript & tooling](./docs/TYPESCRIPT_AND_TOOLING.md) · [infrastructure](./docs/INFRASTRUCTURE.md) · [printer integration](./docs/PRINTER_INTEGRATION.md) · [risk register](./docs/RISK_REGISTER.md)
 

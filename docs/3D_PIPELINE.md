@@ -71,21 +71,21 @@ sequenceDiagram
 
 ### Validation gates, in order
 
-| Gate | Limit | Failure code |
-|---|---|---|
-| Extension allowlist | `.stl`, `.obj`, `.3mf` | `UNSUPPORTED_FILE_FORMAT` |
-| Declared size | 1 GB default, per-org configurable | `FILE_TOO_LARGE` |
-| Org storage quota | Configurable per plan | `QUOTA_EXCEEDED` |
-| Actual size (post-upload) | Must match declared ±0 | `CHECKSUM_MISMATCH` |
-| Magic bytes / structural sniff | Must match declared format | `UNSUPPORTED_FILE_FORMAT` |
-| Archive expansion (3MF) | ≤ 500 entries, ≤ 200:1 ratio, ≤ 4 GB total | `MALICIOUS_ARCHIVE` |
-| XML entity expansion (3MF) | `defusedxml`, no DTD, no external entities | `MALICIOUS_ARCHIVE` |
-| Triangle count | 50 M default | `MODEL_TOO_COMPLEX` |
-| Vertex count | 30 M default | `MODEL_TOO_COMPLEX` |
-| Parse wall clock | 300 s (large queue) | `GEOMETRY_ANALYSIS_FAILED` |
-| Parse memory | `RLIMIT_AS` 2 GB (small) / 8 GB (large) | `GEOMETRY_ANALYSIS_FAILED` |
+| Gate                           | Limit                                      | Failure code               |
+| ------------------------------ | ------------------------------------------ | -------------------------- |
+| Extension allowlist            | `.stl`, `.obj`, `.3mf`                     | `UNSUPPORTED_FILE_FORMAT`  |
+| Declared size                  | 1 GB default, per-org configurable         | `FILE_TOO_LARGE`           |
+| Org storage quota              | Configurable per plan                      | `QUOTA_EXCEEDED`           |
+| Actual size (post-upload)      | Must match declared ±0                     | `CHECKSUM_MISMATCH`        |
+| Magic bytes / structural sniff | Must match declared format                 | `UNSUPPORTED_FILE_FORMAT`  |
+| Archive expansion (3MF)        | ≤ 500 entries, ≤ 200:1 ratio, ≤ 4 GB total | `MALICIOUS_ARCHIVE`        |
+| XML entity expansion (3MF)     | `defusedxml`, no DTD, no external entities | `MALICIOUS_ARCHIVE`        |
+| Triangle count                 | 50 M default                               | `MODEL_TOO_COMPLEX`        |
+| Vertex count                   | 30 M default                               | `MODEL_TOO_COMPLEX`        |
+| Parse wall clock               | 300 s (large queue)                        | `GEOMETRY_ANALYSIS_FAILED` |
+| Parse memory                   | `RLIMIT_AS` 2 GB (small) / 8 GB (large)    | `GEOMETRY_ANALYSIS_FAILED` |
 
-**Format detection never trusts the extension.** Binary STL is detected by an 80-byte header plus a triangle count matching `(fileSize - 84) / 50`; ASCII STL by a `solid` prefix *and* a `facet normal` within the first few KB (the `solid` prefix alone is famously unreliable). 3MF is a ZIP with `[Content_Types].xml` and `3D/3dmodel.model`. OBJ is text and is validated by successfully parsing a leading window of `v`/`f` directives.
+**Format detection never trusts the extension.** Binary STL is detected by an 80-byte header plus a triangle count matching `(fileSize - 84) / 50`; ASCII STL by a `solid` prefix _and_ a `facet normal` within the first few KB (the `solid` prefix alone is famously unreliable). 3MF is a ZIP with `[Content_Types].xml` and `3D/3dmodel.model`. OBJ is text and is validated by successfully parsing a leading window of `v`/`f` directives.
 
 **Triangle count is estimated before parsing** where possible — for binary STL it is `(fileSize - 84) / 50` exactly — so an oversized model is rejected without ever allocating it. This is a resource-exhaustion defence, not a nicety.
 
@@ -123,32 +123,32 @@ Runs in the geometry worker. **Exact and heuristic results are structurally sepa
 
 ### Exact — computed, not estimated
 
-| Metric | Method | Notes |
-|---|---|---|
-| Triangle / vertex count | direct | — |
-| Connected components | `trimesh.graph.connected_components` | Face adjacency |
-| Watertight | `mesh.is_watertight` | Every edge shared by exactly two faces |
-| Manifold | edge-manifold + vertex-manifold check | Stricter than watertight; reported separately |
-| Consistent winding | `mesh.is_winding_consistent` | — |
-| Volume | signed tetrahedron sum | **Meaningless if not watertight** — reported as `null`, never as a number, when the mesh is open |
-| Surface area | triangle area sum | Valid regardless of watertightness |
-| AABB | direct | Post unit-normalisation, in mm |
-| Oriented bounding box | `trimesh.bounds.oriented_bounds` | Better for fit-check on rotated models |
-| Centre of mass | volume-weighted centroid | Requires watertight; else `null` |
-| Degenerate / duplicate faces | zero-area within epsilon; identical index triples | Counted and sampled |
-| Boundary / non-manifold edges | edge-incidence counts | Sampled face indices stored for viewer highlighting |
+| Metric                        | Method                                            | Notes                                                                                            |
+| ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Triangle / vertex count       | direct                                            | —                                                                                                |
+| Connected components          | `trimesh.graph.connected_components`              | Face adjacency                                                                                   |
+| Watertight                    | `mesh.is_watertight`                              | Every edge shared by exactly two faces                                                           |
+| Manifold                      | edge-manifold + vertex-manifold check             | Stricter than watertight; reported separately                                                    |
+| Consistent winding            | `mesh.is_winding_consistent`                      | —                                                                                                |
+| Volume                        | signed tetrahedron sum                            | **Meaningless if not watertight** — reported as `null`, never as a number, when the mesh is open |
+| Surface area                  | triangle area sum                                 | Valid regardless of watertightness                                                               |
+| AABB                          | direct                                            | Post unit-normalisation, in mm                                                                   |
+| Oriented bounding box         | `trimesh.bounds.oriented_bounds`                  | Better for fit-check on rotated models                                                           |
+| Centre of mass                | volume-weighted centroid                          | Requires watertight; else `null`                                                                 |
+| Degenerate / duplicate faces  | zero-area within epsilon; identical index triples | Counted and sampled                                                                              |
+| Boundary / non-manifold edges | edge-incidence counts                             | Sampled face indices stored for viewer highlighting                                              |
 
 The volume rule is worth stating explicitly because it is a common source of silently wrong numbers: **a non-watertight mesh has no defined volume.** Returning a signed-sum "volume" for an open mesh produces a plausible-looking number that can be wildly wrong, and if it ever reached the pricing engine it would produce a wrong price. It is `null`, and `null` blocks the paths that need it.
 
 ### Heuristic — labelled, with confidence
 
-| Heuristic | Method | Confidence | Why it is hard |
-|---|---|---|---|
-| Minimum wall thickness | ray-cast sampling from surface points along inverted normals | MEDIUM | True minimum requires medial-axis computation; sampling can miss a thin region between samples |
-| Overhang area | face normal vs build direction, threshold 45° | HIGH | Genuinely simple given a build direction — but the build direction depends on orientation |
-| Unsupported regions | overhang faces with no material beneath along −Z | MEDIUM | Approximates what the slicer will actually do |
-| Fragile regions | thin-wall clusters weighted by unsupported span | LOW | Materially dependent on material and print settings |
-| Printability score | weighted composite | LOW | A convenience summary; never the basis of a rejection |
+| Heuristic              | Method                                                       | Confidence | Why it is hard                                                                                 |
+| ---------------------- | ------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------- |
+| Minimum wall thickness | ray-cast sampling from surface points along inverted normals | MEDIUM     | True minimum requires medial-axis computation; sampling can miss a thin region between samples |
+| Overhang area          | face normal vs build direction, threshold 45°                | HIGH       | Genuinely simple given a build direction — but the build direction depends on orientation      |
+| Unsupported regions    | overhang faces with no material beneath along −Z             | MEDIUM     | Approximates what the slicer will actually do                                                  |
+| Fragile regions        | thin-wall clusters weighted by unsupported span              | LOW        | Materially dependent on material and print settings                                            |
+| Printability score     | weighted composite                                           | LOW        | A convenience summary; never the basis of a rejection                                          |
 
 **Open architectural decision:** the wall-thickness algorithm (ray sampling vs. medial-axis vs. voxel) is unresolved and resolved at Phase 3 by measuring accuracy and runtime against the fixture set. Whichever wins ships labelled MEDIUM confidence with its sample count exposed.
 
@@ -162,23 +162,23 @@ Two tiers, with a hard line between them.
 
 **Conservative — automatic, always applied, always logged:**
 
-| Operation | Effect | Why it is safe |
-|---|---|---|
-| `WELD_VERTICES` | merge vertices within 1e-6 × bbox diagonal | Below any manufacturable resolution |
-| `REMOVE_DEGENERATE_FACES` | drop zero-area triangles | They contribute nothing and break downstream algorithms |
-| `REMOVE_DUPLICATE_FACES` | drop identical index triples | Pure noise |
-| `FIX_WINDING` | make face winding consistent | Does not move a single vertex |
-| `RECOMPUTE_NORMALS` | regenerate from winding | Does not move a single vertex |
+| Operation                 | Effect                                     | Why it is safe                                          |
+| ------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| `WELD_VERTICES`           | merge vertices within 1e-6 × bbox diagonal | Below any manufacturable resolution                     |
+| `REMOVE_DEGENERATE_FACES` | drop zero-area triangles                   | They contribute nothing and break downstream algorithms |
+| `REMOVE_DUPLICATE_FACES`  | drop identical index triples               | Pure noise                                              |
+| `FIX_WINDING`             | make face winding consistent               | Does not move a single vertex                           |
+| `RECOMPUTE_NORMALS`       | regenerate from winding                    | Does not move a single vertex                           |
 
 None of these change the shape. Each is recorded in `RepairLog` with before/after metrics and the `repairAlgorithmVersion`.
 
 **Destructive — requires explicit customer approval:**
 
-| Operation | Effect |
-|---|---|
-| `FILL_HOLES` | close boundary loops above a size threshold |
-| `MANIFOLD_RECONSTRUCT` | Manifold3D reconstruction — can substantially alter geometry |
-| `REMOVE_SMALL_COMPONENTS` | drop disconnected fragments below a volume threshold |
+| Operation                 | Effect                                                       |
+| ------------------------- | ------------------------------------------------------------ |
+| `FILL_HOLES`              | close boundary loops above a size threshold                  |
+| `MANIFOLD_RECONSTRUCT`    | Manifold3D reconstruction — can substantially alter geometry |
+| `REMOVE_SMALL_COMPONENTS` | drop disconnected fragments below a volume threshold         |
 
 The workflow enters `AWAITING_REPAIR_APPROVAL` and waits on an `approveDestructiveRepair` signal. The UI shows before/after previews side by side, with the affected regions highlighted and the changed volume stated numerically. `RepairLog.approvedByUserId` is `NOT NULL` for these operations, enforced by a check constraint.
 
@@ -201,14 +201,14 @@ repaired mesh
 
 **Why glTF/GLB rather than serving the STL:**
 
-| | Binary STL | GLB + Meshopt |
-|---|---|---|
-| Bytes per triangle | ~50, no vertex reuse | ~6–12 with indexed vertices and compression |
-| Indexed geometry | No — every triangle repeats its vertices | Yes |
-| Normals | Per-face only; loses smooth shading | Per-vertex |
-| Parse cost | Must de-duplicate vertices client-side | Direct to GPU buffers |
-| Multiple objects / materials | No | Yes — needed for component selection |
-| LOD / streaming | No | Yes |
+|                              | Binary STL                               | GLB + Meshopt                               |
+| ---------------------------- | ---------------------------------------- | ------------------------------------------- |
+| Bytes per triangle           | ~50, no vertex reuse                     | ~6–12 with indexed vertices and compression |
+| Indexed geometry             | No — every triangle repeats its vertices | Yes                                         |
+| Normals                      | Per-face only; loses smooth shading      | Per-vertex                                  |
+| Parse cost                   | Must de-duplicate vertices client-side   | Direct to GPU buffers                       |
+| Multiple objects / materials | No                                       | Yes — needed for component selection        |
+| LOD / streaming              | No                                       | Yes                                         |
 
 A 5 M-triangle STL is ~250 MB. The same geometry decimated to 300 k triangles and Meshopt-compressed is typically 2–5 MB. That is the difference between a viewer that works on a Colombian office connection and one that does not.
 
@@ -267,33 +267,35 @@ The rule: **the viewer scene is glTF-native Y-up. Exactly one module converts pr
 
 ```ts
 // features/model-viewer/lib/coordinates.ts — the only file allowed to define these
-export const MM_TO_SCENE = 0.01;                      // 1 scene unit = 100 mm
+export const MM_TO_SCENE = 0.01; // 1 scene unit = 100 mm
 export const PRINTER_TO_SCENE = new Matrix4().makeRotationX(-Math.PI / 2);
-export function printerVecToScene(v: Vec3Mm): Vector3 { /* ... */ }
+export function printerVecToScene(v: Vec3Mm): Vector3 {
+  /* ... */
+}
 ```
 
 Build volumes, orientations and dimension annotations come from the domain in printer space and pass through this module. A lint rule forbids `makeRotationX` and raw `rotation.` assignments elsewhere in the feature.
 
 ### Capabilities
 
-| Capability | Implementation |
-|---|---|
-| Orbit / zoom / pan | `OrbitControls` (drei), damped, with min/max distance bounded by model size |
-| Perspective ↔ orthographic | Two cameras, shared target; orthographic is what architects expect for elevations |
-| Grid + mm scale | `Grid` (drei) with major/minor divisions at 10 mm / 100 mm, labelled |
-| Model centring | Translate by the negated AABB centre; sit the model on the plate (`minY = 0`) |
-| Bounding box | `Box3Helper` toggled from the store |
-| Dimensions | Three `<Html>` labels (drei) at bbox edge midpoints, showing mm and the real-world equivalent at the current scale |
-| Build plate | Printer build volume from `PrinterProfileVersion`, rendered as a translucent box with a printed footprint outline |
-| Fit-to-view | Compute distance from bbox radius and camera FOV; animate with damping |
-| Camera reset | Named presets: iso, front, top, right |
-| Overhang overlay | Custom `ShaderMaterial` colouring faces by `dot(normal, buildDir)` against a configurable threshold |
-| Problematic faces | Second `Mesh` sharing the buffer geometry with an index subset built from `GeometryIssue.detail.faceIndices`, rendered with polygon offset |
-| Wireframe | Material flag |
-| Transparency | Material opacity, with `depthWrite: false` and back-to-front sort |
-| Cross-section | `renderer.localClippingEnabled` + a draggable `Plane`; a capped cross-section (stencil) is V2 |
-| Component selection | Raycast against child meshes when the GLB has multiple primitives |
-| Layer preview | **V2** — requires parsing G-code into a line geometry; deferred deliberately |
+| Capability                 | Implementation                                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Orbit / zoom / pan         | `OrbitControls` (drei), damped, with min/max distance bounded by model size                                                                |
+| Perspective ↔ orthographic | Two cameras, shared target; orthographic is what architects expect for elevations                                                          |
+| Grid + mm scale            | `Grid` (drei) with major/minor divisions at 10 mm / 100 mm, labelled                                                                       |
+| Model centring             | Translate by the negated AABB centre; sit the model on the plate (`minY = 0`)                                                              |
+| Bounding box               | `Box3Helper` toggled from the store                                                                                                        |
+| Dimensions                 | Three `<Html>` labels (drei) at bbox edge midpoints, showing mm and the real-world equivalent at the current scale                         |
+| Build plate                | Printer build volume from `PrinterProfileVersion`, rendered as a translucent box with a printed footprint outline                          |
+| Fit-to-view                | Compute distance from bbox radius and camera FOV; animate with damping                                                                     |
+| Camera reset               | Named presets: iso, front, top, right                                                                                                      |
+| Overhang overlay           | Custom `ShaderMaterial` colouring faces by `dot(normal, buildDir)` against a configurable threshold                                        |
+| Problematic faces          | Second `Mesh` sharing the buffer geometry with an index subset built from `GeometryIssue.detail.faceIndices`, rendered with polygon offset |
+| Wireframe                  | Material flag                                                                                                                              |
+| Transparency               | Material opacity, with `depthWrite: false` and back-to-front sort                                                                          |
+| Cross-section              | `renderer.localClippingEnabled` + a draggable `Plane`; a capped cross-section (stencil) is V2                                              |
+| Component selection        | Raycast against child meshes when the GLB has multiple primitives                                                                          |
+| Layer preview              | **V2** — requires parsing G-code into a line geometry; deferred deliberately                                                               |
 
 ### Loading, errors and large models
 

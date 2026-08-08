@@ -33,34 +33,37 @@ import { initContract } from '@ts-rest/core';
 
 const c = initContract();
 
-export const quotesContract = c.router({
-  create: {
-    method: 'POST',
-    path: '/quotes',
-    body: CreateQuoteRequest,
-    responses: { 202: QuoteResponse, 400: ApiErrorResponse, 409: ApiErrorResponse },
-    summary: 'Create a quote for a configured model version',
+export const quotesContract = c.router(
+  {
+    create: {
+      method: 'POST',
+      path: '/quotes',
+      body: CreateQuoteRequest,
+      responses: { 202: QuoteResponse, 400: ApiErrorResponse, 409: ApiErrorResponse },
+      summary: 'Create a quote for a configured model version',
+    },
+    get: {
+      method: 'GET',
+      path: '/quotes/:quoteId',
+      pathParams: z.object({ quoteId: QuoteId }),
+      responses: { 200: QuoteResponse, 404: ApiErrorResponse },
+    },
+    accept: {
+      method: 'POST',
+      path: '/quotes/:quoteId/accept',
+      pathParams: z.object({ quoteId: QuoteId }),
+      body: AcceptQuoteRequest,
+      responses: { 200: OrderResponse, 409: ApiErrorResponse, 410: ApiErrorResponse },
+    },
+    list: {
+      method: 'GET',
+      path: '/quotes',
+      query: CursorPaginationQuery.merge(QuoteFilterQuery),
+      responses: { 200: paginated(QuoteSummary) },
+    },
   },
-  get: {
-    method: 'GET',
-    path: '/quotes/:quoteId',
-    pathParams: z.object({ quoteId: QuoteId }),
-    responses: { 200: QuoteResponse, 404: ApiErrorResponse },
-  },
-  accept: {
-    method: 'POST',
-    path: '/quotes/:quoteId/accept',
-    pathParams: z.object({ quoteId: QuoteId }),
-    body: AcceptQuoteRequest,
-    responses: { 200: OrderResponse, 409: ApiErrorResponse, 410: ApiErrorResponse },
-  },
-  list: {
-    method: 'GET',
-    path: '/quotes',
-    query: CursorPaginationQuery.merge(QuoteFilterQuery),
-    responses: { 200: paginated(QuoteSummary) },
-  },
-}, { pathPrefix: '/api/v1' });
+  { pathPrefix: '/api/v1' },
+);
 ```
 
 The NestJS controller is type-checked against this contract — a response missing a field does not compile. The client is generated from the same object. OpenAPI is emitted from it.
@@ -142,7 +145,7 @@ The cursor is an opaque base64 of `(sortValue, id)`, matching the `(organization
 export const ApiErrorResponse = z.object({
   error: z.object({
     code: DomainErrorCode,
-    message: z.string(),               // localised, safe to display
+    message: z.string(), // localised, safe to display
     details: z.record(z.unknown()).optional(),
     requestId: z.string(),
     retryable: z.boolean(),
@@ -150,19 +153,19 @@ export const ApiErrorResponse = z.object({
 });
 ```
 
-| Code | HTTP |
-|---|---|
-| `VALIDATION_FAILED`, `INVALID_PRINT_CONFIGURATION`, `UNSUPPORTED_FILE_FORMAT` | 400 |
-| `UNAUTHENTICATED` | 401 |
-| `INSUFFICIENT_PERMISSIONS` | 403 |
-| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND` | 404 |
-| `INVALID_STATE_TRANSITION`, `QUOTE_SUPERSEDED`, `IDEMPOTENCY_KEY_REUSED` | 409 |
-| `QUOTE_EXPIRED` | 410 |
-| `FILE_TOO_LARGE`, `MODEL_TOO_COMPLEX` | 413 |
-| `UNITS_NOT_CONFIRMED`, `MODEL_NOT_READY`, `DOES_NOT_FIT_BUILD_VOLUME`, `MODEL_NOT_PRINTABLE` | 422 |
-| `RATE_LIMITED`, `QUOTA_EXCEEDED` | 429 |
-| `GEOMETRY_ANALYSIS_FAILED`, `SLICING_FAILED`, `PAYMENT_VERIFICATION_FAILED` | 502 |
-| `INTERNAL_ERROR` | 500 |
+| Code                                                                                         | HTTP |
+| -------------------------------------------------------------------------------------------- | ---- |
+| `VALIDATION_FAILED`, `INVALID_PRINT_CONFIGURATION`, `UNSUPPORTED_FILE_FORMAT`                | 400  |
+| `UNAUTHENTICATED`                                                                            | 401  |
+| `INSUFFICIENT_PERMISSIONS`                                                                   | 403  |
+| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND`                                                         | 404  |
+| `INVALID_STATE_TRANSITION`, `QUOTE_SUPERSEDED`, `IDEMPOTENCY_KEY_REUSED`                     | 409  |
+| `QUOTE_EXPIRED`                                                                              | 410  |
+| `FILE_TOO_LARGE`, `MODEL_TOO_COMPLEX`                                                        | 413  |
+| `UNITS_NOT_CONFIRMED`, `MODEL_NOT_READY`, `DOES_NOT_FIT_BUILD_VOLUME`, `MODEL_NOT_PRINTABLE` | 422  |
+| `RATE_LIMITED`, `QUOTA_EXCEEDED`                                                             | 429  |
+| `GEOMETRY_ANALYSIS_FAILED`, `SLICING_FAILED`, `PAYMENT_VERIFICATION_FAILED`                  | 502  |
+| `INTERNAL_ERROR`                                                                             | 500  |
 
 **A known domain failure never returns 500.** A generic 500 for a condition the domain understands is a bug — it tells the client nothing and hides a real state from monitoring.
 
@@ -170,12 +173,12 @@ Stack traces never cross the boundary. Unexpected errors log at `error` with a S
 
 ### Headers
 
-| Header | Direction | Purpose |
-|---|---|---|
-| `Authorization: Bearer` | in | Clerk JWT |
-| `X-Request-Id` | both | Client may supply; otherwise generated. Echoed on every response including errors |
-| `Idempotency-Key` | in | Required on `POST /quotes/:id/accept` and payment intent creation |
-| `X-Metrika-Org-Id` | in | A *claim*, always verified against membership. Never trusted |
+| Header                  | Direction | Purpose                                                                           |
+| ----------------------- | --------- | --------------------------------------------------------------------------------- |
+| `Authorization: Bearer` | in        | Clerk JWT                                                                         |
+| `X-Request-Id`          | both      | Client may supply; otherwise generated. Echoed on every response including errors |
+| `Idempotency-Key`       | in        | Required on `POST /quotes/:id/accept` and payment intent creation                 |
+| `X-Metrika-Org-Id`      | in        | A _claim_, always verified against membership. Never trusted                      |
 
 ---
 
@@ -190,7 +193,7 @@ export interface ClientConfig {
   readonly getAccessToken: () => Promise<string | null>;
   readonly onUnauthenticated?: () => void;
   readonly requestIdFactory?: () => string;
-  readonly retry?: RetryPolicy;    // idempotent methods only, exponential backoff + jitter
+  readonly retry?: RetryPolicy; // idempotent methods only, exponential backoff + jitter
 }
 ```
 

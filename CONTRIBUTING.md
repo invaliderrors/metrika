@@ -53,16 +53,16 @@ A change is ready when **all** of these hold:
 
 These are enforced mechanically. If you find yourself fighting one, the design is probably wrong, not the rule.
 
-| Rule | Enforcement |
-|---|---|
-| No `any`; parse external data with Zod | `no-explicit-any` + `no-unsafe-*` as errors |
-| No floating-point money | `bigint` minor units; lint rule on Prisma field names |
-| No `process.env` outside `config/env.ts` | `no-restricted-properties` |
-| No Prisma outside `infrastructure/persistence` | `no-restricted-imports` zone |
-| No `Date`/`Math`/`crypto`/IO inside `workflows/**` | dedicated ESLint profile |
-| No Prisma entity as an API response | response types come from `packages/contracts` |
-| No state field written outside `transition()` | lint rule on Prisma `update` |
-| No unversioned pricing or manufacturing profile | schema design; publish flow |
+| Rule                                               | Enforcement                                           |
+| -------------------------------------------------- | ----------------------------------------------------- |
+| No `any`; parse external data with Zod             | `no-explicit-any` + `no-unsafe-*` as errors           |
+| No floating-point money                            | `bigint` minor units; lint rule on Prisma field names |
+| No `process.env` outside `config/env.ts`           | `no-restricted-properties`                            |
+| No Prisma outside `infrastructure/persistence`     | `no-restricted-imports` zone                          |
+| No `Date`/`Math`/`crypto`/IO inside `workflows/**` | dedicated ESLint profile                              |
+| No Prisma entity as an API response                | response types come from `packages/contracts`         |
+| No state field written outside `transition()`      | lint rule on Prisma `update`                          |
+| No unversioned pricing or manufacturing profile    | schema design; publish flow                           |
 
 ## Suppressions
 

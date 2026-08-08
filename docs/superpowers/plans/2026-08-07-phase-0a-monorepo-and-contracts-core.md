@@ -25,49 +25,51 @@
 
 **Deferred out of this plan, deliberately** — each maps to a ROADMAP Phase 0 deliverable that lands in a later plan:
 
-| Deferred | Why | Lands in |
-|---|---|---|
-| ts-rest spike (0.15) | The primitives here are plain Zod and unaffected by the outcome. The spike belongs where API contracts are actually built | 0B |
-| `packages/database` (0.6) | Needs Postgres running, which needs docker compose | 0B |
-| `ruff` / `mypy` config (0.4) | Nothing Python exists yet | 0B |
-| App skeletons (0.7–0.9), docker compose (0.10), Testcontainers (0.13) | — | 0B |
-| OpenTelemetry + correlation (0.11) | Needs all three runtimes to exist before propagation can be proven | 0C |
-| Terraform `shared` (0.14) | Independent of all application code | 0D |
-| Tailwind Prettier plugin | `apps/web` does not exist; adding it now fails to resolve | 0B |
+| Deferred                                                              | Why                                                                                                                       | Lands in |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
+| ts-rest spike (0.15)                                                  | The primitives here are plain Zod and unaffected by the outcome. The spike belongs where API contracts are actually built | 0B       |
+| `packages/database` (0.6)                                             | Needs Postgres running, which needs docker compose                                                                        | 0B       |
+| `ruff` / `mypy` config (0.4)                                          | Nothing Python exists yet                                                                                                 | 0B       |
+| App skeletons (0.7–0.9), docker compose (0.10), Testcontainers (0.13) | —                                                                                                                         | 0B       |
+| OpenTelemetry + correlation (0.11)                                    | Needs all three runtimes to exist before propagation can be proven                                                        | 0C       |
+| Terraform `shared` (0.14)                                             | Independent of all application code                                                                                       | 0D       |
+| Tailwind Prettier plugin                                              | `apps/web` does not exist; adding it now fails to resolve                                                                 | 0B       |
 
 ---
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `pnpm-workspace.yaml`, `package.json`, `turbo.json` | Workspace membership, root scripts, task graph |
-| `.nvmrc`, `.python-version`, `.gitignore`, `.editorconfig` | Toolchain and editor pinning |
-| `packages/typescript-config/{base,node,react-library}.json` | Compiler flags — one source of truth |
-| `packages/typescript-config/test/` | Compile fixtures proving each strict flag actually fires |
-| `prettier.config.js` | Formatting — the only formatter |
-| `packages/eslint-config/src/{base,type-checked,boundaries,test}.js` | Composable lint profiles |
-| `packages/eslint-config/test/` | Lint fixtures proving each rule fires |
-| `packages/contracts/src/brand.ts` | The `brandedUuid` helper — one definition |
-| `packages/contracts/src/ids.ts` | Every entity ID |
-| `packages/contracts/src/money.ts` | `Money`, currency registry, formatting-safe shape |
-| `packages/contracts/src/units.ts` | `Millimeters`, `CubicMillimeters`, `Grams`, `Seconds` |
-| `packages/contracts/src/result.ts` | `Result`, `ok`, `err`, `assertNever` |
-| `packages/contracts/src/errors.ts` | `DomainErrorCode` closed union |
-| `packages/contracts/src/hashing.ts` | `canonicalJson`, `sha256Canonical` |
-| `packages/contracts/src/index.ts` | Public barrel — the package's entire API surface |
-| `.github/workflows/ci.yml` | The gate |
+| File                                                                | Responsibility                                           |
+| ------------------------------------------------------------------- | -------------------------------------------------------- |
+| `pnpm-workspace.yaml`, `package.json`, `turbo.json`                 | Workspace membership, root scripts, task graph           |
+| `.nvmrc`, `.python-version`, `.gitignore`, `.editorconfig`          | Toolchain and editor pinning                             |
+| `packages/typescript-config/{base,node,react-library}.json`         | Compiler flags — one source of truth                     |
+| `packages/typescript-config/test/`                                  | Compile fixtures proving each strict flag actually fires |
+| `prettier.config.js`                                                | Formatting — the only formatter                          |
+| `packages/eslint-config/src/{base,type-checked,boundaries,test}.js` | Composable lint profiles                                 |
+| `packages/eslint-config/test/`                                      | Lint fixtures proving each rule fires                    |
+| `packages/contracts/src/brand.ts`                                   | The `brandedUuid` helper — one definition                |
+| `packages/contracts/src/ids.ts`                                     | Every entity ID                                          |
+| `packages/contracts/src/money.ts`                                   | `Money`, currency registry, formatting-safe shape        |
+| `packages/contracts/src/units.ts`                                   | `Millimeters`, `CubicMillimeters`, `Grams`, `Seconds`    |
+| `packages/contracts/src/result.ts`                                  | `Result`, `ok`, `err`, `assertNever`                     |
+| `packages/contracts/src/errors.ts`                                  | `DomainErrorCode` closed union                           |
+| `packages/contracts/src/hashing.ts`                                 | `canonicalJson`, `sha256Canonical`                       |
+| `packages/contracts/src/index.ts`                                   | Public barrel — the package's entire API surface         |
+| `.github/workflows/ci.yml`                                          | The gate                                                 |
 
 ---
 
 ### Task 1: Repository skeleton
 
 **Files:**
+
 - Create: `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `.nvmrc`, `.python-version`, `.gitignore`, `.editorconfig`
 - Already exists (do not recreate): `mise.toml`
 - Already done (do not redo): the branch `feat/phase-0a-foundations` is checked out
 
 **Interfaces:**
+
 - Consumes: nothing
 - Produces: workspace globs `apps/*` and `packages/*`; root scripts `lint`, `typecheck`, `test:unit`, `format`, `format:check`, `verify`
 
@@ -80,6 +82,7 @@ git switch -c feat/phase-0a-foundations
 - [ ] **Step 2: Write the workspace files**
 
 `pnpm-workspace.yaml`:
+
 ```yaml
 packages:
   - 'apps/*'
@@ -89,16 +92,19 @@ packages:
 mise is already installed and `mise.toml` already exists at the repo root (created during pre-flight) with `node = "24"` and `python = "3.12"`. Resolved versions on this machine are **Node v24.19.0** and **Python 3.12.13**. Verify with `mise exec -- node --version` before writing the files below.
 
 `.nvmrc` — committed so nvm users and `actions/setup-node@v4`'s `node-version-file` both work:
+
 ```
 24.19.0
 ```
 
 `.python-version`:
+
 ```
 3.12.13
 ```
 
 `mise.toml` already exists; do not recreate it. Confirm it reads:
+
 ```toml
 [tools]
 node = "24"
@@ -106,6 +112,7 @@ python = "3.12"
 ```
 
 `.editorconfig`:
+
 ```ini
 root = true
 
@@ -122,6 +129,7 @@ trim_trailing_whitespace = false
 ```
 
 `.gitignore`:
+
 ```gitignore
 node_modules/
 dist/
@@ -202,10 +210,12 @@ git commit -m "chore: initialise pnpm workspace and turborepo pipeline"
 ### Task 2: `packages/typescript-config`
 
 **Files:**
+
 - Create: `packages/typescript-config/package.json`, `base.json`, `node.json`, `react-library.json`
 - Test: `packages/typescript-config/test/fixtures/*.ts`, `packages/typescript-config/test/flags.test.ts`, `packages/typescript-config/test/tsconfig.fixtures.json`
 
 **Interfaces:**
+
 - Consumes: Task 1 workspace
 - Produces: `@metrika/typescript-config/base.json` (extended by every package), `/node.json`, `/react-library.json`
 
@@ -214,6 +224,7 @@ git commit -m "chore: initialise pnpm workspace and turborepo pipeline"
 The test proves each strict flag actually rejects code. Create three fixtures that must fail to compile.
 
 `packages/typescript-config/test/fixtures/unchecked-index.ts`:
+
 ```ts
 export function first(items: readonly string[]): string {
   const value = items[0];
@@ -222,12 +233,16 @@ export function first(items: readonly string[]): string {
 ```
 
 `packages/typescript-config/test/fixtures/exact-optional.ts`:
+
 ```ts
-interface Update { readonly name?: string }
+interface Update {
+  readonly name?: string;
+}
 export const update: Update = { name: undefined }; // exactOptionalPropertyTypes
 ```
 
 `packages/typescript-config/test/fixtures/implicit-returns.ts`:
+
 ```ts
 export function classify(n: number): string {
   if (n > 0) return 'positive';
@@ -236,6 +251,7 @@ export function classify(n: number): string {
 ```
 
 `packages/typescript-config/test/tsconfig.fixtures.json`:
+
 ```json
 {
   "extends": "../base.json",
@@ -252,6 +268,7 @@ export function classify(n: number): string {
 `composite` must be switched off here: `tsc` rejects `--noEmit` together with `composite: true` ("Option 'noEmit' cannot be specified with option 'composite'"), and these fixtures are only ever type-checked, never built. The strict flags under test are inherited from `base.json` unchanged, which is the point.
 
 `packages/typescript-config/test/flags.test.ts`:
+
 ```ts
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -290,6 +307,7 @@ Expected: FAIL — the package and its `base.json` do not exist yet.
 - [ ] **Step 3: Write the configs**
 
 `packages/typescript-config/base.json`:
+
 ```json
 {
   "$schema": "https://json.schemastore.org/tsconfig",
@@ -329,6 +347,7 @@ Expected: FAIL — the package and its `base.json` do not exist yet.
 ```
 
 `packages/typescript-config/node.json`:
+
 ```json
 {
   "extends": "./base.json",
@@ -337,6 +356,7 @@ Expected: FAIL — the package and its `base.json` do not exist yet.
 ```
 
 `packages/typescript-config/react-library.json`:
+
 ```json
 {
   "extends": "./base.json",
@@ -350,6 +370,7 @@ Expected: FAIL — the package and its `base.json` do not exist yet.
 ```
 
 `packages/typescript-config/package.json`:
+
 ```json
 {
   "name": "@metrika/typescript-config",
@@ -388,15 +409,18 @@ git commit -m "feat(typescript-config): add strict base tsconfig with flag fixtu
 ### Task 3: Prettier
 
 **Files:**
+
 - Create: `prettier.config.js`, `.prettierignore`
 
 **Interfaces:**
+
 - Consumes: Task 1
 - Produces: deterministic formatting for `pnpm format` / `format:check`
 
 - [ ] **Step 1: Write the config**
 
 `prettier.config.js`:
+
 ```js
 /** @type {import('prettier').Config} */
 export default {
@@ -410,6 +434,7 @@ export default {
 ```
 
 `.prettierignore`:
+
 ```
 node_modules/
 dist/
@@ -442,10 +467,12 @@ git commit -m "chore: add prettier config and format repository"
 ### Task 4: `packages/eslint-config`
 
 **Files:**
+
 - Create: `packages/eslint-config/package.json`, `src/base.js`, `src/type-checked.js`, `src/test.js`, `src/index.js`
 - Test: `packages/eslint-config/test/fixtures/*.ts`, `packages/eslint-config/test/rules.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 2
 - Produces: named exports `base`, `typeChecked`, `test` from `@metrika/eslint-config`; each is a flat-config array
 
@@ -454,6 +481,7 @@ git commit -m "chore: add prettier config and format repository"
 Fixtures that MUST produce errors.
 
 `packages/eslint-config/test/fixtures/explicit-any.ts`:
+
 ```ts
 export function parse(input: any): string {
   return String(input);
@@ -461,6 +489,7 @@ export function parse(input: any): string {
 ```
 
 `packages/eslint-config/test/fixtures/floating-promise.ts`:
+
 ```ts
 async function work(): Promise<void> {}
 export function run(): void {
@@ -469,6 +498,7 @@ export function run(): void {
 ```
 
 `packages/eslint-config/test/fixtures/non-exhaustive-switch.ts`:
+
 ```ts
 type Shape = { kind: 'circle' } | { kind: 'square' };
 export function area(shape: Shape): number {
@@ -483,6 +513,7 @@ export function area(shape: Shape): number {
 A fixture that must produce NO errors, so the config is not merely "everything fails":
 
 `packages/eslint-config/test/fixtures/clean.ts`:
+
 ```ts
 export function greet(name: string): string {
   return `hola ${name}`;
@@ -490,6 +521,7 @@ export function greet(name: string): string {
 ```
 
 `packages/eslint-config/test/rules.test.ts`:
+
 ```ts
 import { ESLint } from 'eslint';
 import { describe, expect, it } from 'vitest';
@@ -516,6 +548,7 @@ describe('eslint-config typeChecked', () => {
 ```
 
 The fixtures need their own `eslint.config.js` and `tsconfig.json` inside `test/` so the type-aware rules have a program. Create `packages/eslint-config/test/tsconfig.json`:
+
 ```json
 {
   "extends": "@metrika/typescript-config/base.json",
@@ -525,6 +558,7 @@ The fixtures need their own `eslint.config.js` and `tsconfig.json` inside `test/
 ```
 
 and `packages/eslint-config/test/eslint.config.js`:
+
 ```js
 import { typeChecked } from '../src/index.js';
 
@@ -541,6 +575,7 @@ Expected: FAIL — `../src/index.js` does not exist.
 - [ ] **Step 3: Write the configs**
 
 `packages/eslint-config/src/base.js`:
+
 ```js
 import js from '@eslint/js';
 import prettier from 'eslint-config-prettier';
@@ -555,7 +590,11 @@ export const base = [
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-restricted-properties': [
         'error',
-        { object: 'process', property: 'env', message: 'Read configuration from config/env.ts only' },
+        {
+          object: 'process',
+          property: 'env',
+          message: 'Read configuration from config/env.ts only',
+        },
       ],
     },
   },
@@ -564,6 +603,7 @@ export const base = [
 ```
 
 `packages/eslint-config/src/type-checked.js`:
+
 ```js
 import tseslint from 'typescript-eslint';
 import { base } from './base.js';
@@ -573,52 +613,49 @@ import { base } from './base.js';
  * @returns {import('eslint').Linter.Config[]}
  */
 export function typeChecked(options) {
-  return tseslint.config(
-    ...base,
-    ...tseslint.configs.strictTypeChecked,
-    {
-      files: ['**/*.ts', '**/*.tsx'],
-      languageOptions: {
-        parserOptions: {
-          projectService: options.project === undefined,
-          project: options.project,
-          tsconfigRootDir: options.tsconfigRootDir,
-        },
-      },
-      rules: {
-        '@typescript-eslint/no-explicit-any': 'error',
-        '@typescript-eslint/no-floating-promises': 'error',
-        '@typescript-eslint/no-misused-promises': 'error',
-        '@typescript-eslint/switch-exhaustiveness-check': 'error',
-        '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
-        '@typescript-eslint/consistent-type-exports': 'error',
-        '@typescript-eslint/no-non-null-assertion': 'error',
-        '@typescript-eslint/promise-function-async': 'error',
-        '@typescript-eslint/no-unused-vars': [
-          'error',
-          { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
-        ],
-        '@typescript-eslint/strict-boolean-expressions': [
-          'error',
-          {
-            allowNullableBoolean: true,
-            allowNullableString: true,
-            allowNullableObject: true,
-            allowNumber: false,
-            allowString: false,
-          },
-        ],
-        // Documented exceptions — see docs/TYPESCRIPT_AND_TOOLING.md §3
-        '@typescript-eslint/require-await': 'off',
-        '@typescript-eslint/explicit-function-return-type': 'off',
-        '@typescript-eslint/explicit-module-boundary-types': 'off',
+  return tseslint.config(...base, ...tseslint.configs.strictTypeChecked, {
+    files: ['**/*.ts', '**/*.tsx'],
+    languageOptions: {
+      parserOptions: {
+        projectService: options.project === undefined,
+        project: options.project,
+        tsconfigRootDir: options.tsconfigRootDir,
       },
     },
-  );
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
+      '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
+      '@typescript-eslint/consistent-type-exports': 'error',
+      '@typescript-eslint/no-non-null-assertion': 'error',
+      '@typescript-eslint/promise-function-async': 'error',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/strict-boolean-expressions': [
+        'error',
+        {
+          allowNullableBoolean: true,
+          allowNullableString: true,
+          allowNullableObject: true,
+          allowNumber: false,
+          allowString: false,
+        },
+      ],
+      // Documented exceptions — see docs/TYPESCRIPT_AND_TOOLING.md §3
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+    },
+  });
 }
 ```
 
 `packages/eslint-config/src/test.js`:
+
 ```js
 /** @type {import('eslint').Linter.Config[]} */
 export const test = [
@@ -633,6 +670,7 @@ export const test = [
 ```
 
 `packages/eslint-config/src/index.js`:
+
 ```js
 export { base } from './base.js';
 export { typeChecked } from './type-checked.js';
@@ -640,6 +678,7 @@ export { test } from './test.js';
 ```
 
 `packages/eslint-config/package.json`:
+
 ```json
 {
   "name": "@metrika/eslint-config",
@@ -684,10 +723,12 @@ git commit -m "feat(eslint-config): add base and type-checked flat config profil
 ### Task 5: `packages/contracts` scaffold and branded IDs
 
 **Files:**
+
 - Create: `packages/contracts/package.json`, `tsconfig.json`, `eslint.config.js`, `vitest.config.ts`, `src/brand.ts`, `src/ids.ts`, `src/index.ts`
 - Test: `packages/contracts/test/ids.test.ts` (runtime), `packages/contracts/test/ids.test-d.ts` (types)
 
 **Interfaces:**
+
 - Consumes: Tasks 2 and 4
 - Produces:
   - `brandedUuid<B extends string>(brand: B)` → a Zod schema branded as `B`
@@ -696,6 +737,7 @@ git commit -m "feat(eslint-config): add base and type-checked flat config profil
 - [ ] **Step 1: Write the failing test**
 
 `packages/contracts/test/ids.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { ModelId } from '../src/index.js';
@@ -724,6 +766,7 @@ describe('branded IDs', () => {
 Nominal distinctness is a **compile-time** property, so it goes in a type test, not a runtime test. `expectTypeOf` compiles to a no-op at runtime — placed in a `*.test.ts` it asserts nothing and passes even when branding is broken. Vitest only evaluates it under `--typecheck`, against `*.test-d.ts` files.
 
 `packages/contracts/test/ids.test-d.ts`:
+
 ```ts
 import { describe, expectTypeOf, it } from 'vitest';
 import type { ModelId, ProjectId } from '../src/index.js';
@@ -751,6 +794,7 @@ Expected: FAIL — the package does not exist.
 - [ ] **Step 3: Write the package**
 
 `packages/contracts/src/brand.ts`:
+
 ```ts
 import { z } from 'zod';
 
@@ -761,8 +805,7 @@ import { z } from 'zod';
  * which have differed on which versions they accept.
  * The nil UUID is deliberately rejected: it is never a valid identifier here.
  */
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function brandedUuid<B extends string>(brand: B) {
   return z.string().regex(UUID_PATTERN, `must be a UUID (${brand})`).brand<B>();
@@ -770,6 +813,7 @@ export function brandedUuid<B extends string>(brand: B) {
 ```
 
 `packages/contracts/src/ids.ts`:
+
 ```ts
 import { z } from 'zod';
 import { brandedUuid } from './brand.js';
@@ -800,12 +844,14 @@ export type PrinterProfileVersionId = z.infer<typeof PrinterProfileVersionId>;
 ```
 
 `packages/contracts/src/index.ts`:
+
 ```ts
 export * from './brand.js';
 export * from './ids.js';
 ```
 
 `packages/contracts/tsconfig.json`:
+
 ```json
 {
   "extends": "@metrika/typescript-config/base.json",
@@ -815,6 +861,7 @@ export * from './ids.js';
 ```
 
 `packages/contracts/eslint.config.js`:
+
 ```js
 import { typeChecked } from '@metrika/eslint-config';
 
@@ -825,6 +872,7 @@ export default [
 ```
 
 `packages/contracts/vitest.config.ts`:
+
 ```ts
 import { defineConfig } from 'vitest/config';
 
@@ -848,6 +896,7 @@ export default defineConfig({
 `typecheck.enabled` is what makes the `*.test-d.ts` assertions real — without it Vitest never type-checks them and branding regressions pass silently.
 
 `packages/contracts/package.json`:
+
 ```json
 {
   "name": "@metrika/contracts",
@@ -895,11 +944,13 @@ git commit -m "feat(contracts): add branded UUID identifiers for every entity"
 ### Task 6: Money
 
 **Files:**
+
 - Create: `packages/contracts/src/money.ts`
 - Modify: `packages/contracts/src/index.ts`
 - Test: `packages/contracts/test/money.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 5
 - Produces:
   - `CurrencyCode` — Zod enum of `'COP' | 'USD' | 'EUR' | 'MXN'`
@@ -914,9 +965,17 @@ git commit -m "feat(contracts): add branded UUID identifiers for every entity"
 - [ ] **Step 1: Write the failing test**
 
 `packages/contracts/test/money.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
-import { addMoney, CURRENCY_REGISTRY, Money, MoneyMismatchError, money, toBigInt } from '../src/index.js';
+import {
+  addMoney,
+  CURRENCY_REGISTRY,
+  Money,
+  MoneyMismatchError,
+  money,
+  toBigInt,
+} from '../src/index.js';
 
 describe('Money', () => {
   it('constructs COP with exponent 0 from the registry', () => {
@@ -938,11 +997,15 @@ describe('Money', () => {
   });
 
   it('parses a valid wire representation', () => {
-    expect(Money.safeParse({ amountMinor: '-500', currency: 'COP', exponent: 0 }).success).toBe(true);
+    expect(Money.safeParse({ amountMinor: '-500', currency: 'COP', exponent: 0 }).success).toBe(
+      true,
+    );
   });
 
   it('rejects a non-integer amount string', () => {
-    expect(Money.safeParse({ amountMinor: '1.5', currency: 'COP', exponent: 0 }).success).toBe(false);
+    expect(Money.safeParse({ amountMinor: '1.5', currency: 'COP', exponent: 0 }).success).toBe(
+      false,
+    );
   });
 
   it('rejects a numeric amount', () => {
@@ -976,6 +1039,7 @@ Expected: FAIL — `addMoney` and friends are not exported.
 - [ ] **Step 3: Write the implementation**
 
 `packages/contracts/src/money.ts`:
+
 ```ts
 import { z } from 'zod';
 
@@ -1033,6 +1097,7 @@ export function addMoney(a: Money, b: Money): Money {
 ```
 
 Add to `packages/contracts/src/index.ts`:
+
 ```ts
 export * from './money.js';
 ```
@@ -1054,17 +1119,20 @@ git commit -m "feat(contracts): add Money as minor units with explicit currency 
 ### Task 7: Physical units
 
 **Files:**
+
 - Create: `packages/contracts/src/units.ts`
 - Modify: `packages/contracts/src/index.ts`
 - Test: `packages/contracts/test/units.test.ts` (runtime), `packages/contracts/test/units.test-d.ts` (types)
 
 **Interfaces:**
+
 - Consumes: Task 5
 - Produces: `Millimeters`, `SquareMillimeters`, `CubicMillimeters`, `Grams`, `Seconds` — each a branded Zod number schema plus its inferred type. Constructors `mm`, `mm2`, `mm3`, `grams`, `seconds`.
 
 - [ ] **Step 1: Write the failing test**
 
 `packages/contracts/test/units.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { CubicMillimeters, Grams, Millimeters, Seconds } from '../src/index.js';
@@ -1101,6 +1169,7 @@ describe('physical units', () => {
 ```
 
 `packages/contracts/test/units.test-d.ts`:
+
 ```ts
 import { describe, expectTypeOf, it } from 'vitest';
 import type { CubicMillimeters, Grams, Millimeters, Seconds } from '../src/index.js';
@@ -1132,6 +1201,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Write the implementation**
 
 `packages/contracts/src/units.ts`:
+
 ```ts
 import { z } from 'zod';
 
@@ -1164,6 +1234,7 @@ export const seconds = (value: number): Seconds => Seconds.parse(value);
 ```
 
 Add to `packages/contracts/src/index.ts`:
+
 ```ts
 export * from './units.js';
 ```
@@ -1185,11 +1256,13 @@ git commit -m "feat(contracts): add branded physical unit types"
 ### Task 8: Result, exhaustiveness and domain error codes
 
 **Files:**
+
 - Create: `packages/contracts/src/result.ts`, `packages/contracts/src/errors.ts`
 - Modify: `packages/contracts/src/index.ts`
 - Test: `packages/contracts/test/result.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 5
 - Produces:
   - `type Result<T, E> = { ok: true; value: T } | { ok: false; error: E }`
@@ -1201,6 +1274,7 @@ git commit -m "feat(contracts): add branded physical unit types"
 - [ ] **Step 1: Write the failing test**
 
 `packages/contracts/test/result.test.ts`:
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { assertNever, DomainErrorCode, err, isErr, isOk, ok } from '../src/index.js';
@@ -1229,15 +1303,18 @@ describe('Result', () => {
 
 describe('assertNever', () => {
   it('throws naming the context and the unhandled value', () => {
-    expect(() => assertNever('UNEXPECTED' as never, 'FitResult')).toThrow(
-      /FitResult.*UNEXPECTED/s,
-    );
+    expect(() => assertNever('UNEXPECTED' as never, 'FitResult')).toThrow(/FitResult.*UNEXPECTED/s);
   });
 });
 
 describe('DomainErrorCode', () => {
   it('includes the codes the domain throws', () => {
-    for (const code of ['MODEL_NOT_FOUND', 'UNITS_NOT_CONFIRMED', 'QUOTE_EXPIRED', 'SLICING_FAILED']) {
+    for (const code of [
+      'MODEL_NOT_FOUND',
+      'UNITS_NOT_CONFIRMED',
+      'QUOTE_EXPIRED',
+      'SLICING_FAILED',
+    ]) {
       expect(DomainErrorCode.safeParse(code).success).toBe(true);
     }
   });
@@ -1256,8 +1333,10 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Write the implementation**
 
 `packages/contracts/src/result.ts`:
+
 ```ts
-export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+export type Result<T, E> =
+  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
 
 export function ok<T>(value: T): Result<T, never> {
   return { ok: true, value };
@@ -1267,11 +1346,15 @@ export function err<E>(error: E): Result<never, E> {
   return { ok: false, error };
 }
 
-export function isOk<T, E>(result: Result<T, E>): result is { readonly ok: true; readonly value: T } {
+export function isOk<T, E>(
+  result: Result<T, E>,
+): result is { readonly ok: true; readonly value: T } {
   return result.ok;
 }
 
-export function isErr<T, E>(result: Result<T, E>): result is { readonly ok: false; readonly error: E } {
+export function isErr<T, E>(
+  result: Result<T, E>,
+): result is { readonly ok: false; readonly error: E } {
   return !result.ok;
 }
 
@@ -1282,6 +1365,7 @@ export function assertNever(value: never, context: string): never {
 ```
 
 `packages/contracts/src/errors.ts`:
+
 ```ts
 import { z } from 'zod';
 
@@ -1317,6 +1401,7 @@ export type DomainErrorCode = z.infer<typeof DomainErrorCode>;
 ```
 
 Add to `packages/contracts/src/index.ts`:
+
 ```ts
 export * from './result.js';
 export * from './errors.js';
@@ -1339,11 +1424,13 @@ git commit -m "feat(contracts): add Result, assertNever and the closed domain er
 ### Task 9: Canonical JSON and content hashing
 
 **Files:**
+
 - Create: `packages/contracts/src/hashing.ts`
 - Modify: `packages/contracts/src/index.ts`
 - Test: `packages/contracts/test/hashing.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 5
 - Produces:
   - `canonicalJson(value: CanonicalValue): string` — deterministic, sorted keys, no whitespace
@@ -1356,6 +1443,7 @@ This is the function the slice cache key depends on ([docs/SLICING.md §5](../..
 - [ ] **Step 1: Write the failing test**
 
 `packages/contracts/test/hashing.test.ts`:
+
 ```ts
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
@@ -1421,9 +1509,12 @@ describe('canonicalJson', () => {
 
   it('is deterministic across repeated calls', () => {
     fc.assert(
-      fc.property(fc.dictionary(fc.string(), fc.oneof(fc.integer(), fc.string(), fc.boolean())), (obj) => {
-        expect(canonicalJson(obj)).toBe(canonicalJson(obj));
-      }),
+      fc.property(
+        fc.dictionary(fc.string(), fc.oneof(fc.integer(), fc.string(), fc.boolean())),
+        (obj) => {
+          expect(canonicalJson(obj)).toBe(canonicalJson(obj));
+        },
+      ),
     );
   });
 });
@@ -1463,6 +1554,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Write the implementation**
 
 `packages/contracts/src/hashing.ts`:
+
 ```ts
 export type CanonicalValue =
   | string
@@ -1504,9 +1596,7 @@ function serialize(value: unknown, path: string): string {
         throw new CanonicalizationError(`Non-finite number at ${path}`);
       }
       if (!Number.isInteger(value)) {
-        throw new CanonicalizationError(
-          `Non-integer number at ${path}; pass decimals as strings`,
-        );
+        throw new CanonicalizationError(`Non-integer number at ${path}; pass decimals as strings`);
       }
       return value.toString();
     case 'object':
@@ -1544,9 +1634,10 @@ export async function sha256Canonical(value: CanonicalValue): Promise<string> {
 }
 ```
 
-Note the `typeof value === 'undefined'` case falls through to `default`, which throws — that is how a top-level `undefined` is rejected while an `undefined` *object value* is filtered out before recursion.
+Note the `typeof value === 'undefined'` case falls through to `default`, which throws — that is how a top-level `undefined` is rejected while an `undefined` _object value_ is filtered out before recursion.
 
 Add to `packages/contracts/src/index.ts`:
+
 ```ts
 export * from './hashing.js';
 ```
@@ -1575,17 +1666,20 @@ git commit -m "feat(contracts): add canonical JSON serialisation and sha256 cont
 ### Task 10: Dependency boundary enforcement
 
 **Files:**
+
 - Create: `packages/eslint-config/src/boundaries.js`
 - Modify: `packages/eslint-config/src/index.js`, `packages/contracts/eslint.config.js`
 - Test: `packages/eslint-config/test/fixtures/contracts-forbidden-import.ts`, `packages/eslint-config/test/rules.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 4
 - Produces: `contractsBoundary` — a flat-config array forbidding any import except `zod` inside `packages/contracts/src`
 
 - [ ] **Step 1: Write the failing test**
 
 `packages/eslint-config/test/fixtures/contracts-forbidden-import.ts`:
+
 ```ts
 import { createHash } from 'node:crypto';
 
@@ -1595,6 +1689,7 @@ export function hash(input: string): string {
 ```
 
 Append to `packages/eslint-config/test/rules.test.ts`:
+
 ```ts
 describe('contracts boundary', () => {
   it('forbids node built-ins inside contracts', async () => {
@@ -1610,6 +1705,7 @@ describe('contracts boundary', () => {
 ```
 
 `packages/eslint-config/test/eslint.boundaries.config.js`:
+
 ```js
 import { contractsBoundary } from '../src/index.js';
 
@@ -1624,6 +1720,7 @@ Expected: FAIL — `contractsBoundary` is not exported.
 - [ ] **Step 3: Write the boundary config**
 
 `packages/eslint-config/src/boundaries.js`:
+
 ```js
 /**
  * packages/contracts is the root of the dependency graph. Anything it imports
@@ -1655,11 +1752,13 @@ export const contractsBoundary = [
 ```
 
 Add to `packages/eslint-config/src/index.js`:
+
 ```js
 export { contractsBoundary } from './boundaries.js';
 ```
 
 Apply it in `packages/contracts/eslint.config.js`:
+
 ```js
 import { contractsBoundary, typeChecked } from '@metrika/eslint-config';
 
@@ -1693,16 +1792,19 @@ git commit -m "feat(eslint-config): enforce that contracts imports only zod"
 ### Task 11: CI pipeline
 
 **Files:**
+
 - Create: `.github/workflows/ci.yml`
 - Modify: `package.json` (add `ci` script)
 
 **Interfaces:**
+
 - Consumes: Tasks 1–10
 - Produces: a green CI run gating every pull request
 
 - [ ] **Step 1: Write the workflow**
 
 `.github/workflows/ci.yml`:
+
 ```yaml
 name: CI
 
@@ -1785,9 +1887,11 @@ Expected: the `verify` job succeeds.
 ### Task 12: Documentation reconciliation
 
 **Files:**
+
 - Modify: `CLAUDE.md`, `docs/LOCAL_DEVELOPMENT.md`, `docs/ROADMAP.md`
 
 **Interfaces:**
+
 - Consumes: Tasks 1–11
 - Produces: documentation that matches what now exists
 

@@ -120,19 +120,19 @@ graph TB
 
 **VPC endpoints instead of a NAT Gateway.** This is both the primary security control for the workers (no internet egress at all) and the single largest cost saving available in a small AWS footprint — a NAT Gateway is roughly $32/month plus per-GB processing before it moves a single useful byte. Only the Temporal Cloud connection needs egress, handled by a narrow route rather than a general-purpose NAT.
 
-| Service | Configuration |
-|---|---|
-| ECS Fargate `api` | 0.5 vCPU / 1 GB, min 1 / max 4, target-tracking on CPU and ALB request count |
-| ECS Fargate `api-workflow-worker` | Separate service, same image, different command. Isolates workflow processing from HTTP |
-| ECS Fargate `geometry-worker` | Two services: small (1 vCPU / 2 GB) and large (2 vCPU / 8 GB), scaled on Temporal queue depth |
-| ECS Fargate `slicer-worker` | 2 vCPU / 4 GB, **Fargate Spot**, scaled on queue depth |
-| RDS | `db.t4g.small` staging (single-AZ), `db.t4g.medium` production (Multi-AZ), gp3, encrypted with a CMK, deletion protection, PITR |
-| PgBouncer | Sidecar in transaction mode — Fargate scaling multiplies Prisma's per-process pool quickly |
-| ElastiCache | `cache.t4g.micro`; deferred until the rate limiter needs it |
-| S3 | Versioning on `originals/`, Intelligent-Tiering, lifecycle rules per prefix, Block Public Access |
-| Secrets Manager | All secrets; injected as ECS task secrets, never as plain environment variables |
-| KMS | Separate CMKs for S3 originals, RDS and Secrets Manager |
-| CloudFront | Preview derivatives only, signed URLs, OAC to S3 |
+| Service                           | Configuration                                                                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| ECS Fargate `api`                 | 0.5 vCPU / 1 GB, min 1 / max 4, target-tracking on CPU and ALB request count                                                    |
+| ECS Fargate `api-workflow-worker` | Separate service, same image, different command. Isolates workflow processing from HTTP                                         |
+| ECS Fargate `geometry-worker`     | Two services: small (1 vCPU / 2 GB) and large (2 vCPU / 8 GB), scaled on Temporal queue depth                                   |
+| ECS Fargate `slicer-worker`       | 2 vCPU / 4 GB, **Fargate Spot**, scaled on queue depth                                                                          |
+| RDS                               | `db.t4g.small` staging (single-AZ), `db.t4g.medium` production (Multi-AZ), gp3, encrypted with a CMK, deletion protection, PITR |
+| PgBouncer                         | Sidecar in transaction mode — Fargate scaling multiplies Prisma's per-process pool quickly                                      |
+| ElastiCache                       | `cache.t4g.micro`; deferred until the rate limiter needs it                                                                     |
+| S3                                | Versioning on `originals/`, Intelligent-Tiering, lifecycle rules per prefix, Block Public Access                                |
+| Secrets Manager                   | All secrets; injected as ECS task secrets, never as plain environment variables                                                 |
+| KMS                               | Separate CMKs for S3 originals, RDS and Secrets Manager                                                                         |
+| CloudFront                        | Preview derivatives only, signed URLs, OAC to S3                                                                                |
 
 **Temporal Cloud rather than self-hosted.** Self-hosting means running frontend, history, matching and worker services plus Cassandra or a large Postgres. The trade-off is a monthly bill and a dependency outside the VPC; the alternative is a platform team. See [ADR-0006](./adr/0006-temporal.md).
 
@@ -172,18 +172,18 @@ infra/terraform/
 
 `.github/workflows/ci.yml` — on every pull request:
 
-| Job | Runs |
-|---|---|
-| `setup` | pnpm install `--frozen-lockfile`, uv sync `--frozen`; caches restored |
-| `format` | `pnpm format:check` |
-| `lint` | `pnpm lint` (`--max-warnings=0`) + `ruff check` + suppression-justification check |
-| `typecheck` | `pnpm typecheck` + `mypy --strict apps/workers` |
-| `test-unit` | `pnpm test:unit` + `pytest -m "not integration and not regression"` with per-package coverage gates |
-| `test-integration` | Testcontainers: Postgres, Redis, MinIO, Temporal test env |
-| `contracts` | `pnpm contracts:emit && git diff --exit-code`; OpenAPI baseline diff |
-| `build` | `pnpm build` + container builds (not pushed on PRs) |
-| `security` | `pnpm audit`, gitleaks, Trivy on images, CodeQL |
-| `e2e` | Playwright against an ephemeral stack (docker compose + fakes) |
+| Job                | Runs                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| `setup`            | pnpm install `--frozen-lockfile`, uv sync `--frozen`; caches restored                               |
+| `format`           | `pnpm format:check`                                                                                 |
+| `lint`             | `pnpm lint` (`--max-warnings=0`) + `ruff check` + suppression-justification check                   |
+| `typecheck`        | `pnpm typecheck` + `mypy --strict apps/workers`                                                     |
+| `test-unit`        | `pnpm test:unit` + `pytest -m "not integration and not regression"` with per-package coverage gates |
+| `test-integration` | Testcontainers: Postgres, Redis, MinIO, Temporal test env                                           |
+| `contracts`        | `pnpm contracts:emit && git diff --exit-code`; OpenAPI baseline diff                                |
+| `build`            | `pnpm build` + container builds (not pushed on PRs)                                                 |
+| `security`         | `pnpm audit`, gitleaks, Trivy on images, CodeQL                                                     |
+| `e2e`              | Playwright against an ephemeral stack (docker compose + fakes)                                      |
 
 `main` additionally: push images to ECR, `terraform apply` to staging, `prisma migrate deploy`, ECS rolling deploy, smoke tests, then a **manual gate** before production.
 
@@ -212,13 +212,13 @@ Renaming `Quote.total` to `Quote.totalMinor` is four deploys, not one:
 
 Rules enforced by a CI check that parses generated SQL:
 
-| Statement | Rule |
-|---|---|
-| `ADD COLUMN ... NOT NULL` without a default | **Blocked** — rewrites the table |
-| `DROP COLUMN` / `DROP TABLE` / type narrowing | Requires `-- metrika:destructive-ok <reason>` |
-| `CREATE INDEX` | Must be `CONCURRENTLY`, outside a transaction |
-| `ALTER TABLE ... SET NOT NULL` on a large table | Requires a validated check constraint first |
-| Long-running backfill | Must be a batched script, never inline in a migration |
+| Statement                                       | Rule                                                  |
+| ----------------------------------------------- | ----------------------------------------------------- |
+| `ADD COLUMN ... NOT NULL` without a default     | **Blocked** — rewrites the table                      |
+| `DROP COLUMN` / `DROP TABLE` / type narrowing   | Requires `-- metrika:destructive-ok <reason>`         |
+| `CREATE INDEX`                                  | Must be `CONCURRENTLY`, outside a transaction         |
+| `ALTER TABLE ... SET NOT NULL` on a large table | Requires a validated check constraint first           |
+| Long-running backfill                           | Must be a batched script, never inline in a migration |
 
 Migrations run as a one-off ECS task before the service rolling update, with `statement_timeout` and `lock_timeout` set so a migration that would block writes fails fast rather than taking the site down. Every migration is tested up **and** down against a seeded database in CI.
 
@@ -226,12 +226,12 @@ Migrations run as a one-off ECS task before the service rolling update, with `st
 
 ## 6. Backups and disaster recovery
 
-| Objective | Target |
-|---|---|
-| RPO (database) | 5 minutes — PITR |
-| RTO (database) | 1 hour |
-| RPO (S3) | 0 — versioning + cross-region replication for `originals/` |
-| RTO (full environment rebuild) | 4 hours from Terraform |
+| Objective                      | Target                                                     |
+| ------------------------------ | ---------------------------------------------------------- |
+| RPO (database)                 | 5 minutes — PITR                                           |
+| RTO (database)                 | 1 hour                                                     |
+| RPO (S3)                       | 0 — versioning + cross-region replication for `originals/` |
+| RTO (full environment rebuild) | 4 hours from Terraform                                     |
 
 - RDS automated backups: 7 days staging, 30 days production, plus monthly manual snapshots retained 12 months.
 - **Restore testing quarterly** — restore production's latest snapshot into a scratch environment, run migrations, run smoke tests, record the elapsed time. A backup that has never been restored is a hypothesis.
@@ -245,26 +245,26 @@ Migrations run as a one-off ECS task before the service rolling update, with `st
 
 Rough monthly estimates at low volume. **These are planning figures, not quotes — verify current pricing before committing.** AWS, Temporal and Clerk all change pricing, and Colombian data-transfer patterns may differ from assumptions.
 
-| Item | Staging | Production (low volume) | Scales with |
-|---|---|---|---|
-| RDS PostgreSQL | ~$30 (t4g.small, single-AZ) | ~$90 (t4g.medium, Multi-AZ) | Data volume, connections |
-| ECS Fargate — api | ~$18 | ~$36 (2 tasks) | Traffic |
-| ECS Fargate — workflow worker | ~$18 | ~$18 | Workflow volume |
-| ECS Fargate — geometry | ~$10 | ~$25 | **Model uploads** |
-| ECS Fargate — slicer (Spot) | ~$5 | ~$20 | **Slice requests** — the main variable |
-| ElastiCache | ~$12 | ~$12 | — |
-| S3 storage | ~$1 | ~$5 | **Model storage growth** |
-| S3 requests + CloudFront | ~$2 | ~$10 | Preview traffic |
-| ALB | ~$18 | ~$18 | Fixed |
-| **NAT Gateway** | **$0** | **$0** | *Avoided via VPC endpoints — would otherwise be ~$35+ each* |
-| VPC endpoints | ~$15 | ~$22 | Endpoint count |
-| Secrets Manager, KMS | ~$5 | ~$8 | — |
-| Temporal Cloud | shared | ~$100+ | Actions per month — **verify current pricing** |
-| Vercel | free | ~$20 | Bandwidth, build minutes |
-| Clerk | free | ~$25+ | MAU |
-| Grafana Cloud | free | free → ~$50 | Ingest volume |
-| Sentry | free | ~$26 | Event volume |
-| **Total** | **~$135** | **~$485** | |
+| Item                          | Staging                     | Production (low volume)     | Scales with                                                 |
+| ----------------------------- | --------------------------- | --------------------------- | ----------------------------------------------------------- |
+| RDS PostgreSQL                | ~$30 (t4g.small, single-AZ) | ~$90 (t4g.medium, Multi-AZ) | Data volume, connections                                    |
+| ECS Fargate — api             | ~$18                        | ~$36 (2 tasks)              | Traffic                                                     |
+| ECS Fargate — workflow worker | ~$18                        | ~$18                        | Workflow volume                                             |
+| ECS Fargate — geometry        | ~$10                        | ~$25                        | **Model uploads**                                           |
+| ECS Fargate — slicer (Spot)   | ~$5                         | ~$20                        | **Slice requests** — the main variable                      |
+| ElastiCache                   | ~$12                        | ~$12                        | —                                                           |
+| S3 storage                    | ~$1                         | ~$5                         | **Model storage growth**                                    |
+| S3 requests + CloudFront      | ~$2                         | ~$10                        | Preview traffic                                             |
+| ALB                           | ~$18                        | ~$18                        | Fixed                                                       |
+| **NAT Gateway**               | **$0**                      | **$0**                      | _Avoided via VPC endpoints — would otherwise be ~$35+ each_ |
+| VPC endpoints                 | ~$15                        | ~$22                        | Endpoint count                                              |
+| Secrets Manager, KMS          | ~$5                         | ~$8                         | —                                                           |
+| Temporal Cloud                | shared                      | ~$100+                      | Actions per month — **verify current pricing**              |
+| Vercel                        | free                        | ~$20                        | Bandwidth, build minutes                                    |
+| Clerk                         | free                        | ~$25+                       | MAU                                                         |
+| Grafana Cloud                 | free                        | free → ~$50                 | Ingest volume                                               |
+| Sentry                        | free                        | ~$26                        | Event volume                                                |
+| **Total**                     | **~$135**                   | **~$485**                   |                                                             |
 
 ### Cost drivers, ranked
 
