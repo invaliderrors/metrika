@@ -31,4 +31,17 @@ describe('contracts boundary', () => {
     const rules = (result?.messages ?? []).map((m) => m.ruleId);
     expect(rules).toContain('no-restricted-imports');
   });
+
+  it('forbids node built-ins reached through a dynamic import()', async () => {
+    // no-restricted-imports only inspects static import/export declarations;
+    // this fixture uses `await import('node:crypto')` specifically to prove
+    // the separate no-restricted-syntax rule catches what that one cannot.
+    const eslint = new ESLint({
+      cwd: import.meta.dirname,
+      overrideConfigFile: 'eslint.boundaries.config.js',
+    });
+    const [result] = await eslint.lintFiles(['fixtures/contracts-forbidden-dynamic-import.ts']);
+    const rules = (result?.messages ?? []).map((m) => m.ruleId);
+    expect(rules).toContain('no-restricted-syntax');
+  });
 });
