@@ -44,12 +44,13 @@ export function isErr<T, E>(
  * At runtime, though, `never` is not a real value — TypeScript's types are
  * erased, so whatever actually reaches this function is whatever the union
  * grew to include without every consumer being updated. `JSON.stringify`,
- * naively applied to that, throws a `TypeError` on `bigint` and on circular
- * structures, and returns the *value* `undefined` (not a string) for
- * `undefined` — three ways a diagnostic meant to name the offending value
- * would instead crash with an unrelated, less useful error, or silently
- * print nothing. `describeUnhandledValue` treats the input as `unknown` and
- * degrades gracefully in all three cases instead.
+ * naively applied to that: throws a `TypeError` on `bigint` and on circular
+ * structures; returns the *value* `undefined` (not a string) for `undefined`;
+ * and — despite `JSON.stringify`'s TypeScript signature always declaring a
+ * `string` return — also silently returns `undefined` for `function` and
+ * `symbol` inputs, which would make this very function's own return type lie.
+ * `describeUnhandledValue` treats the input as `unknown` and degrades
+ * gracefully in every case instead.
  */
 export function assertNever(value: never, context: string): never {
   throw new Error(`Unhandled case in ${context}: ${describeUnhandledValue(value)}`);
@@ -59,6 +60,9 @@ function describeUnhandledValue(value: never): string {
   const unknownValue: unknown = value;
   if (typeof unknownValue === 'undefined') return 'undefined';
   if (typeof unknownValue === 'bigint') return `${unknownValue.toString()}n`;
+  if (typeof unknownValue === 'function' || typeof unknownValue === 'symbol') {
+    return String(unknownValue);
+  }
   try {
     return JSON.stringify(unknownValue);
   } catch {

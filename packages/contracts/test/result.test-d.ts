@@ -13,6 +13,24 @@ import { assertNever, err, isErr, isOk, ok, type Result } from '../src/index.js'
 // even compile. See the task report's break-and-restore section for the
 // actual failing output this produces when the guard is deliberately broken.
 
+// `Result` is a value type consumed by the pure kernels (pricing engine,
+// authorization policies, state machines); both union members are declared
+// `readonly` in src/result.ts, but nothing above reads that — narrowing tests
+// only ever access `.value`/`.error`, which type-check identically whether or
+// not the properties are readonly. `toEqualTypeOf` alone would not catch this
+// either for two mutable-vs-mutable or two readonly-vs-readonly types, but
+// expect-type's `toEqualTypeOf` specifically brands `readonly` as part of
+// deep structural equality (unlike plain assignability, which ignores it),
+// so pinning the full expected shape here — modifiers included — does gate on
+// it. See the task report's break-and-restore section for the reproduction.
+describe('Result is a readonly value type', () => {
+  it('matches the declared union shape exactly, including readonly modifiers', () => {
+    expectTypeOf<Result<number, string>>().toEqualTypeOf<
+      { readonly ok: true; readonly value: number } | { readonly ok: false; readonly error: string }
+    >();
+  });
+});
+
 describe('isOk narrows Result<T, E> to the ok branch', () => {
   it('exposes `.value` typed as T inside the guarded branch, `.error` in the other', () => {
     const r: Result<number, string> = ok(1);

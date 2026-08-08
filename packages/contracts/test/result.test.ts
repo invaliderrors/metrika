@@ -41,11 +41,13 @@ describe('assertNever', () => {
 
   // --- Additional edge cases beyond the brief ---
   // `JSON.stringify` — the brief's own Step 3 snippet — throws a TypeError on
-  // bigint and on circular structures, and returns the *value* `undefined`
-  // (not a string) for `undefined`. A diagnostic helper that itself throws a
-  // different, unrelated error defeats the point of naming the context. These
-  // three guard that assertNever degrades gracefully instead of crashing with
-  // an opaque JSON.stringify failure.
+  // bigint and on circular structures, and silently returns the *value*
+  // `undefined` (not a string) for `undefined`, `function`, and `symbol`
+  // inputs, despite its TypeScript signature always declaring a `string`
+  // return. A diagnostic helper that itself throws a different, unrelated
+  // error — or silently lies about its own return type — defeats the point of
+  // naming the context. These guard that assertNever degrades gracefully in
+  // every case instead of crashing or going quiet.
 
   it('renders a bigint value instead of letting JSON.stringify throw on it', () => {
     expect(() => assertNever(10n as never, 'Ctx')).toThrow(/Ctx.*10n/s);
@@ -53,6 +55,17 @@ describe('assertNever', () => {
 
   it('names undefined explicitly, since JSON.stringify(undefined) is not a string', () => {
     expect(() => assertNever(undefined as never, 'Ctx')).toThrow(/Ctx.*undefined/s);
+  });
+
+  it('names a function value, since JSON.stringify(fn) silently returns undefined, not a string', () => {
+    function namedCase() {
+      return undefined;
+    }
+    expect(() => assertNever(namedCase as never, 'Ctx')).toThrow(/Ctx.*namedCase/s);
+  });
+
+  it('names a symbol value, since JSON.stringify(sym) silently returns undefined, not a string', () => {
+    expect(() => assertNever(Symbol('OOPS') as never, 'Ctx')).toThrow(/Ctx.*Symbol\(OOPS\)/s);
   });
 
   it('names the runtime type instead of letting JSON.stringify throw on a circular structure', () => {
