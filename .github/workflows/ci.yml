@@ -56,11 +56,17 @@ jobs:
             exit 1
           fi
 
+      # NOTE: this must not be a bare `if grep ...; then` — with `apps/` not existing yet,
+      # grep's own exit code is not a reliable signal of "no match" (a path-open error can
+      # take precedence over a real match found elsewhere in the same invocation, which
+      # makes the `if` false and silently passes a real @ts-ignore). Piping through
+      # `grep -q .` makes the `if` depend on whether any content survived — i.e. on the
+      # match itself — not on grep's own exit status. Same reasoning as the step above.
       - name: Reject @ts-ignore
         run: |
           if grep -rn '@ts-ignore' --include='*.ts' --include='*.tsx' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
-               packages apps 2>/dev/null; then
+               packages apps 2>/dev/null | grep -q .; then
             echo "::error::@ts-ignore is banned — use @ts-expect-error with a justification"
             exit 1
           fi
