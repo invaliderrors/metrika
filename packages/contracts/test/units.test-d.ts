@@ -1,10 +1,15 @@
 import { describe, expectTypeOf, it } from 'vitest';
-import type {
-  CubicMillimeters,
-  Grams,
-  Millimeters,
-  Seconds,
-  SquareMillimeters,
+import {
+  grams,
+  mm,
+  mm2,
+  mm3,
+  seconds,
+  type CubicMillimeters,
+  type Grams,
+  type Millimeters,
+  type Seconds,
+  type SquareMillimeters,
 } from '../src/index.js';
 
 describe('units are nominally distinct', () => {
@@ -55,5 +60,33 @@ describe('units are nominally distinct', () => {
 
   it('does not let Grams satisfy a bare number', () => {
     expectTypeOf<Grams>().not.toEqualTypeOf<number>();
+  });
+
+  // Constructor return types are ungated by every check above: widening, say,
+  // `mm(value: number): Millimeters` to `: number` compiles cleanly, every
+  // runtime test in units.test.ts still passes (they only assert on the
+  // *value*, never the static type of the constructor's return), and none of
+  // the schema-vs-schema checks above touch the constructors at all. One
+  // assertion per constructor closes that gap — see the task report's
+  // break-and-restore section for a reproduction of the failure this catches.
+
+  it('mm returns Millimeters, not a bare number', () => {
+    expectTypeOf(mm(1)).toEqualTypeOf<Millimeters>();
+  });
+
+  it('mm2 returns SquareMillimeters, not a bare number', () => {
+    expectTypeOf(mm2(1)).toEqualTypeOf<SquareMillimeters>();
+  });
+
+  it('mm3 returns CubicMillimeters, not a bare number', () => {
+    expectTypeOf(mm3(1)).toEqualTypeOf<CubicMillimeters>();
+  });
+
+  it('grams returns Grams, not a bare number', () => {
+    expectTypeOf(grams(1)).toEqualTypeOf<Grams>();
+  });
+
+  it('seconds returns Seconds, not a bare number', () => {
+    expectTypeOf(seconds(1)).toEqualTypeOf<Seconds>();
   });
 });

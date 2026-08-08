@@ -149,4 +149,16 @@ describe('physical units', () => {
   it('grams throws on a negative value, matching Grams.parse', () => {
     expect(() => grams(-1)).toThrow();
   });
+
+  it('mm2 throws on a negative value, matching SquareMillimeters.parse', () => {
+    expect(() => mm2(-1)).toThrow();
+  });
+
+  it('mm3 throws on a negative value, matching CubicMillimeters.parse', () => {
+    expect(() => mm3(-1)).toThrow();
+  });
+
+  it('seconds throws on a negative value, matching Seconds.parse', () => {
+    expect(() => seconds(-1)).toThrow();
+  });
 });
