@@ -327,6 +327,178 @@ describe('canonicalJson', () => {
       ),
     );
   });
+
+  // --- Fix round 1: sparse array holes (Finding 1, Critical) ---
+  //
+  // `Array.prototype.map` skips holes but preserves them positionally, and
+  // `Array.prototype.join` renders a hole as the empty string — so, without an
+  // explicit own-property check per index, `[]` and `new Array(1)` serialise
+  // identically. That is a genuine collision between two different runtime
+  // values reachable through the typed public API with no cast: `new
+  // Array<number>(1)` is a well-typed `CanonicalValue`. A hole is rejected the
+  // same way an explicit `undefined` array element already is, since both
+  // read as `undefined` and the type system cannot tell them apart.
+
+  it('rejects a sparse array created by new Array(n) — a hole is not an own property', () => {
+    expect(() => canonicalJson(new Array<number>(1) as never)).toThrow(CanonicalizationError);
+  });
+
+  it('[] still serialises normally — only holes are rejected, not empty arrays', () => {
+    expect(canonicalJson([])).toBe('[]');
+  });
+
+  it('rejects new Array(3) — multiple holes, not just a single one', () => {
+    expect(() => canonicalJson(new Array<number>(3) as never)).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a hole created by extending .length past the end of a dense array', () => {
+    const arr: number[] = [1, 2];
+    arr.length = 4;
+    expect(() => canonicalJson(arr as never)).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a hole created by delete on an array element', () => {
+    const arr: (number | undefined)[] = [1, 2, 3];
+    // `delete arr[1]` and `Reflect.deleteProperty(arr, 1)` are the same
+    // [[Delete]] operation; the latter sidesteps
+    // @typescript-eslint/no-array-delete without changing what is tested —
+    // this genuinely leaves a hole, not an `undefined` element.
+    Reflect.deleteProperty(arr, 1);
+    expect(() => canonicalJson(arr as never)).toThrow(CanonicalizationError);
+  });
+
+  // --- Fix round 1: array elements that are explicit undefined (Finding 2) ---
+  //
+  // This behaviour was already correct before this fix round — an explicit
+  // `undefined` array element (as opposed to a hole) already threw — but
+  // nothing exercised it, and the natural-looking "fix" of adding
+  // `.filter((v) => v !== undefined)` to the array branch, mirroring the
+  // object branch a few lines below, would silently make `[1, undefined, 2]`
+  // and `[1, 2]` collide. These tests exist specifically to gate that.
+
+  it('rejects an explicit undefined array element', () => {
+    expect(() => canonicalJson([undefined] as never)).toThrow(CanonicalizationError);
+  });
+
+  it('[1, undefined, 2] throws rather than collapsing to [1, 2]', () => {
+    expect(() => canonicalJson([1, undefined, 2] as never)).toThrow(CanonicalizationError);
+    expect(canonicalJson([1, 2])).toBe('[1,2]');
+  });
+
+  it('rejects undefined inside an array nested in an object', () => {
+    expect(() => canonicalJson({ a: [undefined] } as never)).toThrow(CanonicalizationError);
+  });
+
+  // --- Fix round 1: accessor properties and Proxies (Finding 3, Important) ---
+  //
+  // `Object.getPrototypeOf(value) !== Object.prototype` only rules out class
+  // instances and null-prototype objects — a getter on an otherwise-plain
+  // object literal still has `Object.prototype` in its chain and passes that
+  // check, yet re-invoking it can return a different value on every read,
+  // producing a different hash for what looks like "the same" object. The fix
+  // inspects `Object.getOwnPropertyDescriptors` and rejects any descriptor
+  // without a `value` key (i.e. an accessor) instead of reading through
+  // `Object.entries`/bracket access, which would invoke the getter.
+
+  it('rejects an accessor (getter) property without ever invoking it', () => {
+    let calls = 0;
+    const withGetter = {
+      get a() {
+        calls++;
+        return calls;
+      },
+    };
+    expect(() => canonicalJson(withGetter)).toThrow(CanonicalizationError);
+    // If this were > 0, the getter was invoked despite being rejected — the
+    // whole point of detecting it via the property descriptor instead of by
+    // reading the value is to never execute the accessor at all.
+    expect(calls).toBe(0);
+  });
+
+  it('rejects a setter-only accessor property', () => {
+    const withSetter: Record<string, unknown> = {};
+    Object.defineProperty(withSetter, 'a', {
+      set: (_v: unknown) => undefined,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(() => canonicalJson(withSetter as never)).toThrow(CanonicalizationError);
+  });
+
+  it('produces stable output for a Proxy wrapping a plain object, and never triggers its get trap', () => {
+    let getTrapCalls = 0;
+    const target = { a: 1, b: 2 };
+    const proxy = new Proxy(target, {
+      get(t, prop, receiver): unknown {
+        getTrapCalls++;
+        return Reflect.get(t, prop, receiver) as unknown;
+      },
+    });
+    const first = canonicalJson(proxy);
+    const second = canonicalJson(proxy);
+    expect(first).toBe(second);
+    expect(first).toBe('{"a":1,"b":2}');
+    // Descriptor-based access (`Object.getOwnPropertyDescriptors`) never
+    // triggers the `get` trap — only `ownKeys`/`getOwnPropertyDescriptor`,
+    // which this proxy does not override. A `get`-trap-based proxy that
+    // returned a different value per read would otherwise have produced two
+    // different hashes for what callers would reasonably treat as one value.
+    expect(getTrapCalls).toBe(0);
+  });
+
+  // --- Fix round 1: -0 (Finding 4, minor — documented, not changed) ---
+  //
+  // `(-0).toString() === '0'`, same as `JSON.stringify(-0) === '0'`. This is
+  // an intentional normalisation, unlike the Unicode case: `-0 === 0` in JS
+  // and they denote the same real number, so collapsing them is not a
+  // collision between distinct inputs the way normalising Unicode would be.
+
+  it('serialises -0 the same as 0 — same real number, not a collision', () => {
+    expect(canonicalJson({ a: -0 })).toBe('{"a":0}');
+    expect(canonicalJson({ a: -0 })).toBe(canonicalJson({ a: 0 }));
+  });
+
+  // --- Fix round 1: exponential-notation integers (Finding 6, minor) ---
+  //
+  // `Number.isInteger` is true for integers large enough that
+  // `Number.prototype.toString` renders them in exponential form. This is
+  // still valid, round-trip-stable JSON — not a correctness bug — just a
+  // visual mismatch with the "non-integer numbers are rejected" doc wording,
+  // which is about fractional/non-finite values, not decimal vs. exponential
+  // notation.
+
+  it('accepts an integer large enough to serialise in exponential notation', () => {
+    expect(canonicalJson({ a: 1e21 })).toBe('{"a":1e+21}');
+    expect(() => JSON.parse(canonicalJson({ a: 1e21 })) as unknown).not.toThrow();
+  });
+
+  // --- Fix round 1: circular references and pathological depth (Finding 5) ---
+  //
+  // Without a depth guard, a circular reference recurses until the platform
+  // itself throws a native `RangeError` — a different, untyped failure mode
+  // that a caller catching only `CanonicalizationError` would not catch.
+
+  it('rejects a circular reference with CanonicalizationError, not RangeError', () => {
+    const obj: Record<string, unknown> = {};
+    obj['self'] = obj;
+    expect(() => canonicalJson(obj as never)).toThrow(CanonicalizationError);
+  });
+
+  it('rejects pathologically deep (but non-circular) nesting with CanonicalizationError, not RangeError', () => {
+    let value: unknown = [];
+    for (let i = 0; i < 2000; i++) {
+      value = [value];
+    }
+    expect(() => canonicalJson(value as never)).toThrow(CanonicalizationError);
+  });
+
+  it('still allows nesting well within the depth guard', () => {
+    let value: unknown = 0;
+    for (let i = 0; i < 50; i++) {
+      value = [value];
+    }
+    expect(() => canonicalJson(value as never)).not.toThrow();
+  });
 });
 
 describe('sha256Canonical', () => {
@@ -369,5 +541,27 @@ describe('sha256Canonical', () => {
 
   it('propagates CanonicalizationError for a rejected bigint', async () => {
     await expect(sha256Canonical({ a: 1n } as never)).rejects.toThrow(CanonicalizationError);
+  });
+
+  // --- Fix round 1: sparse array holes must not produce a shared cache key (Finding 1) ---
+  //
+  // Before the fix, `sha256Canonical([])` and `sha256Canonical(new Array(1))`
+  // both digested the same bytes — `4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`
+  // (sha256 of the exact byte sequence `[]`, both times) — because the hole
+  // was silently dropped by `.join`. That is the slice-cache-key collision
+  // this fix closes: two different manufacturing inputs must never produce
+  // one key. After the fix, `[]` still hashes normally and `new Array(1)`
+  // rejects instead of silently colliding with it.
+
+  it('[] still hashes to the real digest of "[]"', async () => {
+    expect(await sha256Canonical([])).toBe(
+      '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+    );
+  });
+
+  it('new Array(1) rejects instead of silently colliding with the digest of []', async () => {
+    await expect(sha256Canonical(new Array<number>(1) as never)).rejects.toThrow(
+      CanonicalizationError,
+    );
   });
 });

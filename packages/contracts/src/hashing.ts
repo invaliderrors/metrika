@@ -13,6 +13,15 @@ export class CanonicalizationError extends Error {
   }
 }
 
+// Chosen to be far below the platform's native recursion limit (empirically
+// ~10,000 stack frames for a trivial function on this runtime, and this
+// function's frames are heavier) while remaining generous for any real
+// manufacturing input. A circular reference recurses until this is exceeded
+// and is rejected the same as pathologically deep, non-circular nesting —
+// both would otherwise surface as a native, untyped `RangeError` instead of
+// `CanonicalizationError`.
+const MAX_DEPTH = 1000;
+
 /**
  * Deterministic JSON: keys sorted, no whitespace, undefined object values
  * omitted. Non-integer numbers are REJECTED — floats are not reproducible
@@ -32,12 +41,50 @@ export class CanonicalizationError extends Error {
  * collapsing them onto identical output would be a genuine collision between
  * two distinct inputs, which is exactly the failure this module exists to
  * prevent.
+ *
+ * `-0` serialises as `0`, the same as `Number.prototype.toString` and
+ * `JSON.stringify` — a deliberate normalisation, unlike the Unicode case
+ * above: `-0 === 0` in JS and they denote the same real number, so this
+ * collapses two representations of one value rather than colliding two
+ * distinct ones. Separately, `Number.isInteger` accepts integers large enough
+ * that `toString` renders them in exponential notation (e.g. `1e21` →
+ * `"1e+21"`); that output is still valid, round-trip-stable JSON, so it is
+ * accepted — "non-integer numbers are rejected" is about fractional and
+ * non-finite values, not decimal-vs-exponential formatting.
+ *
+ * Every array index must be an own property. `Array.prototype.map` skips a
+ * hole (from `new Array(n)`, `arr.length = n`, or `delete arr[i]`) but
+ * `Array.prototype.join` still renders its slot as empty — so without an
+ * explicit per-index check, `[]` and `new Array(1)` would serialise
+ * identically. A hole is rejected the same way an explicit `undefined` array
+ * element already is, since both read as `undefined` and are otherwise
+ * indistinguishable.
+ *
+ * Only own data properties are serialised. An accessor (`get`/`set`) is
+ * rejected — via `Object.getOwnPropertyDescriptors`, never invoked — rather
+ * than read, because invoking it could return a different value on every
+ * call, making one logical object hash differently each time. Detecting
+ * accessors this way, instead of through `Object.entries`/bracket access,
+ * also means a `Proxy`'s `get` trap is never triggered, so a proxy that would
+ * otherwise return different values per read cannot destabilise the hash
+ * through that path either.
+ *
+ * Nesting deeper than {@link MAX_DEPTH} — including a circular reference — is
+ * rejected as `CanonicalizationError` rather than being left to surface as a
+ * native `RangeError`, so a caller that catches only this module's typed
+ * error does not also need to catch `RangeError` to be safe.
  */
 export function canonicalJson(value: CanonicalValue): string {
-  return serialize(value, '$');
+  return serialize(value, '$', 0);
 }
 
-function serialize(value: unknown, path: string): string {
+function serialize(value: unknown, path: string, depth: number): string {
+  if (depth > MAX_DEPTH) {
+    throw new CanonicalizationError(
+      `Exceeded maximum nesting depth of ${MAX_DEPTH.toString()} at ${path}; this is also how a circular reference is rejected`,
+    );
+  }
+
   if (value === null) return 'null';
 
   switch (typeof value) {
@@ -63,23 +110,47 @@ function serialize(value: unknown, path: string): string {
   }
 
   if (Array.isArray(value)) {
-    return `[${value.map((item: unknown, i: number) => serialize(item, `${path}[${i.toString()}]`)).join(',')}]`;
+    const arr = value as readonly unknown[];
+    const items: string[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      if (!Object.hasOwn(arr, i)) {
+        throw new CanonicalizationError(`Sparse array hole at ${path}[${i.toString()}]`);
+      }
+      items.push(serialize(arr[i], `${path}[${i.toString()}]`, depth + 1));
+    }
+    return `[${items.join(',')}]`;
   }
 
   if (Object.getPrototypeOf(value) !== Object.prototype) {
     throw new CanonicalizationError(`Only plain objects are supported, at ${path}`);
   }
 
+  // `Object.getOwnPropertyDescriptors`, not `Object.entries`/bracket access:
+  // reading a data property's descriptor never invokes user code, whereas
+  // `value[key]` invokes an accessor's getter (or a Proxy's `get` trap) —
+  // either of which could legitimately return something different on every
+  // call, making one object hash differently each time it is serialised.
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+
   // Two-way comparator, not the three-way `a < b ? -1 : a > b ? 1 : 0`: the
-  // keys here come from `Object.entries` on a single object, so `a === b` is
+  // keys here come from a single object's own properties, so `a === b` is
   // unreachable — a JS object cannot have two own enumerable string keys
   // that are equal. `<`/`>` (never `localeCompare`) is still what matters:
   // explicit UTF-16 code unit order, not locale-dependent collation, so the
   // output — and the hash it feeds — is the same on every machine.
-  const entries = Object.entries(value as Record<string, unknown>)
+  const entries = Object.entries(descriptors)
+    .filter(([, d]) => d.enumerable)
+    .map(([k, d]): [string, unknown] => {
+      if (!('value' in d)) {
+        throw new CanonicalizationError(
+          `Accessor property at ${path}.${k}; only data properties are supported`,
+        );
+      }
+      return [k, d.value as unknown];
+    })
     .filter(([, v]) => v !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([k, v]) => `${JSON.stringify(k)}:${serialize(v, `${path}.${k}`)}`);
+    .map(([k, v]) => `${JSON.stringify(k)}:${serialize(v, `${path}.${k}`, depth + 1)}`);
 
   return `{${entries.join(',')}}`;
 }
