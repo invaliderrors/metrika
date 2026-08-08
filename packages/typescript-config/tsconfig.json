@@ -1,0 +1,10 @@
+{
+  "extends": "./node.json",
+  "compilerOptions": { "noEmit": true },
+  // The fixture files under test/fixtures/ are deliberately invalid — each
+  // one exists to trip a single strict flag — and are compiled separately,
+  // on demand, by flags.test.ts via test/tsconfig.fixtures.json. They must
+  // stay out of this package-wide program, or a normal typecheck run would
+  // fail on input that is supposed to fail.
+  "include": ["test/flags.test.ts"]
+}

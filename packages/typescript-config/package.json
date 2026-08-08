@@ -9,10 +9,16 @@
     "react-library.json"
   ],
   "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
     "test:unit": "vitest run"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.8.0",
+    "eslint-config-prettier": "10.1.8",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.66.0",
     "vitest": "4.1.10"
   }
 }

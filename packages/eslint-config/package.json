@@ -7,6 +7,8 @@
     ".": "./src/index.js"
   },
   "scripts": {
+    "lint": "eslint -c ./eslint.config.js .",
+    "typecheck": "tsc -b",
     "test:unit": "vitest run"
   },
   "dependencies": {
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@metrika/typescript-config": "workspace:*",
     "eslint": "10.8.0",
+    "typescript": "6.0.3",
     "vitest": "4.1.10"
   }
 }
