@@ -6,17 +6,17 @@
 
 ## 1. What gets tested hardest, and why
 
-| Code | Target | Why |
-|---|---|---|
-| `packages/pricing-engine` | **100% line + branch** | It decides what customers pay. It is pure and small. There is no excuse |
-| `apps/api/src/authorization/policies` | **100% branch** | A missed branch is a cross-tenant data leak |
-| State machine transition tables | **100%, exhaustive** | An unreachable state or a permitted illegal transition is a corrupt order |
-| Money and unit conversion | **100%** | A rounding bug compounds silently across every quote |
-| Domain services | ≥ 90% | Business rules |
-| Contract schemas | Parse/reject table per schema | The boundary against untyped external data |
-| API modules | ≥ 70% | Integration-tested against a real database |
-| Python workers | ≥ 60% + property tests | Geometry maths deserves property testing more than line coverage |
-| UI components | untargeted | Behaviour is covered by E2E; component coverage measures the wrong thing |
+| Code                                  | Target                        | Why                                                                       |
+| ------------------------------------- | ----------------------------- | ------------------------------------------------------------------------- |
+| `packages/pricing-engine`             | **100% line + branch**        | It decides what customers pay. It is pure and small. There is no excuse   |
+| `apps/api/src/authorization/policies` | **100% branch**               | A missed branch is a cross-tenant data leak                               |
+| State machine transition tables       | **100%, exhaustive**          | An unreachable state or a permitted illegal transition is a corrupt order |
+| Money and unit conversion             | **100%**                      | A rounding bug compounds silently across every quote                      |
+| Domain services                       | ≥ 90%                         | Business rules                                                            |
+| Contract schemas                      | Parse/reject table per schema | The boundary against untyped external data                                |
+| API modules                           | ≥ 70%                         | Integration-tested against a real database                                |
+| Python workers                        | ≥ 60% + property tests        | Geometry maths deserves property testing more than line coverage          |
+| UI components                         | untargeted                    | Behaviour is covered by E2E; component coverage measures the wrong thing  |
 
 Coverage is enforced per-package in CI. A pull request that lowers `pricing-engine` below 100% fails.
 
@@ -59,12 +59,15 @@ Also property-tested: determinism (same input twice → identical bytes), monoto
 
 ```ts
 describe('QUOTE_TRANSITIONS', () => {
-  it('every state is reachable from the initial state', () => { /* BFS over the table */ });
-  it('terminal states have no outgoing transitions', () => { /* ... */ });
-  it.each(illegalPairs(QUOTE_TRANSITIONS))(
-    'rejects %s --%s-->', (from, event) => {
-      expect(() => transition({ state: from }, event, ctx)).toThrow(InvalidStateTransitionError);
-    });
+  it('every state is reachable from the initial state', () => {
+    /* BFS over the table */
+  });
+  it('terminal states have no outgoing transitions', () => {
+    /* ... */
+  });
+  it.each(illegalPairs(QUOTE_TRANSITIONS))('rejects %s --%s-->', (from, event) => {
+    expect(() => transition({ state: from }, event, ctx)).toThrow(InvalidStateTransitionError);
+  });
 });
 ```
 
@@ -83,7 +86,7 @@ Every policy is a pure function, so the test is a truth table over (subject kind
 ```ts
 // packages/testing/src/harness.ts
 export async function withDatabase<T>(fn: (db: PrismaClient) => Promise<T>): Promise<T>;
-export async function withStorage<T>(fn: (s3: S3Client) => Promise<T>): Promise<T>;      // MinIO
+export async function withStorage<T>(fn: (s3: S3Client) => Promise<T>): Promise<T>; // MinIO
 export async function withTemporal<T>(fn: (env: TestWorkflowEnvironment) => Promise<T>): Promise<T>;
 ```
 
@@ -97,7 +100,7 @@ Covered: repositories against real Postgres (including RLS behaviour), API modul
 it('returns zero rows when the org context does not match', async () => {
   await withOrgContext(orgA, async (db) => {
     const found = await db.project.findUnique({ where: { id: projectOwnedByOrgB } });
-    expect(found).toBeNull();     // RLS, not application logic
+    expect(found).toBeNull(); // RLS, not application logic
   });
 });
 ```
@@ -126,11 +129,11 @@ Runs on every pull request. Adding a tenant-scoped route without an authorizatio
 
 Three boundaries, each with a mechanical check:
 
-| Boundary | Check |
-|---|---|
-| API ↔ client | Generated OpenAPI diffed against a committed baseline; breaking changes fail unless explicitly labelled |
-| Event producers ↔ consumers | A v2 schema must still parse committed v1 payload fixtures |
-| TypeScript ↔ Python | `pnpm contracts:emit` then `git diff --exit-code` |
+| Boundary                     | Check                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| API ↔ client                | Generated OpenAPI diffed against a committed baseline; breaking changes fail unless explicitly labelled |
+| Event producers ↔ consumers | A v2 schema must still parse committed v1 payload fixtures                                              |
+| TypeScript ↔ Python         | `pnpm contracts:emit` then `git diff --exit-code`                                                       |
 
 The third one is the one most likely to be skipped and most likely to bite. A contract change that is not reflected in the pydantic models breaks the build at the moment of the change, not in a worker three weeks later.
 
@@ -142,25 +145,25 @@ The third one is the one most likely to be skipped and most likely to bite. A co
 
 Committed under `fixtures/models/`, **generated by a committed script** wherever possible so they are reproducible and reviewable rather than opaque binaries:
 
-| Fixture | Tests |
-|---|---|
-| `cube-20mm.stl` | Baseline: exact volume 8000 mm³, watertight, 12 triangles |
-| `cube-20mm.3mf` | Unit declaration honoured |
-| `open-box.stl` | Not watertight → volume is `null`, not a number |
-| `non-manifold-edge.stl` | Non-manifold detection, edge sampling for viewer highlight |
-| `self-intersecting.stl` | Detection without a crash |
-| `inverted-normals.stl` | Winding correction, conservative repair path |
-| `degenerate-faces.stl` | Zero-area triangle removal |
-| `disconnected-3-parts.stl` | Component counting |
-| `thin-wall-0.3mm.stl` | Wall-thickness heuristic below nozzle diameter |
-| `ambiguous-units.stl` | 18.4 × 12.7 × 7.2 raw — plausible as metres or as millimetres → must block |
-| `implausible-scale.stl` | Implies a 4 km building → `IMPLAUSIBLE_SCALE` |
-| `huge-20m-triangles.stl` | Memory limits, large-queue routing, timeout behaviour |
-| `truncated-header.stl` | Malformed input handling |
-| `zip-bomb.3mf` | Archive limits |
-| `xml-bomb.3mf` | Entity expansion defence |
-| `obj-with-traversal-mtllib.obj` | Reference stripping |
-| `building-maquette.3mf` | Realistic end-to-end fixture for the regression matrix |
+| Fixture                         | Tests                                                                      |
+| ------------------------------- | -------------------------------------------------------------------------- |
+| `cube-20mm.stl`                 | Baseline: exact volume 8000 mm³, watertight, 12 triangles                  |
+| `cube-20mm.3mf`                 | Unit declaration honoured                                                  |
+| `open-box.stl`                  | Not watertight → volume is `null`, not a number                            |
+| `non-manifold-edge.stl`         | Non-manifold detection, edge sampling for viewer highlight                 |
+| `self-intersecting.stl`         | Detection without a crash                                                  |
+| `inverted-normals.stl`          | Winding correction, conservative repair path                               |
+| `degenerate-faces.stl`          | Zero-area triangle removal                                                 |
+| `disconnected-3-parts.stl`      | Component counting                                                         |
+| `thin-wall-0.3mm.stl`           | Wall-thickness heuristic below nozzle diameter                             |
+| `ambiguous-units.stl`           | 18.4 × 12.7 × 7.2 raw — plausible as metres or as millimetres → must block |
+| `implausible-scale.stl`         | Implies a 4 km building → `IMPLAUSIBLE_SCALE`                              |
+| `huge-20m-triangles.stl`        | Memory limits, large-queue routing, timeout behaviour                      |
+| `truncated-header.stl`          | Malformed input handling                                                   |
+| `zip-bomb.3mf`                  | Archive limits                                                             |
+| `xml-bomb.3mf`                  | Entity expansion defence                                                   |
+| `obj-with-traversal-mtllib.obj` | Reference stripping                                                        |
+| `building-maquette.3mf`         | Realistic end-to-end fixture for the regression matrix                     |
 
 Each fixture asserts a **specific expected outcome**, including the exact error code for the hostile ones. A security control without a fixture asserting rejection is an intention, not a control.
 
@@ -216,11 +219,11 @@ E2E covers about a dozen flows. It is not where coverage comes from; it is where
 
 Not a large investment, but three specific things are measured because they degrade silently:
 
-| Test | Budget | Cadence |
-|---|---|---|
-| API endpoint latency under a modest load profile (k6) | p95 < 300 ms for reads | Nightly |
+| Test                                                   | Budget                                        | Cadence  |
+| ------------------------------------------------------ | --------------------------------------------- | -------- |
+| API endpoint latency under a modest load profile (k6)  | p95 < 300 ms for reads                        | Nightly  |
 | Query count per endpoint (Prisma middleware assertion) | Per-endpoint budget; fails the test on exceed | Every PR |
-| Viewer memory after 50 mount/unmount cycles | Returns to baseline | Every PR |
+| Viewer memory after 50 mount/unmount cycles            | Returns to baseline                           | Every PR |
 
 The N+1 test is the one that pays for itself. A query-count assertion catches an accidental N+1 the moment it is introduced, when it is a one-line fix, rather than in production when it is a 400-query page load.
 

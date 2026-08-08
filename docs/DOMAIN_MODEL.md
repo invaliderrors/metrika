@@ -8,12 +8,12 @@
 
 Every entity in this system falls into exactly one of four categories, and the category determines its rules:
 
-| Category | Mutability | Examples | Rules |
-|---|---|---|---|
-| **Identity** | Mutable | `User`, `Organization`, `Project`, `Model`, `Material`, `PrinterProfile` | Human-facing, renameable, soft-deletable. Never referenced by a quote |
-| **Version** | Immutable after publish | `ModelVersion`, `PrintProfileVersion`, `PrinterProfileVersion`, `MaterialProfileVersion`, `PricingRuleSetVersion` | Content-hashed, append-only, archived not deleted. **This is what quotes reference** |
-| **Computation** | Immutable | `GeometryAnalysis`, `SliceResult`, `Quote` (once `READY`) | Derived from versioned inputs; regenerable but never edited |
-| **Ledger** | Append-only | `StatusTransition`, `AuditLog`, `WebhookEvent`, `OutboxEvent`, `RepairLog` | No updates, no deletes, ever |
+| Category        | Mutability              | Examples                                                                                                          | Rules                                                                                |
+| --------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Identity**    | Mutable                 | `User`, `Organization`, `Project`, `Model`, `Material`, `PrinterProfile`                                          | Human-facing, renameable, soft-deletable. Never referenced by a quote                |
+| **Version**     | Immutable after publish | `ModelVersion`, `PrintProfileVersion`, `PrinterProfileVersion`, `MaterialProfileVersion`, `PricingRuleSetVersion` | Content-hashed, append-only, archived not deleted. **This is what quotes reference** |
+| **Computation** | Immutable               | `GeometryAnalysis`, `SliceResult`, `Quote` (once `READY`)                                                         | Derived from versioned inputs; regenerable but never edited                          |
+| **Ledger**      | Append-only             | `StatusTransition`, `AuditLog`, `WebhookEvent`, `OutboxEvent`, `RepairLog`                                        | No updates, no deletes, ever                                                         |
 
 If you are unsure where a new field belongs, ask which category the entity is in. A mutable field on a Version entity is a bug that silently breaks reproducibility.
 
@@ -295,7 +295,7 @@ quantity, unitPriceMinor BigInt, lineTotalMinor BigInt, lineTrace Json
 
 **`Refund`** — a **separate entity**, not a payment status. `paymentId`, `amountMinor`, `reason`, `state`, `providerRefundId`, `requestedByUserId`, `processedAt`. Two partial refunds of different amounts cannot be represented as a status on `Payment`; this is a correction to the original state list.
 
-**`WebhookEvent`** — `provider`, `providerEventId`, `@@unique([provider, providerEventId])`, `eventType`, `payload Json`, `signatureVerified Boolean`, `receivedAt`, `processedAt`, `processingAttempts`, `failureDetail`. The unique constraint *is* webhook idempotency.
+**`WebhookEvent`** — `provider`, `providerEventId`, `@@unique([provider, providerEventId])`, `eventType`, `payload Json`, `signatureVerified Boolean`, `receivedAt`, `processedAt`, `processingAttempts`, `failureDetail`. The unique constraint _is_ webhook idempotency.
 
 ### 2.6 Manufacturing
 
@@ -320,7 +320,7 @@ reprintOfJobId?, failureCode?, notes
 
 **`StatusTransition`** — append-only, one row per state change of any entity. `entityType`, `entityId`, `fromState`, `toState`, `event`, `actorType` (`USER | SYSTEM | WORKFLOW | ADMIN`), `actorId?`, `reason?`, `metadata Json`, `occurredAt`. Written in the same transaction as the entity update, always.
 
-**`AuditLog`** — append-only, for the actions §63 names. `organizationId?`, `actorUserId?`, `actorType`, `action`, `resourceType`, `resourceId`, `before Json?`, `after Json?`, `ipAddress`, `userAgent`, `requestId`, `occurredAt`. Distinct from `StatusTransition`: transitions record *what the system did*, audit records *who did something consequential*. Both exist because they answer different questions.
+**`AuditLog`** — append-only, for the actions §63 names. `organizationId?`, `actorUserId?`, `actorType`, `action`, `resourceType`, `resourceId`, `before Json?`, `after Json?`, `ipAddress`, `userAgent`, `requestId`, `occurredAt`. Distinct from `StatusTransition`: transitions record _what the system did_, audit records _who did something consequential_. Both exist because they answer different questions.
 
 **`OutboxEvent`** — `id`, `aggregateType`, `aggregateId`, `eventType`, `eventVersion`, `payload Json`, `createdAt`, `processedAt?`, `attempts`, `lastError?`. Partial index on `WHERE processedAt IS NULL` keeps the poller's query trivial regardless of table size.
 
@@ -347,8 +347,8 @@ reprintOfJobId?, failureCode?, notes
 ```ts
 // packages/contracts/src/money.ts
 export const Money = z.object({
-  amountMinor: z.string().regex(/^-?\d+$/),   // serialised as string; bigint in memory
-  currency: CurrencyCode,                      // 'COP' | 'USD' | ...
+  amountMinor: z.string().regex(/^-?\d+$/), // serialised as string; bigint in memory
+  currency: CurrencyCode, // 'COP' | 'USD' | ...
   exponent: z.number().int().min(0).max(4),
 });
 ```
@@ -373,7 +373,7 @@ Rules, all non-negotiable:
 Display uses `Intl.NumberFormat` fed the exponent explicitly:
 
 ```ts
-formatMoney({ amountMinor: 350000n, currency: 'COP', exponent: 0 })  // "$ 350.000"
+formatMoney({ amountMinor: 350000n, currency: 'COP', exponent: 0 }); // "$ 350.000"
 ```
 
 ---
@@ -386,7 +386,7 @@ Two layers of defence:
 
 **Naming is mandatory.** Every numeric field, column, variable and contract property carries its unit as a suffix: `lengthMm`, `volumeMm3`, `massG`, `durationS`, `costMinor`. A lint rule flags physical-quantity fields without a recognised suffix. This alone prevents most unit bugs and costs nothing.
 
-**Branding for the five quantities that flow into money.** `Millimeters`, `CubicMillimeters`, `Grams`, `Seconds`, `MinorUnits` are branded via Zod. They are *not* applied to every number in the system — full unit branding requires a units algebra (`add`, `mul`, `div` helpers for every pair), which is real friction for real but modest benefit. Branding is applied where a mix-up becomes a wrong price:
+**Branding for the five quantities that flow into money.** `Millimeters`, `CubicMillimeters`, `Grams`, `Seconds`, `MinorUnits` are branded via Zod. They are _not_ applied to every number in the system — full unit branding requires a units algebra (`add`, `mul`, `div` helpers for every pair), which is real friction for real but modest benefit. Branding is applied where a mix-up becomes a wrong price:
 
 ```ts
 export const Grams = z.number().nonnegative().brand<'Grams'>();
@@ -404,7 +404,9 @@ Branded IDs follow the same pattern for every entity. Conversion from database s
 
 ```ts
 // apps/api/src/infrastructure/persistence/branding.ts — importable ONLY from this directory
-export function brandUnsafe<T extends string>(value: string): T { return value as T; }
+export function brandUnsafe<T extends string>(value: string): T {
+  return value as T;
+}
 ```
 
 Parsing every ID out of the database with Zod would be wasteful; a single, lint-restricted, named assertion in the mapping layer is the honest trade. It is named `brandUnsafe` so nobody reaches for it casually.
@@ -418,24 +420,25 @@ STL and OBJ do not reliably encode units. 3MF does. This is the highest-conseque
 ```jsonc
 {
   "unit": "MM",
-  "source": "USER_CONFIRMED",          // FILE_DECLARED | INFERRED | USER_CONFIRMED
-  "confidence": "CERTAIN",             // CERTAIN | LIKELY | AMBIGUOUS
+  "source": "USER_CONFIRMED", // FILE_DECLARED | INFERRED | USER_CONFIRMED
+  "confidence": "CERTAIN", // CERTAIN | LIKELY | AMBIGUOUS
   "inferenceEvidence": {
     "rawBoundingBox": [184.2, 127.4, 72.1],
     "candidates": [
-      { "unit": "MM",  "impliedRealSizeM": 0.184, "plausibility": 0.35 },
-      { "unit": "M",   "impliedRealSizeM": 184.2, "plausibility": 0.55 },
-      { "unit": "CM",  "impliedRealSizeM": 1.84,  "plausibility": 0.10 }
-    ]
+      { "unit": "MM", "impliedRealSizeM": 0.184, "plausibility": 0.35 },
+      { "unit": "M", "impliedRealSizeM": 184.2, "plausibility": 0.55 },
+      { "unit": "CM", "impliedRealSizeM": 1.84, "plausibility": 0.1 },
+    ],
   },
-  "confirmedByUserId": "...", "confirmedAt": "..."
+  "confirmedByUserId": "...",
+  "confirmedAt": "...",
 }
 ```
 
 Rules:
 
 - 3MF declares its unit → `source: FILE_DECLARED`, `confidence: CERTAIN`. Trust it.
-- STL/OBJ → run inference, then classify. If a single candidate is dominant *and* the implied real-world size is plausible for an architectural model, mark `LIKELY` and proceed while surfacing it prominently in the UI. Otherwise mark `AMBIGUOUS`.
+- STL/OBJ → run inference, then classify. If a single candidate is dominant _and_ the implied real-world size is plausible for an architectural model, mark `LIKELY` and proceed while surfacing it prominently in the UI. Otherwise mark `AMBIGUOUS`.
 - **`AMBIGUOUS` blocks quoting.** The `ModelVersion` enters `AWAITING_UNIT_CONFIRMATION` and the workflow waits on a `confirmUnits` signal (7-day timeout). No price is ever computed from an unconfirmed ambiguous unit.
 - **Plausibility bounds are hard**: reject outright any interpretation implying a printed dimension below 0.1 mm or a real-world dimension above 1 km, as `IMPLAUSIBLE_SCALE`.
 - The inference heuristic is labelled a heuristic everywhere it appears.
@@ -446,10 +449,15 @@ Rules:
 
 ```ts
 export const ScaleSpec = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('RATIO'), denominator: z.number().int().positive() }),      // 1:100
+  z.object({ kind: z.literal('RATIO'), denominator: z.number().int().positive() }), // 1:100
   z.object({ kind: z.literal('ABSOLUTE_FACTOR'), factor: DecimalString }),
   z.object({ kind: z.literal('TARGET_LONGEST_EDGE'), lengthMm: Millimeters }),
-  z.object({ kind: z.literal('TARGET_BBOX'), xMm: Millimeters, yMm: Millimeters, zMm: Millimeters }),
+  z.object({
+    kind: z.literal('TARGET_BBOX'),
+    xMm: Millimeters,
+    yMm: Millimeters,
+    zMm: Millimeters,
+  }),
 ]);
 ```
 
@@ -461,7 +469,7 @@ The fit check is a pure function evaluated against the printer profile version:
 type FitResult =
   | { kind: 'FITS'; printerProfileVersionId: PrinterProfileVersionId; marginMm: Millimeters }
   | { kind: 'FITS_ROTATED'; rotation: Orientation; marginMm: Millimeters }
-  | { kind: 'REQUIRES_SEGMENTATION'; overflowMm: Vec3Mm; suggestedPartCount: number }  // V2
+  | { kind: 'REQUIRES_SEGMENTATION'; overflowMm: Vec3Mm; suggestedPartCount: number } // V2
   | { kind: 'EXCEEDS_ALL_PRINTERS'; largestAvailableMm: Vec3Mm };
 ```
 
@@ -483,16 +491,16 @@ Scale is stored on `PrintConfiguration`, participates in the content hash, and t
 
 ### Conventions
 
-| Concern | Decision |
-|---|---|
-| Primary keys | UUID v7 where available (time-sortable, index-friendly), `@db.Uuid` |
-| Timestamps | `createdAt DateTime @default(now())`, `updatedAt DateTime @updatedAt`, both `@db.Timestamptz(3)`, always UTC |
-| Enums | Postgres enums via Prisma `enum`. Adding a value is additive and safe; removing one requires expand/contract |
-| Money | `BigInt` + `String @db.Char(3)` currency + `Int` exponent |
-| Physical quantities | `Decimal @db.Decimal(p,s)` with declared precision |
-| Hashes | `String @db.Char(64)` |
-| Soft delete | `deletedAt DateTime?` on Identity entities only |
-| JSONB | `Json @db.JsonB` — never `Json` (text) |
+| Concern             | Decision                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Primary keys        | UUID v7 where available (time-sortable, index-friendly), `@db.Uuid`                                          |
+| Timestamps          | `createdAt DateTime @default(now())`, `updatedAt DateTime @updatedAt`, both `@db.Timestamptz(3)`, always UTC |
+| Enums               | Postgres enums via Prisma `enum`. Adding a value is additive and safe; removing one requires expand/contract |
+| Money               | `BigInt` + `String @db.Char(3)` currency + `Int` exponent                                                    |
+| Physical quantities | `Decimal @db.Decimal(p,s)` with declared precision                                                           |
+| Hashes              | `String @db.Char(64)`                                                                                        |
+| Soft delete         | `deletedAt DateTime?` on Identity entities only                                                              |
+| JSONB               | `Json @db.JsonB` — never `Json` (text)                                                                       |
 
 ### Cascade behaviour — deliberate, per relation
 
@@ -531,23 +539,23 @@ Every JSONB payload has a Zod schema in `packages/contracts` and is parsed on re
 
 ### Indexes
 
-| Index | Purpose |
-|---|---|
-| `(organizationId, createdAt DESC)` on `Project`, `Model`, `Quote`, `Order` | Every tenant list view; supports cursor pagination directly |
-| `(projectId, createdAt DESC)` on `Model` | Project detail |
-| `(modelId, versionNumber DESC)` unique on `ModelVersion` | Version list + next-version computation |
-| `(modelVersionId, analyzerVersion)` unique on `GeometryAnalysis` | Idempotency |
-| `(modelVersionId, kind, producerVersion)` unique on `ModelDerivative` | Idempotency + lookup |
-| `cacheKey` unique on `SliceJob` | The slice cache; the single most valuable index in the schema |
-| `(modelVersionId, contentHash)` unique on `PrintConfiguration` | Configuration dedup |
-| `quoteId` unique on `Order` | One quote → at most one order |
-| `(provider, providerEventId)` unique on `WebhookEvent` | Webhook idempotency |
-| `(state) WHERE state = 'READY'` partial on `Quote` | Expiry sweeper stays fast as the table grows |
-| `(processedAt) WHERE processedAt IS NULL` partial on `OutboxEvent` | Poller query is O(unprocessed) |
-| `(entityType, entityId, occurredAt DESC)` on `StatusTransition` | Entity history |
-| `(organizationId, occurredAt DESC)` on `AuditLog` | Audit review |
-| `(state, priority DESC, plannedStartAt)` on `ManufacturingJob` | The operator's work queue |
-| GIN on `GeometryAnalysis.heuristics` | **Only if** admin analytics actually query it — added when a query exists, not speculatively |
+| Index                                                                      | Purpose                                                                                      |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `(organizationId, createdAt DESC)` on `Project`, `Model`, `Quote`, `Order` | Every tenant list view; supports cursor pagination directly                                  |
+| `(projectId, createdAt DESC)` on `Model`                                   | Project detail                                                                               |
+| `(modelId, versionNumber DESC)` unique on `ModelVersion`                   | Version list + next-version computation                                                      |
+| `(modelVersionId, analyzerVersion)` unique on `GeometryAnalysis`           | Idempotency                                                                                  |
+| `(modelVersionId, kind, producerVersion)` unique on `ModelDerivative`      | Idempotency + lookup                                                                         |
+| `cacheKey` unique on `SliceJob`                                            | The slice cache; the single most valuable index in the schema                                |
+| `(modelVersionId, contentHash)` unique on `PrintConfiguration`             | Configuration dedup                                                                          |
+| `quoteId` unique on `Order`                                                | One quote → at most one order                                                                |
+| `(provider, providerEventId)` unique on `WebhookEvent`                     | Webhook idempotency                                                                          |
+| `(state) WHERE state = 'READY'` partial on `Quote`                         | Expiry sweeper stays fast as the table grows                                                 |
+| `(processedAt) WHERE processedAt IS NULL` partial on `OutboxEvent`         | Poller query is O(unprocessed)                                                               |
+| `(entityType, entityId, occurredAt DESC)` on `StatusTransition`            | Entity history                                                                               |
+| `(organizationId, occurredAt DESC)` on `AuditLog`                          | Audit review                                                                                 |
+| `(state, priority DESC, plannedStartAt)` on `ManufacturingJob`             | The operator's work queue                                                                    |
+| GIN on `GeometryAnalysis.heuristics`                                       | **Only if** admin analytics actually query it — added when a query exists, not speculatively |
 
 ### Row-level security
 
@@ -573,13 +581,13 @@ Every machine is a declared transition table in `packages/contracts`, evaluated 
 type Transition<S extends string, E extends string> = { from: S; event: E; to: S; guard?: string };
 
 export const QUOTE_TRANSITIONS = [
-  { from: 'DRAFT',       event: 'CALCULATION_STARTED', to: 'CALCULATING' },
+  { from: 'DRAFT', event: 'CALCULATION_STARTED', to: 'CALCULATING' },
   { from: 'CALCULATING', event: 'CALCULATION_SUCCEEDED', to: 'READY' },
-  { from: 'CALCULATING', event: 'CALCULATION_FAILED',    to: 'FAILED' },
-  { from: 'READY',       event: 'ACCEPTED',              to: 'ACCEPTED', guard: 'notExpired' },
-  { from: 'READY',       event: 'EXPIRED',               to: 'EXPIRED' },
-  { from: 'READY',       event: 'SUPERSEDED',            to: 'SUPERSEDED' },
-  { from: 'FAILED',      event: 'RETRIED',               to: 'CALCULATING' },
+  { from: 'CALCULATING', event: 'CALCULATION_FAILED', to: 'FAILED' },
+  { from: 'READY', event: 'ACCEPTED', to: 'ACCEPTED', guard: 'notExpired' },
+  { from: 'READY', event: 'EXPIRED', to: 'EXPIRED' },
+  { from: 'READY', event: 'SUPERSEDED', to: 'SUPERSEDED' },
+  { from: 'FAILED', event: 'RETRIED', to: 'CALCULATING' },
 ] as const satisfies readonly Transition<QuoteState, QuoteEvent>[];
 ```
 
@@ -617,20 +625,20 @@ Changing configuration on a `READY` quote creates a **new quote** and marks the 
 
 `PENDING → {REQUIRES_ACTION → } PROCESSING → {SUCCEEDED | FAILED | CANCELLED}`. Terminal at `SUCCEEDED`. Refunds are `Refund` rows, not payment states.
 
-**Payment state and order state are not coupled.** `PaymentSucceeded` is an *event* that the order state machine may consume; a failed payment does not automatically fail an order (the customer may retry with another method). This is §76 taken literally.
+**Payment state and order state are not coupled.** `PaymentSucceeded` is an _event_ that the order state machine may consume; a failed payment does not automatically fail an order (the customer may retry with another method). This is §76 taken literally.
 
 ---
 
 ## 8. Transaction boundaries
 
-| Operation | Atomic unit | Notes |
-|---|---|---|
-| Upload completion | `FileAsset` verify + `ModelVersion` transition + `StatusTransition` + `OutboxEvent` | One transaction; the workflow starts from the outbox after commit |
-| Analysis persistence | `GeometryAnalysis` + `GeometryIssue[]` + `ModelDerivative[]` + transition + outbox | One transaction, idempotent via the unique analyzer-version constraint |
-| Quote generation | `SliceJob` + `SliceResult` + `Quote` + `QuoteItem[]` + transition | One transaction after the workflow returns; the slice cache lookup happens before it |
+| Operation                             | Atomic unit                                                                         | Notes                                                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Upload completion                     | `FileAsset` verify + `ModelVersion` transition + `StatusTransition` + `OutboxEvent` | One transaction; the workflow starts from the outbox after commit                                                      |
+| Analysis persistence                  | `GeometryAnalysis` + `GeometryIssue[]` + `ModelDerivative[]` + transition + outbox  | One transaction, idempotent via the unique analyzer-version constraint                                                 |
+| Quote generation                      | `SliceJob` + `SliceResult` + `Quote` + `QuoteItem[]` + transition                   | One transaction after the workflow returns; the slice cache lookup happens before it                                   |
 | **Quote acceptance → order creation** | `Quote` → `ACCEPTED` + `Order` + `OrderItem[]` (snapshotted) + transitions + outbox | **The most important transaction in the system.** `Order.quoteId` unique means a double-click cannot create two orders |
-| Payment webhook | `WebhookEvent` insert (unique constraint dedupes) + `Payment` transition + outbox | Insert-first, process-after; a duplicate webhook fails the insert and returns 200 |
-| Manufacturing job creation | `ManufacturingJob[]` for every `OrderItem` + transitions | Triggered by `PaymentSucceeded` from the outbox |
+| Payment webhook                       | `WebhookEvent` insert (unique constraint dedupes) + `Payment` transition + outbox   | Insert-first, process-after; a duplicate webhook fails the insert and returns 200                                      |
+| Manufacturing job creation            | `ManufacturingJob[]` for every `OrderItem` + transitions                            | Triggered by `PaymentSucceeded` from the outbox                                                                        |
 
 **External systems are never inside a database transaction.** Temporal is started from the outbox after commit; S3 writes happen in workers and are referenced by key afterwards; payment provider calls happen outside and are reconciled by webhook. There are no distributed transactions in this system — the outbox plus idempotent consumers is the entire mechanism, and it is sufficient because every consumer is idempotent by a database constraint.
 
@@ -638,16 +646,16 @@ Changing configuration on a `READY` quote creates a **new quote** and marks the 
 
 ## 9. Data retention
 
-| Data | Retention | Mechanism |
-|---|---|---|
-| Original models | Life of the account + 90 days, then Glacier IR; deleted 30 days after account deletion | S3 lifecycle + deletion workflow |
-| Preview derivatives | Regenerable — 180 days after last access | S3 lifecycle |
-| Slice inputs / G-code | 2 years (commercial evidence for a delivered order) | S3 lifecycle |
-| Abandoned upload sessions | 7 days | Scheduled cleanup job + S3 lifecycle on `quarantine/` |
-| Expired quotes | Retained 2 years (pricing forensics), then archived | Archival job |
-| Audit logs | 7 years | Partitioned by month; never deleted before then |
-| `StatusTransition` | 2 years, then archived to S3 as Parquet | Partitioned by month |
-| `WebhookEvent` payloads | 1 year | Payload nulled, row retained for idempotency forever |
-| Deleted accounts | Personal data purged in 30 days; anonymised commercial records retained for legal/accounting | Deletion workflow with a documented data map |
+| Data                      | Retention                                                                                    | Mechanism                                             |
+| ------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Original models           | Life of the account + 90 days, then Glacier IR; deleted 30 days after account deletion       | S3 lifecycle + deletion workflow                      |
+| Preview derivatives       | Regenerable — 180 days after last access                                                     | S3 lifecycle                                          |
+| Slice inputs / G-code     | 2 years (commercial evidence for a delivered order)                                          | S3 lifecycle                                          |
+| Abandoned upload sessions | 7 days                                                                                       | Scheduled cleanup job + S3 lifecycle on `quarantine/` |
+| Expired quotes            | Retained 2 years (pricing forensics), then archived                                          | Archival job                                          |
+| Audit logs                | 7 years                                                                                      | Partitioned by month; never deleted before then       |
+| `StatusTransition`        | 2 years, then archived to S3 as Parquet                                                      | Partitioned by month                                  |
+| `WebhookEvent` payloads   | 1 year                                                                                       | Payload nulled, row retained for idempotency forever  |
+| Deleted accounts          | Personal data purged in 30 days; anonymised commercial records retained for legal/accounting | Deletion workflow with a documented data map          |
 
 Retaining the `WebhookEvent` row forever while nulling its payload matters: the idempotency guarantee must outlive the data-retention window, or a replayed old webhook could be processed twice.

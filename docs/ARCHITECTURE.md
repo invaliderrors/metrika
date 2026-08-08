@@ -4,24 +4,24 @@
 > **Audience:** Any senior engineer picking up implementation without re-deriving fundamental decisions.
 > **Scope:** This document is the spine. Deep-dives live in sibling documents and are linked inline.
 
-| Deep-dive | Covers |
-|---|---|
-| [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) | Entities, relationships, Prisma design, state machines, money, units |
-| [3D_PIPELINE.md](./3D_PIPELINE.md) | Ingest, geometry analysis, repair, preview generation, viewer, scale & fit |
-| [SLICING.md](./SLICING.md) | Slicer abstraction, containerisation, caching, reproducibility, licensing |
-| [PRICING_ENGINE.md](./PRICING_ENGINE.md) | Pure pricing kernel, versioned rule sets, trace, rounding, tax |
-| [CONTRACTS_AND_API.md](./CONTRACTS_AND_API.md) | Zod-first contracts, ts-rest, REST design, errors, API client |
-| [WORKFLOWS.md](./WORKFLOWS.md) | Temporal workflows/activities, events, outbox, idempotency, SSE |
-| [SECURITY.md](./SECURITY.md) | Security architecture + threat model |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) | Tracing, metrics, logging, business KPIs |
-| [TESTING.md](./TESTING.md) | Unit/integration/contract/E2E/geometry/slicer-regression strategy |
-| [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md) | tsconfig, ESLint, Prettier, package builds, versions |
-| [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) | Docker, Terraform, AWS, CI/CD, environments, cost model |
-| [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md) | Clone-to-running, seeds, fixtures |
-| [PRINTER_INTEGRATION.md](./PRINTER_INTEGRATION.md) | PrinterDriver SDK (future hardware) |
-| [ROADMAP.md](./ROADMAP.md) | Phases 0–15, MVP/V1/V2/Future classification, per-task granularity |
-| [RISK_REGISTER.md](./RISK_REGISTER.md) | Technical risks, probability, impact, mitigation |
-| [adr/](./adr/) | Architecture Decision Records |
+| Deep-dive                                                | Covers                                                                     |
+| -------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [DOMAIN_MODEL.md](./DOMAIN_MODEL.md)                     | Entities, relationships, Prisma design, state machines, money, units       |
+| [3D_PIPELINE.md](./3D_PIPELINE.md)                       | Ingest, geometry analysis, repair, preview generation, viewer, scale & fit |
+| [SLICING.md](./SLICING.md)                               | Slicer abstraction, containerisation, caching, reproducibility, licensing  |
+| [PRICING_ENGINE.md](./PRICING_ENGINE.md)                 | Pure pricing kernel, versioned rule sets, trace, rounding, tax             |
+| [CONTRACTS_AND_API.md](./CONTRACTS_AND_API.md)           | Zod-first contracts, ts-rest, REST design, errors, API client              |
+| [WORKFLOWS.md](./WORKFLOWS.md)                           | Temporal workflows/activities, events, outbox, idempotency, SSE            |
+| [SECURITY.md](./SECURITY.md)                             | Security architecture + threat model                                       |
+| [OBSERVABILITY.md](./OBSERVABILITY.md)                   | Tracing, metrics, logging, business KPIs                                   |
+| [TESTING.md](./TESTING.md)                               | Unit/integration/contract/E2E/geometry/slicer-regression strategy          |
+| [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md) | tsconfig, ESLint, Prettier, package builds, versions                       |
+| [INFRASTRUCTURE.md](./INFRASTRUCTURE.md)                 | Docker, Terraform, AWS, CI/CD, environments, cost model                    |
+| [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md)           | Clone-to-running, seeds, fixtures                                          |
+| [PRINTER_INTEGRATION.md](./PRINTER_INTEGRATION.md)       | PrinterDriver SDK (future hardware)                                        |
+| [ROADMAP.md](./ROADMAP.md)                               | Phases 0–15, MVP/V1/V2/Future classification, per-task granularity         |
+| [RISK_REGISTER.md](./RISK_REGISTER.md)                   | Technical risks, probability, impact, mitigation                           |
+| [adr/](./adr/)                                           | Architecture Decision Records                                              |
 
 ---
 
@@ -54,7 +54,7 @@ Non-negotiable invariants, stated once:
 
 ### Why this is not over-engineering
 
-A reasonable reviewer will ask whether Temporal, RLS, content addressing and a versioned pricing kernel are premature for a pre-revenue company. The test applied throughout was: *does removing this create a data-correctness problem that is expensive or impossible to fix later?*
+A reasonable reviewer will ask whether Temporal, RLS, content addressing and a versioned pricing kernel are premature for a pre-revenue company. The test applied throughout was: _does removing this create a data-correctness problem that is expensive or impossible to fix later?_
 
 - **Versioned profiles and pricing** — retrofitting is a data migration against quotes you have already honoured commercially. Keep.
 - **Temporal** — replaceable, but the alternative is hand-writing workflow versioning, which is the genuinely hard part. Keep, hosted.
@@ -90,32 +90,32 @@ This system is being built by a single engineer working with AI coding agents, w
 
 ## 3. Final technology stack
 
-| Layer | Choice | Why it wins | Principal disadvantage |
-|---|---|---|---|
-| Package manager | **pnpm** + workspaces | Strict node_modules prevents phantom dependencies — critical when enforcing package boundaries | Occasional tooling that assumes hoisting |
-| Task runner | **Turborepo** | Content-hash caching of lint/typecheck/test/build; remote cache makes CI cheap | Another config surface; cache invalidation subtleties |
-| Frontend | **Next.js (App Router) + React + TypeScript** | RSC for the data-heavy dashboards, mature ecosystem, Vercel deploy is one less thing to run | App Router complexity; the viewer is entirely client-side regardless |
-| 3D | **Three.js + React Three Fiber + Drei** | Declarative scene graph composes with React state; Drei covers controls/helpers | R3F adds a reconciler layer; perf work sometimes needs to drop to imperative Three |
-| Styling | **Tailwind + shadcn/ui** | shadcn is copy-in, not a dependency — we own and can restyle the components | Copy-in means no upstream fixes; must be maintained |
-| Server state | **TanStack Query** | Caching, dedup, retries, invalidation; SSE updates write into its cache | Learning curve on cache-key discipline |
-| Client state | **Zustand**, two small stores | Minimal, no provider tree, easy to test | Easy to abuse — see §8 for the hard rules |
-| Forms | **React Hook Form + Zod** | The print-configuration form is the only genuinely complex form; RHF handles it without re-render storms | — |
-| API | **NestJS + Fastify adapter** | DI and module boundaries are exactly what a modular monolith needs; Fastify for throughput and schema-first serialisation | Decorator-heavy; Nest's own docs assume Jest and class-validator, both of which we reject |
-| Contracts | **Zod + ts-rest** | One Zod contract yields runtime validation, OpenAPI, server type-checking and a typed TanStack Query client | Smaller community than `@nestjs/swagger`; constrains API shape. See [ADR-0009](./adr/0009-ts-rest-contracts.md) — lock-in is shallow because the source of truth is Zod |
-| ORM | **Prisma** | Best-in-class migrations and type generation; the schema file is a readable single source of truth | Weak on advanced SQL; `exactOptionalPropertyTypes` friction; RLS needs a client extension |
-| Database | **PostgreSQL 16** | Transactions, JSONB, RLS, partial/expression indexes, `numeric` — every feature this design leans on | — |
-| Orchestration | **Temporal Cloud** | Durable execution with real workflow versioning; workflow ID is a free idempotency key | Learning curve; non-determinism bugs are confusing; a paid dependency |
-| Geometry | **Python + Trimesh + NumPy + SciPy + Manifold3D** | Trimesh is the only mature open mesh-analysis library; Manifold3D gives guaranteed-manifold boolean/repair | Python memory behaviour under large meshes needs hard limits |
-| Slicing | **PrusaSlicer CLI, pinned by image digest** | Industrial-grade, well-understood G-code output, good CLI metrics | **AGPL — requires formal legal review before launch.** See [SLICING.md](./SLICING.md) |
-| Object storage | **Amazon S3** | Presigned uploads, checksums, lifecycle, versioning, per-prefix IAM | — |
-| Cache/locks | **Redis (ElastiCache)** | Rate limiting, ephemeral locks, hot-read cache. **Never a source of truth** | Another managed service to pay for; deferrable to Phase 2 |
-| Auth | **Clerk (authentication only)** | Fast, good Next.js integration, covers Google/Microsoft/email + MFA. **Metrika owns organizations and roles.** | Vendor cost; must resist its Organizations feature. See [ADR-0012](./adr/0012-authentication.md) |
-| Payments | **Provider-agnostic adapter**; Wompi or Mercado Pago first | Colombia needs PSE and Nequi, which Stripe does not offer | Redirect + async-webhook flow is the required superset shape |
-| Observability | **OpenTelemetry → Grafana Cloud**, plus Sentry | One OTLP endpoint for traces/metrics/logs; Grafana-native as required | Free tier limits; Sentry overlaps slightly |
-| Runtime hosting | **Vercel (web) + AWS ECS Fargate (api, workers)** | Vercel for RSC/edge quality; Fargate for containers we control and can resource-limit | Two ops surfaces, two secret stores, cross-origin auth to design deliberately |
-| IaC | **Terraform** | Mature, AWS-complete, reviewable plans | HCL verbosity; state management to set up carefully |
-| Python deps | **uv + pyproject.toml** | Fast, lockfile-based, workspace support | Young relative to pip, but the lockfile is the point |
-| Test runner | **Vitest** (TS), **pytest + Hypothesis** (Python), **Playwright** (E2E), **Testcontainers** | One TS runner for unit and integration; Hypothesis property-tests geometry maths | Nest examples assume Jest; small adaptation cost |
+| Layer           | Choice                                                                                      | Why it wins                                                                                                               | Principal disadvantage                                                                                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Package manager | **pnpm** + workspaces                                                                       | Strict node_modules prevents phantom dependencies — critical when enforcing package boundaries                            | Occasional tooling that assumes hoisting                                                                                                                                |
+| Task runner     | **Turborepo**                                                                               | Content-hash caching of lint/typecheck/test/build; remote cache makes CI cheap                                            | Another config surface; cache invalidation subtleties                                                                                                                   |
+| Frontend        | **Next.js (App Router) + React + TypeScript**                                               | RSC for the data-heavy dashboards, mature ecosystem, Vercel deploy is one less thing to run                               | App Router complexity; the viewer is entirely client-side regardless                                                                                                    |
+| 3D              | **Three.js + React Three Fiber + Drei**                                                     | Declarative scene graph composes with React state; Drei covers controls/helpers                                           | R3F adds a reconciler layer; perf work sometimes needs to drop to imperative Three                                                                                      |
+| Styling         | **Tailwind + shadcn/ui**                                                                    | shadcn is copy-in, not a dependency — we own and can restyle the components                                               | Copy-in means no upstream fixes; must be maintained                                                                                                                     |
+| Server state    | **TanStack Query**                                                                          | Caching, dedup, retries, invalidation; SSE updates write into its cache                                                   | Learning curve on cache-key discipline                                                                                                                                  |
+| Client state    | **Zustand**, two small stores                                                               | Minimal, no provider tree, easy to test                                                                                   | Easy to abuse — see §8 for the hard rules                                                                                                                               |
+| Forms           | **React Hook Form + Zod**                                                                   | The print-configuration form is the only genuinely complex form; RHF handles it without re-render storms                  | —                                                                                                                                                                       |
+| API             | **NestJS + Fastify adapter**                                                                | DI and module boundaries are exactly what a modular monolith needs; Fastify for throughput and schema-first serialisation | Decorator-heavy; Nest's own docs assume Jest and class-validator, both of which we reject                                                                               |
+| Contracts       | **Zod + ts-rest**                                                                           | One Zod contract yields runtime validation, OpenAPI, server type-checking and a typed TanStack Query client               | Smaller community than `@nestjs/swagger`; constrains API shape. See [ADR-0009](./adr/0009-ts-rest-contracts.md) — lock-in is shallow because the source of truth is Zod |
+| ORM             | **Prisma**                                                                                  | Best-in-class migrations and type generation; the schema file is a readable single source of truth                        | Weak on advanced SQL; `exactOptionalPropertyTypes` friction; RLS needs a client extension                                                                               |
+| Database        | **PostgreSQL 16**                                                                           | Transactions, JSONB, RLS, partial/expression indexes, `numeric` — every feature this design leans on                      | —                                                                                                                                                                       |
+| Orchestration   | **Temporal Cloud**                                                                          | Durable execution with real workflow versioning; workflow ID is a free idempotency key                                    | Learning curve; non-determinism bugs are confusing; a paid dependency                                                                                                   |
+| Geometry        | **Python + Trimesh + NumPy + SciPy + Manifold3D**                                           | Trimesh is the only mature open mesh-analysis library; Manifold3D gives guaranteed-manifold boolean/repair                | Python memory behaviour under large meshes needs hard limits                                                                                                            |
+| Slicing         | **PrusaSlicer CLI, pinned by image digest**                                                 | Industrial-grade, well-understood G-code output, good CLI metrics                                                         | **AGPL — requires formal legal review before launch.** See [SLICING.md](./SLICING.md)                                                                                   |
+| Object storage  | **Amazon S3**                                                                               | Presigned uploads, checksums, lifecycle, versioning, per-prefix IAM                                                       | —                                                                                                                                                                       |
+| Cache/locks     | **Redis (ElastiCache)**                                                                     | Rate limiting, ephemeral locks, hot-read cache. **Never a source of truth**                                               | Another managed service to pay for; deferrable to Phase 2                                                                                                               |
+| Auth            | **Clerk (authentication only)**                                                             | Fast, good Next.js integration, covers Google/Microsoft/email + MFA. **Metrika owns organizations and roles.**            | Vendor cost; must resist its Organizations feature. See [ADR-0012](./adr/0012-authentication.md)                                                                        |
+| Payments        | **Provider-agnostic adapter**; Wompi or Mercado Pago first                                  | Colombia needs PSE and Nequi, which Stripe does not offer                                                                 | Redirect + async-webhook flow is the required superset shape                                                                                                            |
+| Observability   | **OpenTelemetry → Grafana Cloud**, plus Sentry                                              | One OTLP endpoint for traces/metrics/logs; Grafana-native as required                                                     | Free tier limits; Sentry overlaps slightly                                                                                                                              |
+| Runtime hosting | **Vercel (web) + AWS ECS Fargate (api, workers)**                                           | Vercel for RSC/edge quality; Fargate for containers we control and can resource-limit                                     | Two ops surfaces, two secret stores, cross-origin auth to design deliberately                                                                                           |
+| IaC             | **Terraform**                                                                               | Mature, AWS-complete, reviewable plans                                                                                    | HCL verbosity; state management to set up carefully                                                                                                                     |
+| Python deps     | **uv + pyproject.toml**                                                                     | Fast, lockfile-based, workspace support                                                                                   | Young relative to pip, but the lockfile is the point                                                                                                                    |
+| Test runner     | **Vitest** (TS), **pytest + Hypothesis** (Python), **Playwright** (E2E), **Testcontainers** | One TS runner for unit and integration; Hypothesis property-tests geometry maths                                          | Nest examples assume Jest; small adaptation cost                                                                                                                        |
 
 ### Stack choices deliberately rejected
 
@@ -250,14 +250,14 @@ apps/workers/pyproject.toml: [tool.uv.workspace] members = ["packages/*", "geome
 
 **Turborepo pipeline** (`turbo.json`):
 
-| Task | Depends on | Cached | Notes |
-|---|---|---|---|
-| `typecheck` | `^typecheck` | yes | `tsc -b`; topological |
-| `lint` | `^typecheck` | yes | type-aware rules need built types of dependencies |
-| `test:unit` | `^typecheck` | yes | no external services |
-| `test:integration` | `^build` | no | Testcontainers; not cached (container state) |
-| `build` | `^build` | yes | only apps and publishable packages |
-| `db:generate` | — | yes | Prisma client; input = `schema.prisma` |
+| Task               | Depends on   | Cached | Notes                                             |
+| ------------------ | ------------ | ------ | ------------------------------------------------- |
+| `typecheck`        | `^typecheck` | yes    | `tsc -b`; topological                             |
+| `lint`             | `^typecheck` | yes    | type-aware rules need built types of dependencies |
+| `test:unit`        | `^typecheck` | yes    | no external services                              |
+| `test:integration` | `^build`     | no     | Testcontainers; not cached (container state)      |
+| `build`            | `^build`     | yes    | only apps and publishable packages                |
+| `db:generate`      | —            | yes    | Prisma client; input = `schema.prisma`            |
 
 Remote caching (Vercel Remote Cache) is enabled from Phase 0 — it is free for this scale and turns a 6-minute CI run into 40 seconds on unchanged packages.
 
@@ -337,20 +337,20 @@ metrika/
 
 ### Per-package specification
 
-| Package | Responsibility | May depend on | Must **not** depend on | Public API | Testing |
-|---|---|---|---|---|---|
-| `packages/contracts` | Single source of truth for every cross-boundary schema: branded IDs, `Money`, unit types, REST contracts, domain/integration event payloads (versioned), shared enums | `zod` only | Anything. No Nest, no Prisma, no React, no Node built-ins beyond types | `./` barrel + `./events`, `./ids`, `./money`, `./units` subpaths | Unit: schema parse/reject tables; **contract tests** asserting event schema backward compatibility |
-| `packages/pricing-engine` | Pure deterministic price computation from a versioned rule set; emits a full trace | `contracts`, `decimal.js` | HTTP, Prisma, Nest, `Date`, `Math.random`, filesystem | `computePrice(input): PriceQuoteResult`, `validateRuleSet`, `RULE_SET_SCHEMA_VERSION` | **100% line + branch.** Golden-file tests; property tests for rounding invariants |
-| `packages/api-client` | Typed HTTP client from the ts-rest contract: auth injection, request IDs, retry policy, error normalisation, cancellation, TanStack Query hooks | `contracts`, `@ts-rest/*`, `@tanstack/react-query` | Prisma, Nest, `apps/*` | `createMetrikaClient(config)`, generated hooks | Unit with MSW; contract tests against the API's generated OpenAPI |
-| `packages/database` | Prisma schema, migrations, seed data, `createPrismaClient()` with RLS + soft-delete + branding extensions | `contracts`, `@prisma/client` | Nest, React, HTTP | `createPrismaClient`, `Prisma` namespace re-export, seed entrypoints | Integration against Testcontainers Postgres; migration up/down smoke tests |
-| `packages/ui` | Design-system primitives only: Button, Input, Dialog, DataTable, Toast, tokens. **No feature components, no data fetching** | `react`, `tailwind`, radix | `api-client`, `contracts`, `database`, `apps/*` | Named component exports; no deep imports | Storybook + interaction tests; a11y assertions |
-| `packages/printer-sdk` | `PrinterDriver` interface, capability model, telemetry types, `NullPrinterDriver` and `SimulatorPrinterDriver`. **No hardware code in MVP** | `contracts` | Order/quote domain, Prisma, Nest | `PrinterDriver`, `PrinterCapabilities`, driver registry | Unit against the simulator; conformance suite reusable by future real drivers |
-| `packages/eslint-config` | Composable flat configs: `base`, `typeChecked`, `react`, `next`, `nest`, `test`, `script` | eslint plugins | Everything else | Named config exports | Fixture-based: files that must and must not error |
-| `packages/typescript-config` | `base`, `node`, `react-library`, `next`, `nest` tsconfigs | — | — | JSON configs | Compile-fixture tests for the strict flags |
-| `packages/testing` | Testcontainers harnesses (Postgres/Redis/MinIO/Temporal test env), entity factories, fixture registry, `FakeSlicerEngine`, `FakeGeometryAnalyzer` | `contracts`, `database`, testcontainers | Production `apps/*` code | Harness + factory exports | Self-tested via the suites that consume it |
-| `apps/api` | All business logic, persistence, authorization, transport | all packages | `apps/web`, `apps/workers` source | REST `/api/v1` + internal workflow endpoints | Unit (services, policies), integration (modules + DB), contract (OpenAPI) |
-| `apps/web` | Presentation and interaction | `contracts`, `api-client`, `ui` | `database`, `pricing-engine`†, `apps/api` source | — | Component, hook, Playwright E2E |
-| `apps/workers` | Stateless geometry and slicing compute | `metrika_core` | Postgres, business rules, pricing | Temporal activity signatures | pytest, Hypothesis, golden-file, slicer regression |
+| Package                      | Responsibility                                                                                                                                                        | May depend on                                      | Must **not** depend on                                                 | Public API                                                                            | Testing                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `packages/contracts`         | Single source of truth for every cross-boundary schema: branded IDs, `Money`, unit types, REST contracts, domain/integration event payloads (versioned), shared enums | `zod` only                                         | Anything. No Nest, no Prisma, no React, no Node built-ins beyond types | `./` barrel + `./events`, `./ids`, `./money`, `./units` subpaths                      | Unit: schema parse/reject tables; **contract tests** asserting event schema backward compatibility |
+| `packages/pricing-engine`    | Pure deterministic price computation from a versioned rule set; emits a full trace                                                                                    | `contracts`, `decimal.js`                          | HTTP, Prisma, Nest, `Date`, `Math.random`, filesystem                  | `computePrice(input): PriceQuoteResult`, `validateRuleSet`, `RULE_SET_SCHEMA_VERSION` | **100% line + branch.** Golden-file tests; property tests for rounding invariants                  |
+| `packages/api-client`        | Typed HTTP client from the ts-rest contract: auth injection, request IDs, retry policy, error normalisation, cancellation, TanStack Query hooks                       | `contracts`, `@ts-rest/*`, `@tanstack/react-query` | Prisma, Nest, `apps/*`                                                 | `createMetrikaClient(config)`, generated hooks                                        | Unit with MSW; contract tests against the API's generated OpenAPI                                  |
+| `packages/database`          | Prisma schema, migrations, seed data, `createPrismaClient()` with RLS + soft-delete + branding extensions                                                             | `contracts`, `@prisma/client`                      | Nest, React, HTTP                                                      | `createPrismaClient`, `Prisma` namespace re-export, seed entrypoints                  | Integration against Testcontainers Postgres; migration up/down smoke tests                         |
+| `packages/ui`                | Design-system primitives only: Button, Input, Dialog, DataTable, Toast, tokens. **No feature components, no data fetching**                                           | `react`, `tailwind`, radix                         | `api-client`, `contracts`, `database`, `apps/*`                        | Named component exports; no deep imports                                              | Storybook + interaction tests; a11y assertions                                                     |
+| `packages/printer-sdk`       | `PrinterDriver` interface, capability model, telemetry types, `NullPrinterDriver` and `SimulatorPrinterDriver`. **No hardware code in MVP**                           | `contracts`                                        | Order/quote domain, Prisma, Nest                                       | `PrinterDriver`, `PrinterCapabilities`, driver registry                               | Unit against the simulator; conformance suite reusable by future real drivers                      |
+| `packages/eslint-config`     | Composable flat configs: `base`, `typeChecked`, `react`, `next`, `nest`, `test`, `script`                                                                             | eslint plugins                                     | Everything else                                                        | Named config exports                                                                  | Fixture-based: files that must and must not error                                                  |
+| `packages/typescript-config` | `base`, `node`, `react-library`, `next`, `nest` tsconfigs                                                                                                             | —                                                  | —                                                                      | JSON configs                                                                          | Compile-fixture tests for the strict flags                                                         |
+| `packages/testing`           | Testcontainers harnesses (Postgres/Redis/MinIO/Temporal test env), entity factories, fixture registry, `FakeSlicerEngine`, `FakeGeometryAnalyzer`                     | `contracts`, `database`, testcontainers            | Production `apps/*` code                                               | Harness + factory exports                                                             | Self-tested via the suites that consume it                                                         |
+| `apps/api`                   | All business logic, persistence, authorization, transport                                                                                                             | all packages                                       | `apps/web`, `apps/workers` source                                      | REST `/api/v1` + internal workflow endpoints                                          | Unit (services, policies), integration (modules + DB), contract (OpenAPI)                          |
+| `apps/web`                   | Presentation and interaction                                                                                                                                          | `contracts`, `api-client`, `ui`                    | `database`, `pricing-engine`†, `apps/api` source                       | —                                                                                     | Component, hook, Playwright E2E                                                                    |
+| `apps/workers`               | Stateless geometry and slicing compute                                                                                                                                | `metrika_core`                                     | Postgres, business rules, pricing                                      | Temporal activity signatures                                                          | pytest, Hypothesis, golden-file, slicer regression                                                 |
 
 † `apps/web` must not import `pricing-engine`. Prices are computed server-side and displayed; a client-side re-computation would be a second source of truth and would drift. Estimated "price preview before slicing" is an API endpoint, not a client computation.
 
@@ -391,17 +391,17 @@ graph TD
 
 Enforced rules, each with a corresponding ESLint `no-restricted-imports` zone in `packages/eslint-config`:
 
-| Rule | Rationale |
-|---|---|
-| `contracts` imports nothing but `zod` | It is the root of the graph. Any dependency here propagates everywhere, including to the browser bundle |
-| `pricing-engine` may not import Nest, Prisma, HTTP, `node:fs`, or reference `Date`/`Math.random` | Purity is what makes golden-file tests meaningful. Time is injected as `evaluatedAt` |
-| `ui` may not import `api-client`, `contracts` or `database` | A design-system component that knows about a `Quote` is a feature component in the wrong place |
-| `apps/web` may not import `database` or `pricing-engine` | No Prisma in a browser bundle; no second pricing source of truth |
-| `printer-sdk` may not import order/quote domain types | The driver layer must be reusable by a future partner-network implementation |
-| Only `apps/api/src/infrastructure/persistence/**` may import `@prisma/client` or `packages/database` | Forces every query through the mapping + authorization layer |
-| Only `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts` may read `process.env` | §54. Enforced by `no-restricted-properties` |
-| Only `apps/api/src/infrastructure/persistence/**` may import `brandUnsafe` | The single controlled place where a DB `string` becomes a branded ID |
-| `apps/*` may not import from another app's `src` | Cross-app sharing goes through a package or it does not happen |
+| Rule                                                                                                 | Rationale                                                                                               |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `contracts` imports nothing but `zod`                                                                | It is the root of the graph. Any dependency here propagates everywhere, including to the browser bundle |
+| `pricing-engine` may not import Nest, Prisma, HTTP, `node:fs`, or reference `Date`/`Math.random`     | Purity is what makes golden-file tests meaningful. Time is injected as `evaluatedAt`                    |
+| `ui` may not import `api-client`, `contracts` or `database`                                          | A design-system component that knows about a `Quote` is a feature component in the wrong place          |
+| `apps/web` may not import `database` or `pricing-engine`                                             | No Prisma in a browser bundle; no second pricing source of truth                                        |
+| `printer-sdk` may not import order/quote domain types                                                | The driver layer must be reusable by a future partner-network implementation                            |
+| Only `apps/api/src/infrastructure/persistence/**` may import `@prisma/client` or `packages/database` | Forces every query through the mapping + authorization layer                                            |
+| Only `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts` may read `process.env`            | §54. Enforced by `no-restricted-properties`                                                             |
+| Only `apps/api/src/infrastructure/persistence/**` may import `brandUnsafe`                           | The single controlled place where a DB `string` becomes a branded ID                                    |
+| `apps/*` may not import from another app's `src`                                                     | Cross-app sharing goes through a package or it does not happen                                          |
 
 The Python side consumes contracts by **generating pydantic models from JSON Schema emitted by `packages/contracts`** in a `pnpm contracts:emit` step, committed and checked in CI (`git diff --exit-code`). This keeps one source of truth across the language boundary without a runtime dependency.
 
@@ -426,13 +426,13 @@ Cross-feature imports go through `index.ts`. A lint zone forbids `features/*/com
 
 ### State placement — the hard rules
 
-| State | Home | Examples |
-|---|---|---|
-| Shareable / bookmarkable / back-button | **URL** | `projectId`, `modelVersionId`, `quoteId`, viewer tab, admin table filters, pagination cursor |
-| Anything the server owns | **TanStack Query** | models, analyses, quotes, orders, materials, profiles. Never mirrored elsewhere |
-| Ephemeral cross-component UI | **Zustand**, feature-scoped | `viewerStore` (camera mode, overlay toggles, selection), `uploadStore` (progress, AbortControllers) |
-| Everything else | **React local** | dialog open, hover, local toggles |
-| Form values | **React Hook Form + Zod** | the print-configuration form, address forms |
+| State                                  | Home                        | Examples                                                                                            |
+| -------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------- |
+| Shareable / bookmarkable / back-button | **URL**                     | `projectId`, `modelVersionId`, `quoteId`, viewer tab, admin table filters, pagination cursor        |
+| Anything the server owns               | **TanStack Query**          | models, analyses, quotes, orders, materials, profiles. Never mirrored elsewhere                     |
+| Ephemeral cross-component UI           | **Zustand**, feature-scoped | `viewerStore` (camera mode, overlay toggles, selection), `uploadStore` (progress, AbortControllers) |
+| Everything else                        | **React local**             | dialog open, hover, local toggles                                                                   |
+| Form values                            | **React Hook Form + Zod**   | the print-configuration form, address forms                                                         |
 
 **Exactly two Zustand stores exist**, both feature-scoped. There is no `useAppStore`. If a third is proposed, the question to answer first is "why is this not URL state or server state?"
 
@@ -444,8 +444,9 @@ onEvent: (e: ModelProcessingEvent) => {
   queryClient.setQueryData(modelVersionKey(e.modelVersionId), (prev) =>
     prev ? { ...prev, state: e.state, progress: e.progress } : prev,
   );
-  if (e.state === 'READY') void queryClient.invalidateQueries({ queryKey: modelVersionKey(e.modelVersionId) });
-}
+  if (e.state === 'READY')
+    void queryClient.invalidateQueries({ queryKey: modelVersionKey(e.modelVersionId) });
+};
 ```
 
 This is the single most commonly botched piece of a real-time UI. One cache, one read path.
@@ -469,14 +470,14 @@ Server Actions are used for **exactly three things**: cookie/session mutations, 
 
 ### Performance budgets
 
-| Budget | Target | Enforcement |
-|---|---|---|
-| Route JS (non-viewer) | ≤ 180 KB gzip | `@next/bundle-analyzer` + CI size check |
-| Viewer chunk | ≤ 400 KB gzip, lazy-loaded | Dynamic import; never in the shared chunk |
-| Preview mesh | ≤ 300 k triangles | Enforced in the geometry worker, not the client |
-| GPU memory | ≤ 150 MB per scene | Explicit `dispose()` on unmount; measured in dev |
-| LCP (dashboard) | ≤ 2.0 s p75 | Vercel Speed Insights |
-| Viewer first interaction | ≤ 1.5 s after GLB fetch | Instrumented span |
+| Budget                   | Target                     | Enforcement                                      |
+| ------------------------ | -------------------------- | ------------------------------------------------ |
+| Route JS (non-viewer)    | ≤ 180 KB gzip              | `@next/bundle-analyzer` + CI size check          |
+| Viewer chunk             | ≤ 400 KB gzip, lazy-loaded | Dynamic import; never in the shared chunk        |
+| Preview mesh             | ≤ 300 k triangles          | Enforced in the geometry worker, not the client  |
+| GPU memory               | ≤ 150 MB per scene         | Explicit `dispose()` on unmount; measured in dev |
+| LCP (dashboard)          | ≤ 2.0 s p75                | Vercel Speed Insights                            |
+| Viewer first interaction | ≤ 1.5 s after GLB fetch    | Instrumented span                                |
 
 ---
 
@@ -511,33 +512,33 @@ modules/quotes/
 
 ### Module catalogue
 
-| Module | Responsibility | Depends on | Domain or infrastructure |
-|---|---|---|---|
-| `AuthModule` | Verify Clerk JWT, build `AuthContext` (userId, orgId, roles), attach to request | — | Infrastructure |
-| `UsersModule` | Local user records, `externalAuthId` mapping, profile, preferences | Auth | Domain |
-| `OrganizationsModule` | Organizations, members, roles, invitations. **Metrika owns this, not Clerk** | Users | Domain |
-| `ProjectsModule` | Project CRUD, org scoping | Organizations | Domain |
-| `ModelsModule` | Model + ModelVersion lifecycle, upload sessions, completion verification, state machine, unit confirmation | Projects, Storage, Workflows | Domain |
-| `StorageModule` | S3 presigning, key namespacing, checksum verification, lifecycle. Never streams large bodies through the API | — | Infrastructure |
-| `GeometryModule` | Persist analyses/issues/derivatives; expose analysis reads; repair approval | Models | Domain |
-| `PrintProfilesModule` | PrintProfile + versions; customer-facing presets vs internal advanced parameters | Materials, Printers | Domain |
-| `MaterialsModule` | Material + MaterialProfileVersion (technical) and commercial pricing inputs | — | Domain |
-| `PrintersModule` | PrinterProfile + versions, build volumes, capabilities, fit-check | Materials | Domain |
-| `ConfigurationModule` | PrintConfiguration assembly, validation against capabilities, content hashing, scale + orientation | PrintProfiles, Materials, Printers, Geometry | Domain |
-| `SlicingModule` | SliceJob lifecycle, cache key computation, `SlicerEngine` port, SliceResult persistence | Configuration, Storage, Workflows | Domain + Infrastructure port |
-| `PricingModule` | PricingRuleSet + versions, admin publishing, invokes `packages/pricing-engine` | Materials, Printers | Domain |
-| `QuotesModule` | Quote lifecycle and state machine, immutable snapshotting, expiry, acceptance | Slicing, Pricing, Configuration | Domain |
-| `OrdersModule` | Order + OrderItem, commercial state machine, acceptance transaction | Quotes, Payments | Domain |
-| `PaymentsModule` | `PaymentProvider` port + adapters, webhook verification/dedup, Refund entity | Orders | Domain + Infrastructure port |
-| `ManufacturingModule` | ManufacturingJob + PrintJob, operational state machines, actual-vs-estimate capture | Orders, Printers | Domain |
-| `ShippingModule` | Address, Shipment, tracking (V1) | Orders | Domain |
-| `NotificationsModule` | `NotificationChannel` port, templates, localisation, delivery log | — | Infrastructure port |
-| `WorkflowsModule` | Temporal client, workflow starters, outbox dispatcher, internal activity endpoints | (many, one-way) | Infrastructure |
-| `AuditModule` | Append-only audit log; consumed by every module through an injected `AuditRecorder` | — | Infrastructure |
-| `AdminModule` | Admin-only read models and operations; composes other modules, owns no entities | many | Application |
-| `HealthModule` | Liveness/readiness, dependency probes | — | Infrastructure |
+| Module                | Responsibility                                                                                               | Depends on                                   | Domain or infrastructure     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------- | ---------------------------- |
+| `AuthModule`          | Verify Clerk JWT, build `AuthContext` (userId, orgId, roles), attach to request                              | —                                            | Infrastructure               |
+| `UsersModule`         | Local user records, `externalAuthId` mapping, profile, preferences                                           | Auth                                         | Domain                       |
+| `OrganizationsModule` | Organizations, members, roles, invitations. **Metrika owns this, not Clerk**                                 | Users                                        | Domain                       |
+| `ProjectsModule`      | Project CRUD, org scoping                                                                                    | Organizations                                | Domain                       |
+| `ModelsModule`        | Model + ModelVersion lifecycle, upload sessions, completion verification, state machine, unit confirmation   | Projects, Storage, Workflows                 | Domain                       |
+| `StorageModule`       | S3 presigning, key namespacing, checksum verification, lifecycle. Never streams large bodies through the API | —                                            | Infrastructure               |
+| `GeometryModule`      | Persist analyses/issues/derivatives; expose analysis reads; repair approval                                  | Models                                       | Domain                       |
+| `PrintProfilesModule` | PrintProfile + versions; customer-facing presets vs internal advanced parameters                             | Materials, Printers                          | Domain                       |
+| `MaterialsModule`     | Material + MaterialProfileVersion (technical) and commercial pricing inputs                                  | —                                            | Domain                       |
+| `PrintersModule`      | PrinterProfile + versions, build volumes, capabilities, fit-check                                            | Materials                                    | Domain                       |
+| `ConfigurationModule` | PrintConfiguration assembly, validation against capabilities, content hashing, scale + orientation           | PrintProfiles, Materials, Printers, Geometry | Domain                       |
+| `SlicingModule`       | SliceJob lifecycle, cache key computation, `SlicerEngine` port, SliceResult persistence                      | Configuration, Storage, Workflows            | Domain + Infrastructure port |
+| `PricingModule`       | PricingRuleSet + versions, admin publishing, invokes `packages/pricing-engine`                               | Materials, Printers                          | Domain                       |
+| `QuotesModule`        | Quote lifecycle and state machine, immutable snapshotting, expiry, acceptance                                | Slicing, Pricing, Configuration              | Domain                       |
+| `OrdersModule`        | Order + OrderItem, commercial state machine, acceptance transaction                                          | Quotes, Payments                             | Domain                       |
+| `PaymentsModule`      | `PaymentProvider` port + adapters, webhook verification/dedup, Refund entity                                 | Orders                                       | Domain + Infrastructure port |
+| `ManufacturingModule` | ManufacturingJob + PrintJob, operational state machines, actual-vs-estimate capture                          | Orders, Printers                             | Domain                       |
+| `ShippingModule`      | Address, Shipment, tracking (V1)                                                                             | Orders                                       | Domain                       |
+| `NotificationsModule` | `NotificationChannel` port, templates, localisation, delivery log                                            | —                                            | Infrastructure port          |
+| `WorkflowsModule`     | Temporal client, workflow starters, outbox dispatcher, internal activity endpoints                           | (many, one-way)                              | Infrastructure               |
+| `AuditModule`         | Append-only audit log; consumed by every module through an injected `AuditRecorder`                          | —                                            | Infrastructure               |
+| `AdminModule`         | Admin-only read models and operations; composes other modules, owns no entities                              | many                                         | Application                  |
+| `HealthModule`        | Liveness/readiness, dependency probes                                                                        | —                                            | Infrastructure               |
 
-**Circular dependency prevention:** modules form a DAG in the order above. Where a lower module must react to a higher one (e.g. `NotificationsModule` reacting to `OrderPaid`), it subscribes to a domain event rather than being injected. `AuditModule` and `NotificationsModule` are *only ever* reached through events or a thin injected recorder interface, never by importing the emitting module.
+**Circular dependency prevention:** modules form a DAG in the order above. Where a lower module must react to a higher one (e.g. `NotificationsModule` reacting to `OrderPaid`), it subscribes to a domain event rather than being injected. `AuditModule` and `NotificationsModule` are _only ever_ reached through events or a thin injected recorder interface, never by importing the emitting module.
 
 ### Where repository abstractions earn their place — and where they do not
 
@@ -555,15 +556,15 @@ Read models for the frontend are built by **dedicated query services returning c
 
 Two Python workers, one uv workspace, two container images, one shared library.
 
-| | Geometry worker | Slicer worker |
-|---|---|---|
-| Task queue | `geometry-small`, `geometry-large` | `slicing` |
-| Image | Trimesh, NumPy, SciPy, Manifold3D, `defusedxml` | Pinned PrusaSlicer binary (image digest) + parser |
-| CPU / memory | 1 vCPU / 2 GB (small), 2 vCPU / 8 GB (large) | 2 vCPU / 4 GB |
-| Network | **No egress.** VPC endpoints to S3 and Temporal only | Same |
-| Filesystem | Read-only root, `tmpfs` scratch with size cap | Same |
-| User | Non-root, all capabilities dropped, seccomp default | Same |
-| Fargate capacity | On-demand | **Spot** — interruptions are just Temporal retries |
+|                  | Geometry worker                                      | Slicer worker                                      |
+| ---------------- | ---------------------------------------------------- | -------------------------------------------------- |
+| Task queue       | `geometry-small`, `geometry-large`                   | `slicing`                                          |
+| Image            | Trimesh, NumPy, SciPy, Manifold3D, `defusedxml`      | Pinned PrusaSlicer binary (image digest) + parser  |
+| CPU / memory     | 1 vCPU / 2 GB (small), 2 vCPU / 8 GB (large)         | 2 vCPU / 4 GB                                      |
+| Network          | **No egress.** VPC endpoints to S3 and Temporal only | Same                                               |
+| Filesystem       | Read-only root, `tmpfs` scratch with size cap        | Same                                               |
+| User             | Non-root, all capabilities dropped, seccomp default  | Same                                               |
+| Fargate capacity | On-demand                                            | **Spot** — interruptions are just Temporal retries |
 
 **Why both in Python rather than Node for the slicer:** the slicer worker mostly shells out to a binary and parses text, which Node does fine. But keeping one Temporal SDK, one dependency toolchain (uv), one test harness and one container base is worth more than a marginally better language fit — especially with agent-written code, where every additional runtime is another set of idioms to get wrong. See [ADR-0007](./adr/0007-python-workers.md).
 
@@ -603,7 +604,7 @@ Full detail in [SLICING.md](./SLICING.md). Architectural commitments:
 Full detail in [PRICING_ENGINE.md](./PRICING_ENGINE.md). Architectural commitments:
 
 - **`computePrice` is a pure function.** No I/O, no ambient time, no randomness. `evaluatedAt` is an argument.
-- **Rule sets are declarative, typed and ordered** — a discriminated union of `PricingComponent` kinds evaluated in sequence — not a scripting language and not a hardcoded formula. Admins configure values and ordering without a deploy; adding a new *kind* of component requires a deploy, which is correct because it is a real capability change.
+- **Rule sets are declarative, typed and ordered** — a discriminated union of `PricingComponent` kinds evaluated in sequence — not a scripting language and not a hardcoded formula. Admins configure values and ordering without a deploy; adding a new _kind_ of component requires a deploy, which is correct because it is a real capability change.
 - **Price is never derived from geometric volume alone.** The primary drivers are the slicer's actual filament mass, support mass and estimated print time.
 - **Every quote carries its full trace**, line by line, in the order evaluated, with the rule-set version and every input snapshot. An administrator asking "why is this 340,000 COP" gets an answer without reading code.
 - **Rounding happens twice, at declared points, with a declared policy** stored on the rule-set version. The total is authoritative; a `ROUNDING_ADJUSTMENT` trace line reconciles the displayed lines to it.
@@ -614,7 +615,7 @@ Full detail in [PRICING_ENGINE.md](./PRICING_ENGINE.md). Architectural commitmen
 
 ## 15. Domain model
 
-Full detail in [DOMAIN_MODEL.md](./DOMAIN_MODEL.md). The core aggregate chain, which *is* the reproducibility guarantee:
+Full detail in [DOMAIN_MODEL.md](./DOMAIN_MODEL.md). The core aggregate chain, which _is_ the reproducibility guarantee:
 
 ```mermaid
 erDiagram
@@ -698,7 +699,7 @@ This is the most consequential auth decision here. Using Clerk Organizations wou
 - Clerk answers "who is this person" — a verified JWT with a stable `sub`.
 - `User` has `externalAuthId` + `authProvider` with a unique constraint. The domain's primary key is our own `UserId`.
 - `Organization`, `OrganizationMember`, `OrganizationInvitation` are entirely ours.
-- **Authorization decisions never read organization claims from the JWT.** The token says who you are; our database says what you may do. An `orgId` in a request is a *claim to be verified*, never a fact.
+- **Authorization decisions never read organization claims from the JWT.** The token says who you are; our database says what you may do. An `orgId` in a request is a _claim to be verified_, never a fact.
 
 Cost: building the invitation flow ourselves (roughly a day). Benefit: no webhook sync, no drift, and swapping auth providers becomes a data migration on one column rather than a rewrite of the tenancy model. See [ADR-0012](./adr/0012-authentication.md).
 
@@ -767,11 +768,11 @@ Previews — and only previews — are served through CloudFront with signed URL
 
 Full detail in [WORKFLOWS.md](./WORKFLOWS.md).
 
-| Workflow | ID (= idempotency key) | Signals | Queries |
-|---|---|---|---|
-| `ModelProcessingWorkflow` | `model-processing:{modelVersionId}` | `confirmUnits`, `approveDestructiveRepair`, `cancel` | `getProgress` |
-| `QuoteWorkflow` | `quote:{quoteId}` | `cancel` | `getProgress` |
-| `OrderFulfillmentWorkflow` | `order:{orderId}` | `paymentConfirmed`, `manufacturingUpdate`, `cancel` | `getStatus` |
+| Workflow                   | ID (= idempotency key)              | Signals                                              | Queries       |
+| -------------------------- | ----------------------------------- | ---------------------------------------------------- | ------------- |
+| `ModelProcessingWorkflow`  | `model-processing:{modelVersionId}` | `confirmUnits`, `approveDestructiveRepair`, `cancel` | `getProgress` |
+| `QuoteWorkflow`            | `quote:{quoteId}`                   | `cancel`                                             | `getProgress` |
+| `OrderFulfillmentWorkflow` | `order:{orderId}`                   | `paymentConfirmed`, `manufacturingUpdate`, `cancel`  | `getStatus`   |
 
 - **The workflow ID is the idempotency key.** `WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY` makes a double-submitted upload completion a no-op at the platform level, before any application code runs.
 - **Determinism is enforced by lint**: no `Date.now`, no `Math.random`, no `crypto.randomUUID`, no direct I/O inside `workflows/**` — a dedicated ESLint zone bans those imports and globals in that directory. Non-determinism is the failure mode most likely to bite, so it is caught mechanically.
@@ -789,20 +790,20 @@ Domain events are in-process (Nest `EventEmitter`) and describe things that have
 
 The events that genuinely need to exist — each has at least one real consumer:
 
-| Event | Consumers |
-|---|---|
-| `ModelVersionUploaded` | ModelProcessingWorkflow |
-| `ModelAnalysisCompleted` / `Failed` | SSE, notifications, analytics |
-| `ModelUnitsAmbiguous` | SSE, notifications |
-| `SliceCompleted` / `Failed` | QuoteWorkflow, analytics, ops alerting |
-| `QuoteReady` / `QuoteFailed` | SSE, notifications, analytics |
-| `QuoteAccepted` | OrdersModule, analytics |
-| `OrderCreated` | OrderFulfillmentWorkflow, notifications |
-| `PaymentSucceeded` / `Failed` | OrderFulfillmentWorkflow, notifications, finance |
-| `ManufacturingJobCreated` / `Completed` / `Failed` | Ops dashboard, notifications, calibration job |
-| `PrintJobStarted` / `Succeeded` / `Failed` | Ops dashboard (Phase 14: printer telemetry) |
+| Event                                              | Consumers                                        |
+| -------------------------------------------------- | ------------------------------------------------ |
+| `ModelVersionUploaded`                             | ModelProcessingWorkflow                          |
+| `ModelAnalysisCompleted` / `Failed`                | SSE, notifications, analytics                    |
+| `ModelUnitsAmbiguous`                              | SSE, notifications                               |
+| `SliceCompleted` / `Failed`                        | QuoteWorkflow, analytics, ops alerting           |
+| `QuoteReady` / `QuoteFailed`                       | SSE, notifications, analytics                    |
+| `QuoteAccepted`                                    | OrdersModule, analytics                          |
+| `OrderCreated`                                     | OrderFulfillmentWorkflow, notifications          |
+| `PaymentSucceeded` / `Failed`                      | OrderFulfillmentWorkflow, notifications, finance |
+| `ManufacturingJobCreated` / `Completed` / `Failed` | Ops dashboard, notifications, calibration job    |
+| `PrintJobStarted` / `Succeeded` / `Failed`         | Ops dashboard (Phase 14: printer telemetry)      |
 
-Events explicitly *not* created: per-field update events, CRUD echoes, and anything with no consumer. An event with no subscriber is a maintenance liability.
+Events explicitly _not_ created: per-field update events, CRUD echoes, and anything with no consumer. An event with no subscriber is a maintenance liability.
 
 **Analytics subscribes to domain events.** There is no analytics call inside domain code — that is how §81 is satisfied without contaminating the domain. Geometry details, file names and dimensions are stripped before anything reaches a third-party analytics processor.
 
@@ -842,7 +843,7 @@ Refunds are a **separate `Refund` entity**, not payment states. `PARTIALLY_REFUN
 Every transition goes through one function:
 
 ```ts
-transition(entity, event, ctx) // validates against the table, writes entity + StatusTransition row, emits domain event — one transaction
+transition(entity, event, ctx); // validates against the table, writes entity + StatusTransition row, emits domain event — one transaction
 ```
 
 Illegal transitions throw a typed `InvalidStateTransitionError`. The transition tables are exhaustively unit-tested, including that every state is reachable and every terminal state is terminal.
@@ -861,15 +862,15 @@ Illegal transitions throw a typed `InvalidStateTransitionError`. The transition 
 
 ## 27. Caching strategy
 
-| Layer | What | Invalidation |
-|---|---|---|
-| **Slice cache** (Postgres) | `SliceResult` keyed by content-addressed `cacheKey` | Never invalidated — the key changes when any input changes. This is correctness, not just speed |
-| **Redis** | Rate-limit counters, ephemeral locks, resolved profile lookups, session-adjacent ephemera | TTL, plus explicit bust on profile version publish |
-| **TanStack Query** | Server state in the browser | `staleTime` per resource; SSE-driven `setQueryData`; invalidate on mutation |
-| **CloudFront** | Preview GLB derivatives only | Immutable content-hashed keys; never invalidated, only superseded |
-| **RSC / Next** | Marketing and static shells | `revalidate` tags |
+| Layer                      | What                                                                                      | Invalidation                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Slice cache** (Postgres) | `SliceResult` keyed by content-addressed `cacheKey`                                       | Never invalidated — the key changes when any input changes. This is correctness, not just speed |
+| **Redis**                  | Rate-limit counters, ephemeral locks, resolved profile lookups, session-adjacent ephemera | TTL, plus explicit bust on profile version publish                                              |
+| **TanStack Query**         | Server state in the browser                                                               | `staleTime` per resource; SSE-driven `setQueryData`; invalidate on mutation                     |
+| **CloudFront**             | Preview GLB derivatives only                                                              | Immutable content-hashed keys; never invalidated, only superseded                               |
+| **RSC / Next**             | Marketing and static shells                                                               | `revalidate` tags                                                                               |
 
-Redis is never authoritative. If Redis is empty, the system is correct and slower. The slice cache lives in Postgres precisely because losing it would be a *correctness and cost* event, not a latency event.
+Redis is never authoritative. If Redis is empty, the system is correct and slower. The slice cache lives in Postgres precisely because losing it would be a _correctness and cost_ event, not a latency event.
 
 ---
 
@@ -877,16 +878,16 @@ Redis is never authoritative. If Redis is empty, the system is correct and slowe
 
 Layered, with database constraints doing the real work:
 
-| Operation | Mechanism |
-|---|---|
-| Upload completion | Unique `UploadSession.id`; state machine rejects a second completion |
-| Model processing | Temporal workflow ID `model-processing:{modelVersionId}` |
-| Geometry analysis | Unique `(modelVersionId, analyzerVersion)` |
-| Slicing | Unique `SliceJob.cacheKey` — a duplicate insert returns the existing result |
-| Quote generation | Temporal workflow ID `quote:{quoteId}` + unique `(printConfigurationHash, pricingRuleSetVersionId)` per model version |
-| Order creation | Unique `Order.quoteId` — one quote produces at most one order |
-| Payment webhook | Unique `(provider, providerEventId)` |
-| Client-initiated mutations | `Idempotency-Key` header stored with the response hash for 24 h |
+| Operation                  | Mechanism                                                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Upload completion          | Unique `UploadSession.id`; state machine rejects a second completion                                                  |
+| Model processing           | Temporal workflow ID `model-processing:{modelVersionId}`                                                              |
+| Geometry analysis          | Unique `(modelVersionId, analyzerVersion)`                                                                            |
+| Slicing                    | Unique `SliceJob.cacheKey` — a duplicate insert returns the existing result                                           |
+| Quote generation           | Temporal workflow ID `quote:{quoteId}` + unique `(printConfigurationHash, pricingRuleSetVersionId)` per model version |
+| Order creation             | Unique `Order.quoteId` — one quote produces at most one order                                                         |
+| Payment webhook            | Unique `(provider, providerEventId)`                                                                                  |
+| Client-initiated mutations | `Idempotency-Key` header stored with the response hash for 24 h                                                       |
 
 The principle: **a unique constraint is a guarantee; an application-level check is a hope.** Every row above is a constraint.
 
@@ -929,13 +930,24 @@ A closed, typed domain error union in `packages/contracts`, mapped to HTTP once,
 
 ```ts
 type DomainErrorCode =
-  | 'MODEL_NOT_FOUND' | 'MODEL_NOT_READY' | 'MODEL_NOT_PRINTABLE'
-  | 'UNSUPPORTED_FILE_FORMAT' | 'FILE_TOO_LARGE' | 'CHECKSUM_MISMATCH'
-  | 'UNITS_NOT_CONFIRMED' | 'GEOMETRY_ANALYSIS_FAILED'
-  | 'INVALID_PRINT_CONFIGURATION' | 'DOES_NOT_FIT_BUILD_VOLUME'
-  | 'SLICING_FAILED' | 'QUOTE_EXPIRED' | 'QUOTE_SUPERSEDED'
-  | 'INVALID_STATE_TRANSITION' | 'PAYMENT_VERIFICATION_FAILED'
-  | 'INSUFFICIENT_PERMISSIONS' | 'RATE_LIMITED' | 'QUOTA_EXCEEDED';
+  | 'MODEL_NOT_FOUND'
+  | 'MODEL_NOT_READY'
+  | 'MODEL_NOT_PRINTABLE'
+  | 'UNSUPPORTED_FILE_FORMAT'
+  | 'FILE_TOO_LARGE'
+  | 'CHECKSUM_MISMATCH'
+  | 'UNITS_NOT_CONFIRMED'
+  | 'GEOMETRY_ANALYSIS_FAILED'
+  | 'INVALID_PRINT_CONFIGURATION'
+  | 'DOES_NOT_FIT_BUILD_VOLUME'
+  | 'SLICING_FAILED'
+  | 'QUOTE_EXPIRED'
+  | 'QUOTE_SUPERSEDED'
+  | 'INVALID_STATE_TRANSITION'
+  | 'PAYMENT_VERIFICATION_FAILED'
+  | 'INSUFFICIENT_PERMISSIONS'
+  | 'RATE_LIMITED'
+  | 'QUOTA_EXCEEDED';
 ```
 
 Domain code throws typed errors carrying structured `details`. A single Nest exception filter maps code → HTTP status → response body, and logs at the right level: expected domain errors at `info`/`warn`, unexpected at `error` with a Sentry event. A generic `500` for a known domain failure is a bug. Stack traces never leave the process.
@@ -949,7 +961,7 @@ Full detail in [TESTING.md](./TESTING.md). Highlights:
 - **Pure kernels are exhaustively tested**: `pricing-engine` at 100% line and branch with golden-file traces; every authorization policy at 100% branch; every state machine transition table exhaustively enumerated.
 - **Integration tests use Testcontainers** — Postgres, Redis, MinIO, and Temporal's time-skipping test environment. No test depends on a developer's local setup.
 - **Contract tests** guard three boundaries: the generated OpenAPI against the client, event schema backward compatibility, and the JSON-Schema→pydantic emission across the language boundary.
-- **Geometry fixtures** are committed and, where possible, *generated by a committed script* so they are reproducible: valid cube, open mesh, non-manifold, self-intersecting, 20 M triangles, disconnected components, invalid STL header, ambiguous units (a model plausibly in mm or m), sub-0.4 mm wall, multi-component assembly, zip bomb, XML bomb.
+- **Geometry fixtures** are committed and, where possible, _generated by a committed script_ so they are reproducible: valid cube, open mesh, non-manifold, self-intersecting, 20 M triangles, disconnected components, invalid STL header, ambiguous units (a model plausibly in mm or m), sub-0.4 mm wall, multi-component assembly, zip bomb, XML bomb.
 - **Slicer regression tests** pin the slicer image digest and assert metrics within documented tolerance (±2% filament mass, ±5% print time). Run nightly, not per-PR — they are slow, and their failure is informational rather than blocking.
 - **E2E runs against `FakeSlicerEngine`**, which is deterministic and instant. This is a direct payoff of the `SlicerEngine` port: the golden-path Playwright test is fast and stable, and real slicer behaviour is covered by the regression suite where it belongs.
 
@@ -1026,11 +1038,11 @@ Conventional commits, squash merge, protected `main`, Changesets for package ver
 
 Three images, all multi-stage, non-root, pinned by digest, with health checks and no build tooling in the runtime layer. Full Dockerfiles in [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#1-docker).
 
-| Image | Base | Notes |
-|---|---|---|
-| `metrika-api` | `node:22-bookworm-slim` | Prisma engines copied explicitly; `dumb-init` as PID 1 |
-| `metrika-geometry` | `python:3.12-slim-bookworm` | uv-installed deps in a virtualenv layer; read-only root; tmpfs scratch |
-| `metrika-slicer` | `python:3.12-slim-bookworm` | PrusaSlicer binary pinned by checksum; licence file preserved in the image |
+| Image              | Base                        | Notes                                                                      |
+| ------------------ | --------------------------- | -------------------------------------------------------------------------- |
+| `metrika-api`      | `node:22-bookworm-slim`     | Prisma engines copied explicitly; `dumb-init` as PID 1                     |
+| `metrika-geometry` | `python:3.12-slim-bookworm` | uv-installed deps in a virtualenv layer; read-only root; tmpfs scratch     |
+| `metrika-slicer`   | `python:3.12-slim-bookworm` | PrusaSlicer binary pinned by checksum; licence file preserved in the image |
 
 Local development uses `docker compose` for Postgres, Redis, MinIO and Temporal only — application code runs on the host for fast reloads.
 
@@ -1121,12 +1133,12 @@ One sequencing change from the original proposal: **the pricing engine (Phase 7)
 
 In [RISK_REGISTER.md](./RISK_REGISTER.md), with probability, impact, mitigation and owner. The four that should keep you up at night:
 
-| Risk | P | I | Core mitigation |
-|---|---|---|---|
-| Unit ambiguity produces a 1000× wrong quote | High | Critical | Blocking confirmation state, plausibility bounds, prominent UI, contract test |
-| Print time/material estimates drift from reality, silently eroding margin | High | High | Actual-vs-estimate capture on every job from Phase 11; per-profile calibration; alerting |
-| PrusaSlicer AGPL obligations | Medium | High | Separate process, unmodified binary, **formal legal review as a launch gate**, swappable port |
-| Customer geometry leak | Low | Critical | Layered: KMS, RLS, short-lived URLs, no originals on CDN, audit on every access |
+| Risk                                                                      | P      | I        | Core mitigation                                                                               |
+| ------------------------------------------------------------------------- | ------ | -------- | --------------------------------------------------------------------------------------------- |
+| Unit ambiguity produces a 1000× wrong quote                               | High   | Critical | Blocking confirmation state, plausibility bounds, prominent UI, contract test                 |
+| Print time/material estimates drift from reality, silently eroding margin | High   | High     | Actual-vs-estimate capture on every job from Phase 11; per-profile calibration; alerting      |
+| PrusaSlicer AGPL obligations                                              | Medium | High     | Separate process, unmodified binary, **formal legal review as a launch gate**, swappable port |
+| Customer geometry leak                                                    | Low    | Critical | Layered: KMS, RLS, short-lived URLs, no originals on CDN, audit on every access               |
 
 ---
 
@@ -1165,7 +1177,7 @@ Phases 4 and 5 are genuinely parallel with 6–7 for a team; for a solo builder,
 These are deliberately unresolved, with the resolution point named. Each is tracked as a spike in [ROADMAP.md](./ROADMAP.md).
 
 1. **ts-rest viability** — resolve in a Phase 0 spike: confirm current ts-rest works with the chosen Zod major version, Nest + Fastify, and OpenAPI 3.1 generation. **Fallback:** `nestjs-zod` for validation and OpenAPI, plus `orval` to generate the client from the emitted spec. The Zod schemas are unchanged either way, which is what makes this reversible.
-2. **Payment provider** — Wompi versus Mercado Pago. Resolve at Phase 9 on the basis of PSE and Nequi coverage, settlement terms, and webhook reliability. The adapter interface must be designed against the *redirect + asynchronous confirmation* shape regardless, since that is the superset.
+2. **Payment provider** — Wompi versus Mercado Pago. Resolve at Phase 9 on the basis of PSE and Nequi coverage, settlement terms, and webhook reliability. The adapter interface must be designed against the _redirect + asynchronous confirmation_ shape regardless, since that is the superset.
 3. **Preview format compression** — Draco versus Meshopt. Resolve at Phase 3 by measuring decode time and size on real architectural models. Meshopt is the current lean (faster decode, simpler pipeline).
 4. **Wall-thickness algorithm** — ray-casting versus a medial-axis approximation versus voxel-based. Materially affects both accuracy and worker runtime. Resolve at Phase 3 against the fixture set; whichever wins ships labelled as a heuristic with a stated confidence.
 5. **When Redis becomes necessary** — the roadmap introduces it at Phase 2 for rate limiting, but rate limiting could start in Postgres. SSE fan-out at Phase 3 forces the issue, so the only question is whether to defer by one phase. Resolve at Phase 2; the saving is one managed service on the initial bill for a few weeks.

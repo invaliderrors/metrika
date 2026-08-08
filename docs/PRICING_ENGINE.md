@@ -6,14 +6,14 @@
 
 ## 1. Design constraints
 
-| Constraint | Consequence |
-|---|---|
-| A quote is a commercial commitment | It must be reproducible indefinitely — from versioned inputs, never from current values |
-| Administrators must change prices without a deploy | Rules are declarative data, versioned and published |
-| Administrators must understand a price | Every quote carries a complete, ordered trace |
-| Money must never be wrong by a rounding artefact | `Decimal` internally, integer minor units at the boundary, rounding at two declared points |
-| Price is not a function of volume | The primary drivers are the slicer's actual filament mass, support mass and print time |
-| The engine must be testable without infrastructure | Pure function: no I/O, no ambient clock, no randomness |
+| Constraint                                         | Consequence                                                                                |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| A quote is a commercial commitment                 | It must be reproducible indefinitely — from versioned inputs, never from current values    |
+| Administrators must change prices without a deploy | Rules are declarative data, versioned and published                                        |
+| Administrators must understand a price             | Every quote carries a complete, ordered trace                                              |
+| Money must never be wrong by a rounding artefact   | `Decimal` internally, integer minor units at the boundary, rounding at two declared points |
+| Price is not a function of volume                  | The primary drivers are the slicer's actual filament mass, support mass and print time     |
+| The engine must be testable without infrastructure | Pure function: no I/O, no ambient clock, no randomness                                     |
 
 The purity constraint is not aesthetic. It is what makes golden-file testing possible, and golden-file testing is what makes a pricing change reviewable — a diff in an expected-output file shows exactly which quotes would change and by how much.
 
@@ -27,7 +27,7 @@ The purity constraint is not aesthetic. It is what makes golden-file testing pos
 export function computePrice(input: PriceInput): Result<PriceOutput, PricingError>;
 
 export interface PriceInput {
-  readonly evaluatedAt: IsoDateTime;          // injected — never Date.now()
+  readonly evaluatedAt: IsoDateTime; // injected — never Date.now()
   readonly ruleSet: PricingRuleSetVersionPayload;
   readonly items: readonly PriceItemInput[];
   readonly commercial: CommercialContext;
@@ -35,7 +35,7 @@ export interface PriceInput {
 }
 
 export interface PriceItemInput {
-  readonly slice: SliceMetrics;               // branded units — see DOMAIN_MODEL.md §4
+  readonly slice: SliceMetrics; // branded units — see DOMAIN_MODEL.md §4
   readonly geometry: GeometrySummary;
   readonly material: MaterialPricingSnapshot;
   readonly printer: PrinterCostSnapshot;
@@ -75,27 +75,27 @@ Not a scripting language (unversionable in practice, a security surface, impossi
 
 ```ts
 export type PricingComponent =
-  | { kind: 'MATERIAL_COST';         id: string; wasteFactor: DecimalString }
+  | { kind: 'MATERIAL_COST'; id: string; wasteFactor: DecimalString }
   | { kind: 'SUPPORT_MATERIAL_COST'; id: string; wasteFactor: DecimalString }
-  | { kind: 'MACHINE_TIME';          id: string; includeDepreciation: boolean; includeEnergy: boolean }
-  | { kind: 'SETUP';                 id: string; amountMinor: MinorUnitsString; perOrder: boolean }
-  | { kind: 'LABOR';                 id: string; minutesPerPart: DecimalString; hourlyRateMinor: MinorUnitsString }
-  | { kind: 'POST_PROCESSING';       id: string; byFinish: Record<FinishLevel, MinorUnitsString> }
-  | { kind: 'PACKAGING';             id: string; tiers: readonly VolumeTier[] }
-  | { kind: 'COMPLEXITY_SURCHARGE';  id: string; metric: ComplexityMetric; bands: readonly Band[] }
-  | { kind: 'RISK_ADJUSTMENT';       id: string; byRiskBand: Record<RiskBand, DecimalString> }
-  | { kind: 'URGENCY_MULTIPLIER';    id: string; byLevel: Record<Urgency, DecimalString> }
-  | { kind: 'QUANTITY_DISCOUNT';     id: string; tiers: readonly QuantityTier[] }
-  | { kind: 'TIER_DISCOUNT';         id: string; byTier: Record<OrganizationTier, DecimalString> }
-  | { kind: 'PROMOTION';             id: string; code: string; effect: PromotionEffect }
-  | { kind: 'MARGIN';                id: string; factor: DecimalString }
-  | { kind: 'MINIMUM_ORDER';         id: string; floorMinor: MinorUnitsString }
-  | { kind: 'TAX';                   id: string; source: 'JURISDICTION' };
+  | { kind: 'MACHINE_TIME'; id: string; includeDepreciation: boolean; includeEnergy: boolean }
+  | { kind: 'SETUP'; id: string; amountMinor: MinorUnitsString; perOrder: boolean }
+  | { kind: 'LABOR'; id: string; minutesPerPart: DecimalString; hourlyRateMinor: MinorUnitsString }
+  | { kind: 'POST_PROCESSING'; id: string; byFinish: Record<FinishLevel, MinorUnitsString> }
+  | { kind: 'PACKAGING'; id: string; tiers: readonly VolumeTier[] }
+  | { kind: 'COMPLEXITY_SURCHARGE'; id: string; metric: ComplexityMetric; bands: readonly Band[] }
+  | { kind: 'RISK_ADJUSTMENT'; id: string; byRiskBand: Record<RiskBand, DecimalString> }
+  | { kind: 'URGENCY_MULTIPLIER'; id: string; byLevel: Record<Urgency, DecimalString> }
+  | { kind: 'QUANTITY_DISCOUNT'; id: string; tiers: readonly QuantityTier[] }
+  | { kind: 'TIER_DISCOUNT'; id: string; byTier: Record<OrganizationTier, DecimalString> }
+  | { kind: 'PROMOTION'; id: string; code: string; effect: PromotionEffect }
+  | { kind: 'MARGIN'; id: string; factor: DecimalString }
+  | { kind: 'MINIMUM_ORDER'; id: string; floorMinor: MinorUnitsString }
+  | { kind: 'TAX'; id: string; source: 'JURISDICTION' };
 ```
 
 The rule set version stores an ordered array of these plus currency, exponent, rounding policy and `engineSchemaVersion`.
 
-**Adding a value requires no deploy. Adding a new *kind* requires a deploy** — which is correct, because a new kind is a new capability that needs code, tests and a golden-file update. `engineSchemaVersion` lets an engine refuse a rule set it does not understand rather than silently mis-evaluating it. This is the boundary between "configurable" and "programmable", and putting it here is deliberate: a pricing DSL that admins can write arbitrary logic in is a defect generator and an unreviewable security surface.
+**Adding a value requires no deploy. Adding a new _kind_ requires a deploy** — which is correct, because a new kind is a new capability that needs code, tests and a golden-file update. `engineSchemaVersion` lets an engine refuse a rule set it does not understand rather than silently mis-evaluating it. This is the boundary between "configurable" and "programmable", and putting it here is deliberate: a pricing DSL that admins can write arbitrary logic in is a defect generator and an unreviewable security surface.
 
 ### Evaluation order
 
@@ -167,7 +167,7 @@ export interface PricingTrace {
   readonly schemaVersion: 1;
   readonly ruleSetVersionId: string;
   readonly ruleSetContentHash: string;
-  readonly engineVersion: string;              // "pricing-engine@1.2.0"
+  readonly engineVersion: string; // "pricing-engine@1.2.0"
   readonly evaluatedAt: IsoDateTime;
   readonly currency: CurrencyCode;
   readonly exponent: number;
@@ -190,9 +190,9 @@ export interface PricingTraceLine {
   readonly sequence: number;
   readonly componentId: string;
   readonly kind: PricingComponentKind;
-  readonly label: string;                       // localisation key, not a Spanish string
-  readonly inputs: Readonly<Record<string, string>>;   // decimal strings, never floats
-  readonly formula: string;                     // human-readable, for the admin UI
+  readonly label: string; // localisation key, not a Spanish string
+  readonly inputs: Readonly<Record<string, string>>; // decimal strings, never floats
+  readonly formula: string; // human-readable, for the admin UI
   readonly amountMinor: string;
   readonly runningSubtotalMinor: string;
 }
@@ -207,7 +207,7 @@ The trace is stored on `Quote.trace` and is **part of the immutable snapshot**. 
 ## 6. Money and rounding
 
 ```ts
-const RATE = new Decimal(materialCostPerKgMinor);   // full precision throughout
+const RATE = new Decimal(materialCostPerKgMinor); // full precision throughout
 const cost = massG.div(1000).mul(wasteFactor).mul(RATE);
 ```
 
@@ -244,7 +244,7 @@ stateDiagram-v2
 ```
 
 - Publishing validates the rule set against the engine schema, computes `contentHash`, sets `effectiveFrom`, archives the previous version, and writes an `AuditLog` entry naming the publisher.
-- **Publishing never affects existing quotes.** Every quote holds `pricingRuleSetVersionId`; the pointer to "current" is only read when a *new* quote is created.
+- **Publishing never affects existing quotes.** Every quote holds `pricingRuleSetVersionId`; the pointer to "current" is only read when a _new_ quote is created.
 - A `PUBLISHED` version is immutable. Correcting a mistake means publishing a new version — the wrong one stays in history, which is the point.
 - **Publication is gated by a preview diff**: the admin UI re-prices a fixed sample of recent quotes under the draft rule set and shows the price change distribution before allowing publish. A rule change that would have moved the median quote by 40% is visible before it goes live, not after.
 
@@ -252,13 +252,13 @@ stateDiagram-v2
 
 ## 9. Testing
 
-| Layer | Approach | Target |
-|---|---|---|
-| Golden files | Fixture inputs → committed expected trace JSON. Any output change requires updating a golden file, which surfaces in the diff | Every component kind, every combination phase |
-| Property tests | Rounding invariants; determinism (same input twice → identical bytes); monotonicity (more material never lowers the price); non-negativity | fast-check |
-| Boundary tests | Zero mass, zero duration, minimum-order floor exactly hit, 100% discount, tax-inclusive vs exclusive, quantity tier edges | Explicit cases |
-| Schema-version tests | An old rule set payload must still evaluate; an unknown `engineSchemaVersion` must produce a typed error, never a wrong number | Both directions |
-| Regression corpus | A snapshot of real published rule sets re-evaluated on every engine change | Nightly |
+| Layer                | Approach                                                                                                                                   | Target                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| Golden files         | Fixture inputs → committed expected trace JSON. Any output change requires updating a golden file, which surfaces in the diff              | Every component kind, every combination phase |
+| Property tests       | Rounding invariants; determinism (same input twice → identical bytes); monotonicity (more material never lowers the price); non-negativity | fast-check                                    |
+| Boundary tests       | Zero mass, zero duration, minimum-order floor exactly hit, 100% discount, tax-inclusive vs exclusive, quantity tier edges                  | Explicit cases                                |
+| Schema-version tests | An old rule set payload must still evaluate; an unknown `engineSchemaVersion` must produce a typed error, never a wrong number             | Both directions                               |
+| Regression corpus    | A snapshot of real published rule sets re-evaluated on every engine change                                                                 | Nightly                                       |
 
 **Coverage target: 100% line and branch.** The package is pure, small and entirely deterministic — there is no excuse for an untested branch in the code that decides what customers pay.
 
@@ -266,7 +266,7 @@ stateDiagram-v2
 
 ## 10. Calibration — closing the loop with reality
 
-The pricing engine prices against *estimates* from PrusaSlicer. Estimates drift from reality, particularly for complex parts, and drift in that direction is invisible until margin has already been lost. This is the highest-probability commercial failure mode in the business.
+The pricing engine prices against _estimates_ from PrusaSlicer. Estimates drift from reality, particularly for complex parts, and drift in that direction is invisible until margin has already been lost. This is the highest-probability commercial failure mode in the business.
 
 The architecture's answer:
 

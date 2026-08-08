@@ -46,8 +46,7 @@ export const boundaries = tseslint.config(
           patterns: [
             {
               group: ['@metrika/database', '@metrika/pricing-engine'],
-              message:
-                'no Prisma in the browser; prices are computed server-side only',
+              message: 'no Prisma in the browser; prices are computed server-side only',
             },
           ],
         },

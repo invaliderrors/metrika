@@ -6,7 +6,7 @@
 
 ## 1. Why Temporal
 
-The pipelines here are multi-minute, multi-step, failure-prone, resumable, human-interruptible and must produce a commercially binding result. Written by hand, that means implementing retries, timeouts, heartbeats, cancellation, compensation, state persistence *and workflow versioning*. The last one is the hard part: changing the quote pipeline while quotes are in flight, without corrupting the in-flight ones.
+The pipelines here are multi-minute, multi-step, failure-prone, resumable, human-interruptible and must produce a commercially binding result. Written by hand, that means implementing retries, timeouts, heartbeats, cancellation, compensation, state persistence _and workflow versioning_. The last one is the hard part: changing the quote pipeline while quotes are in flight, without corrupting the in-flight ones.
 
 Temporal provides all of it, and the workflow ID doubles as a free platform-level idempotency key.
 
@@ -18,14 +18,14 @@ Temporal provides all of it, and the workflow ID doubles as a free platform-leve
 
 ## 2. Workflows
 
-| Workflow | Workflow ID | Task queue | Typical duration |
-|---|---|---|---|
-| `ModelProcessingWorkflow` | `model-processing:{modelVersionId}` | `metrika-main` | 20 s – 10 min (or days, awaiting a human) |
-| `QuoteWorkflow` | `quote:{quoteId}` | `metrika-main` | 15 s – 5 min |
-| `OrderFulfillmentWorkflow` | `order:{orderId}` | `metrika-main` | days to weeks |
-| `QuoteExpirySweeper` | scheduled | `metrika-main` | seconds |
-| `EstimateCalibrationJob` | scheduled | `metrika-main` | minutes |
-| `OrphanCleanupJob` | scheduled | `metrika-main` | minutes |
+| Workflow                   | Workflow ID                         | Task queue     | Typical duration                          |
+| -------------------------- | ----------------------------------- | -------------- | ----------------------------------------- |
+| `ModelProcessingWorkflow`  | `model-processing:{modelVersionId}` | `metrika-main` | 20 s – 10 min (or days, awaiting a human) |
+| `QuoteWorkflow`            | `quote:{quoteId}`                   | `metrika-main` | 15 s – 5 min                              |
+| `OrderFulfillmentWorkflow` | `order:{orderId}`                   | `metrika-main` | days to weeks                             |
+| `QuoteExpirySweeper`       | scheduled                           | `metrika-main` | seconds                                   |
+| `EstimateCalibrationJob`   | scheduled                           | `metrika-main` | minutes                                   |
+| `OrphanCleanupJob`         | scheduled                           | `metrika-main` | minutes                                   |
 
 Workflow code runs in the TypeScript SDK inside `apps/api`'s worker process (a separate process from the HTTP server, same image). Activities that need Python — geometry and slicing — are dispatched to the Python workers via their own task queues.
 
@@ -35,15 +35,18 @@ Workflow code runs in the TypeScript SDK inside `apps/api`'s worker process (a s
 export async function modelProcessingWorkflow(input: ModelProcessingInput): Promise<void> {
   const progress = defineProgress('UPLOADED');
 
-  await act.validateFile(input);                              // format sniff, limits, archive guards
-  const parsed = await act.parseModel(input);                 // routed by size to small/large queue
+  await act.validateFile(input); // format sniff, limits, archive guards
+  const parsed = await act.parseModel(input); // routed by size to small/large queue
 
   let units = parsed.unitInterpretation;
   if (units.confidence === 'AMBIGUOUS') {
     progress.set('AWAITING_UNIT_CONFIRMATION');
     await act.persistAwaitingUnits(input, units);
     const confirmed = await condition(() => unitSignal !== undefined, '7 days');
-    if (!confirmed) { await act.failModelVersion(input, 'UNITS_NOT_CONFIRMED'); return; }
+    if (!confirmed) {
+      await act.failModelVersion(input, 'UNITS_NOT_CONFIRMED');
+      return;
+    }
     units = unitSignal!;
   }
 
@@ -56,14 +59,18 @@ export async function modelProcessingWorkflow(input: ModelProcessingInput): Prom
     progress.set('AWAITING_REPAIR_APPROVAL');
     const decision = await condition(() => repairSignal !== undefined, '7 days');
     if (decision && repairSignal!.approved) {
-      await act.destructiveRepair({ ...input, operations: repairSignal!.operations, approvedBy: repairSignal!.userId });
+      await act.destructiveRepair({
+        ...input,
+        operations: repairSignal!.operations,
+        approvedBy: repairSignal!.userId,
+      });
     }
   }
 
   progress.set('GENERATING_PREVIEW');
   await Promise.all([act.generatePreview(input), act.generateSliceInput(input)]);
 
-  await act.persistAnalysisAndComplete({ ...input, analysis, repair });   // one transaction → READY
+  await act.persistAnalysisAndComplete({ ...input, analysis, repair }); // one transaction → READY
 }
 ```
 
@@ -76,16 +83,17 @@ Note the shape of the human-in-the-loop steps: **a signal with a timeout, not a 
 
 ```ts
 export async function quoteWorkflow(input: QuoteInput): Promise<void> {
-  await act.validateConfiguration(input);                     // profile compatibility, override allowlist
-  const fit = await act.checkFit(input);                      // BEFORE slicing — cheap rejection
+  await act.validateConfiguration(input); // profile compatibility, override allowlist
+  const fit = await act.checkFit(input); // BEFORE slicing — cheap rejection
   if (fit.kind === 'EXCEEDS_ALL_PRINTERS' || fit.kind === 'REQUIRES_SEGMENTATION') {
-    await act.failQuote(input, 'DOES_NOT_FIT_BUILD_VOLUME', fit); return;
+    await act.failQuote(input, 'DOES_NOT_FIT_BUILD_VOLUME', fit);
+    return;
   }
 
   const cached = await act.lookupSliceCache(input.cacheKey);
-  const slice = cached ?? await act.slice(input);             // Python worker, heartbeating
+  const slice = cached ?? (await act.slice(input)); // Python worker, heartbeating
 
-  await act.computeAndPersistQuote({ ...input, sliceResultId: slice.id });   // one transaction → READY
+  await act.computeAndPersistQuote({ ...input, sliceResultId: slice.id }); // one transaction → READY
 }
 ```
 
@@ -99,16 +107,16 @@ Long-running, mostly waiting on signals. Awaits `paymentConfirmed`, creates manu
 
 ## 3. Activities
 
-| Activity | Runtime | Timeout | Heartbeat | Retry |
-|---|---|---|---|---|
-| `validateFile` | Python | 60 s | — | 3×, not on `MALICIOUS_ARCHIVE` |
-| `parseModel` | Python | 300 s | 10 s | 2×, not on parse errors |
-| `analyzeGeometry` | Python | 600 s | 10 s | 2×, infrastructure only |
-| `conservativeRepair` | Python | 300 s | 10 s | 2× |
-| `generatePreview` | Python | 300 s | 10 s | 3× |
-| `slice` | Python | 900 s | 10 s | 2×, infrastructure only |
-| `persist*` | TypeScript | 30 s | — | 5×, idempotent by constraint |
-| `sendNotification` | TypeScript | 30 s | — | 5× |
+| Activity             | Runtime    | Timeout | Heartbeat | Retry                          |
+| -------------------- | ---------- | ------- | --------- | ------------------------------ |
+| `validateFile`       | Python     | 60 s    | —         | 3×, not on `MALICIOUS_ARCHIVE` |
+| `parseModel`         | Python     | 300 s   | 10 s      | 2×, not on parse errors        |
+| `analyzeGeometry`    | Python     | 600 s   | 10 s      | 2×, infrastructure only        |
+| `conservativeRepair` | Python     | 300 s   | 10 s      | 2×                             |
+| `generatePreview`    | Python     | 300 s   | 10 s      | 3×                             |
+| `slice`              | Python     | 900 s   | 10 s      | 2×, infrastructure only        |
+| `persist*`           | TypeScript | 30 s    | —         | 5×, idempotent by constraint   |
+| `sendNotification`   | TypeScript | 30 s    | —         | 5×                             |
 
 **Non-retryable error types are declared explicitly** on every activity. A deterministic failure — a malformed mesh, a rejected profile, a hostile archive — must not be retried. Retrying deterministic failures wastes CPU, delays the customer's answer and, on Spot capacity, costs real money.
 
@@ -184,20 +192,20 @@ Used by: upload completion, quote creation, order creation, payment webhook proc
 
 Every event that exists has at least one real consumer. Events without subscribers are deleted.
 
-| Event | Version | Consumers |
-|---|---|---|
-| `ModelVersionUploaded` | v1 | ModelProcessingWorkflow |
-| `ModelUnitsAmbiguous` | v1 | SSE, notifications |
-| `ModelAnalysisCompleted` | v1 | SSE, notifications, analytics |
-| `ModelAnalysisFailed` | v1 | SSE, notifications, ops alerting |
-| `SliceCompleted` / `SliceFailed` | v1 | QuoteWorkflow, analytics, ops alerting |
-| `QuoteReady` / `QuoteFailed` | v1 | SSE, notifications, analytics |
-| `QuoteAccepted` | v1 | OrdersModule, analytics |
-| `QuoteExpired` | v1 | notifications |
-| `OrderCreated` | v1 | OrderFulfillmentWorkflow, notifications |
-| `PaymentSucceeded` / `PaymentFailed` | v1 | OrderFulfillmentWorkflow, notifications, finance |
-| `ManufacturingJobCreated` / `Completed` / `Failed` | v1 | ops dashboard, notifications, calibration |
-| `PrintJobStarted` / `Succeeded` / `Failed` | v1 | ops dashboard (Phase 14: telemetry) |
+| Event                                              | Version | Consumers                                        |
+| -------------------------------------------------- | ------- | ------------------------------------------------ |
+| `ModelVersionUploaded`                             | v1      | ModelProcessingWorkflow                          |
+| `ModelUnitsAmbiguous`                              | v1      | SSE, notifications                               |
+| `ModelAnalysisCompleted`                           | v1      | SSE, notifications, analytics                    |
+| `ModelAnalysisFailed`                              | v1      | SSE, notifications, ops alerting                 |
+| `SliceCompleted` / `SliceFailed`                   | v1      | QuoteWorkflow, analytics, ops alerting           |
+| `QuoteReady` / `QuoteFailed`                       | v1      | SSE, notifications, analytics                    |
+| `QuoteAccepted`                                    | v1      | OrdersModule, analytics                          |
+| `QuoteExpired`                                     | v1      | notifications                                    |
+| `OrderCreated`                                     | v1      | OrderFulfillmentWorkflow, notifications          |
+| `PaymentSucceeded` / `PaymentFailed`               | v1      | OrderFulfillmentWorkflow, notifications, finance |
+| `ManufacturingJobCreated` / `Completed` / `Failed` | v1      | ops dashboard, notifications, calibration        |
+| `PrintJobStarted` / `Succeeded` / `Failed`         | v1      | ops dashboard (Phase 14: telemetry)              |
 
 ### Payload versioning
 
@@ -219,22 +227,22 @@ Contract tests assert that a v2 schema can still parse a v1 payload (additive-on
 
 ## 7. Idempotency
 
-| Operation | Guarantee | Mechanism |
-|---|---|---|
-| Upload completion | Exactly-once effect | `UploadSession.id` + state machine rejects double completion |
-| Model processing | Exactly-once execution | Temporal workflow ID |
-| Geometry analysis | Exactly-once persistence | `UNIQUE(modelVersionId, analyzerVersion)` |
-| Preview generation | Idempotent | `UNIQUE(modelVersionId, kind, producerVersion)` |
-| Slicing | Exactly-once compute | `UNIQUE(SliceJob.cacheKey)` |
-| Quote generation | Exactly-once | Temporal workflow ID |
-| Quote acceptance → order | Exactly-once | `UNIQUE(Order.quoteId)` |
-| Payment webhook | Exactly-once processing | `UNIQUE(provider, providerEventId)` |
-| Notification send | At-least-once, deduped | `UNIQUE(userId, templateKey, dedupeKey)` |
-| Client mutations | Exactly-once | `Idempotency-Key` header, response hash cached 24 h |
+| Operation                | Guarantee                | Mechanism                                                    |
+| ------------------------ | ------------------------ | ------------------------------------------------------------ |
+| Upload completion        | Exactly-once effect      | `UploadSession.id` + state machine rejects double completion |
+| Model processing         | Exactly-once execution   | Temporal workflow ID                                         |
+| Geometry analysis        | Exactly-once persistence | `UNIQUE(modelVersionId, analyzerVersion)`                    |
+| Preview generation       | Idempotent               | `UNIQUE(modelVersionId, kind, producerVersion)`              |
+| Slicing                  | Exactly-once compute     | `UNIQUE(SliceJob.cacheKey)`                                  |
+| Quote generation         | Exactly-once             | Temporal workflow ID                                         |
+| Quote acceptance → order | Exactly-once             | `UNIQUE(Order.quoteId)`                                      |
+| Payment webhook          | Exactly-once processing  | `UNIQUE(provider, providerEventId)`                          |
+| Notification send        | At-least-once, deduped   | `UNIQUE(userId, templateKey, dedupeKey)`                     |
+| Client mutations         | Exactly-once             | `Idempotency-Key` header, response hash cached 24 h          |
 
 **The principle: a unique constraint is a guarantee; an application check is a hope.** Every row above resolves to a database constraint. Application-level checks exist too, to produce good error messages — but they are not what makes the guarantee.
 
-The `Idempotency-Key` implementation stores the request hash alongside the response. A replay with the same key and the same body returns the cached response; a replay with the same key and a *different* body is a `409`, because that is a client bug and silently returning the old response would hide it.
+The `Idempotency-Key` implementation stores the request hash alongside the response. A replay with the same key and the same body returns the cached response; a replay with the same key and a _different_ body is a `409`, because that is a client bug and silently returning the old response would hide it.
 
 ---
 
@@ -273,18 +281,18 @@ Implementation notes that matter in production:
 
 The questions from §109 of the brief, answered concretely:
 
-| Scenario | Behaviour |
-|---|---|
-| Worker crashes mid-analysis | Temporal reschedules the activity on another worker; the workflow resumes from the last completed step |
-| Same request submitted twice | Workflow ID collides; the second start is a no-op |
-| Customer refreshes during processing | SSE reconnects, receives current state first; nothing is lost |
-| Same webhook arrives twice | `UNIQUE(provider, providerEventId)` rejects the insert; the handler returns 200 |
-| Pricing rules change mid-quote | The quote holds `pricingRuleSetVersionId` resolved at creation; a publish cannot change it |
-| Model replaced with a new version | A new `ModelVersion`; existing quotes reference the old one and remain valid and reproducible |
-| Slicer version changes | `cacheKey` changes; new slices run against the new version; old `SliceResult`s keep their recorded version |
-| 2 GB model uploaded | Rejected at the size gate before any compute, with a clear message and a contact route for enterprise tiers |
-| STL uploaded in metres, system assumes mm | Inference flags it; if ambiguous the model blocks at `AWAITING_UNIT_CONFIRMATION` and no price is computed |
-| User requests another org's model ID | Policy denies on the loaded resource; RLS would return zero rows regardless; a `403` with an audit entry |
-| Quote created under an old material price | Honoured — it references the old `MaterialProfileVersion`. That is the entire point of the versioning |
-| 100 printers | `ManufacturingJob` queue with priority ordering; printer assignment becomes a scheduling concern, not a schema change |
-| Manufacturing in multiple countries | `Organization.countryCode` + jurisdiction-scoped tax + regional printer profiles; the schema does not change |
+| Scenario                                  | Behaviour                                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Worker crashes mid-analysis               | Temporal reschedules the activity on another worker; the workflow resumes from the last completed step                |
+| Same request submitted twice              | Workflow ID collides; the second start is a no-op                                                                     |
+| Customer refreshes during processing      | SSE reconnects, receives current state first; nothing is lost                                                         |
+| Same webhook arrives twice                | `UNIQUE(provider, providerEventId)` rejects the insert; the handler returns 200                                       |
+| Pricing rules change mid-quote            | The quote holds `pricingRuleSetVersionId` resolved at creation; a publish cannot change it                            |
+| Model replaced with a new version         | A new `ModelVersion`; existing quotes reference the old one and remain valid and reproducible                         |
+| Slicer version changes                    | `cacheKey` changes; new slices run against the new version; old `SliceResult`s keep their recorded version            |
+| 2 GB model uploaded                       | Rejected at the size gate before any compute, with a clear message and a contact route for enterprise tiers           |
+| STL uploaded in metres, system assumes mm | Inference flags it; if ambiguous the model blocks at `AWAITING_UNIT_CONFIRMATION` and no price is computed            |
+| User requests another org's model ID      | Policy denies on the loaded resource; RLS would return zero rows regardless; a `403` with an audit entry              |
+| Quote created under an old material price | Honoured — it references the old `MaterialProfileVersion`. That is the entire point of the versioning                 |
+| 100 printers                              | `ManufacturingJob` queue with priority ordering; printer assignment becomes a scheduling concern, not a schema change |
+| Manufacturing in multiple countries       | `Organization.countryCode` + jurisdiction-scoped tax + regional printer profiles; the schema does not change          |

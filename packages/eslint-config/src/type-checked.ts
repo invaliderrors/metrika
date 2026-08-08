@@ -20,10 +20,7 @@ export const typeChecked = tseslint.config(...base, {
     '@typescript-eslint/no-misused-promises': 'error',
     '@typescript-eslint/await-thenable': 'error',
     '@typescript-eslint/switch-exhaustiveness-check': 'error',
-    '@typescript-eslint/consistent-type-imports': [
-      'error',
-      { fixStyle: 'inline-type-imports' },
-    ],
+    '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
     '@typescript-eslint/consistent-type-exports': 'error',
     '@typescript-eslint/prefer-nullish-coalescing': 'error',
     '@typescript-eslint/prefer-optional-chain': 'error',

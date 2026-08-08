@@ -10,7 +10,7 @@ The schema is large and will evolve constantly. Migrations must be safe in produ
 
 Prisma, with two constraints:
 
-1. **`@prisma/client` may only be imported from `apps/api/src/infrastructure/persistence/**`**, enforced by an ESLint zone. Nothing else in the codebase knows Prisma exists.
+1. **`@prisma/client` may only be imported from `apps/api/src/infrastructure/persistence/**`\*\*, enforced by an ESLint zone. Nothing else in the codebase knows Prisma exists.
 2. **No generic `Repository<T>` wrapper.** Prisma is used directly for straightforward reads and writes. Explicit repository interfaces exist only for aggregates with invariants that must not be bypassed — `Quote`, `Order`, `ModelVersion`, `SliceJob` — and they expose intent-revealing methods (`findAcceptableQuote(id, ctx)`), never `findMany(args)`.
 
 RLS, soft deletion and ID branding are applied through client extensions so they cannot be forgotten.
