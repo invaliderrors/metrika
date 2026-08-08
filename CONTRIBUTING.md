@@ -29,6 +29,11 @@ fix(models): reject STL with mismatched header triangle count
 docs(adr): supersede ADR-0009 after ts-rest spike
 ```
 
+Two conventions that apply to every commit:
+
+- **Commit every change.** Do not leave the working tree dirty at the end of a piece of work, and commit each logical unit as you go rather than batching unrelated changes together.
+- **No AI attribution in commit messages.** Do not add `Co-Authored-By` trailers for AI models or any equivalent. Commits are authored by the repository owner regardless of what tooling assisted.
+
 ## Definition of done
 
 A change is ready when **all** of these hold:
