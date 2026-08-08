@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addMoney,
   CURRENCY_REGISTRY,
+  CurrencyCode,
   Money,
   MoneyMismatchError,
   money,
@@ -147,5 +148,22 @@ describe('Money', () => {
   it('rejects an exponent above the declared upper bound', () => {
     const bad = { ...money(1n, 'COP'), exponent: 5 };
     expect(Money.safeParse(bad).success).toBe(false);
+  });
+
+  // `Money.currency: CurrencyCode` widening to `z.string()` survives every
+  // test above unnoticed: every fixture here already uses a real currency
+  // code, so nothing exercises the boundary of the enum itself. As with
+  // `DomainErrorCode` (see result.test.ts), the closed-set membership needs
+  // an independent, hard-coded assertion — `.options` trivially equals
+  // itself on any enum, including a widened `z.string()` masquerading as one.
+
+  it('CurrencyCode is exactly this set of four codes, in this order', () => {
+    expect(CurrencyCode.options).toEqual(['COP', 'USD', 'EUR', 'MXN']);
+  });
+
+  it('rejects an unlisted currency code', () => {
+    expect(Money.safeParse({ amountMinor: '0', currency: 'GBP', exponent: 0 }).success).toBe(
+      false,
+    );
   });
 });
