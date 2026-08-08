@@ -9,9 +9,15 @@ import { base } from './base.js';
 export function typeChecked(options) {
   return tseslint.config(
     ...base,
-    ...tseslint.configs.strictTypeChecked,
     {
+      // `strictTypeChecked` is spread in via `extends` rather than directly, so that
+      // typescript-eslint's config helper applies this object's `files` restriction to
+      // it too. Spreading it in bare (as `...tseslint.configs.strictTypeChecked`) applies
+      // its type-aware rules to every file ESLint lints, including plain `.js` files like
+      // `eslint.config.js` — which then crash because they have no membership in the
+      // type-checked project the `parserOptions.project` below points at.
       files: ['**/*.ts', '**/*.tsx'],
+      extends: [tseslint.configs.strictTypeChecked],
       languageOptions: {
         parserOptions: {
           projectService: options.project === undefined,
