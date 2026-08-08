@@ -20,7 +20,22 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const nvmrcPath = path.join(repoRoot, '.nvmrc');
 
-const wantedRaw = readFileSync(nvmrcPath, 'utf8').trim();
+let wantedRaw;
+try {
+  wantedRaw = readFileSync(nvmrcPath, 'utf8').trim();
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.error(
+    [
+      '',
+      `Could not read ${nvmrcPath}: ${reason}`,
+      'This file must exist and name the required Node version (e.g. "24.19.0") for this guard to run.',
+      '',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
+
 const wantedMajor = wantedRaw.split('.')[0];
 const currentVersion = process.versions.node;
 const currentMajor = currentVersion.split('.')[0];
