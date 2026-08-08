@@ -4,7 +4,11 @@ Digital manufacturing platform for professional 3D printing. Upload a 3D model, 
 
 Initial market: Colombia (`es-CO`, COP). Initial customers: architects and architecture studios. The architecture is internationalisation-ready and does not hardcode Colombia-specific business rules in the domain.
 
-> **Status: architecture blueprint.** No application code has been written yet. The complete engineering plan lives in [`docs/`](./docs/) and is intended to be executable without re-deriving fundamental decisions.
+> **Status: Phase 0A complete.** The monorepo, quality-gate config packages
+> (`packages/typescript-config`, `packages/eslint-config`) and `packages/contracts`
+> exist and are tested. `apps/` and the remaining `packages/*` do not exist yet. The
+> complete engineering plan lives in [`docs/`](./docs/) and is intended to be
+> executable without re-deriving fundamental decisions.
 
 ---
 
@@ -50,7 +54,8 @@ Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zusta
 
 ## Quick start
 
-Not yet implementable — Phase 0 has not been built. The target experience, verified by CI once it exists:
+Not yet reachable — `apps/` has not been built (Phase 0A covered the monorepo and
+`packages/contracts` only). The target experience, verified by CI once it exists:
 
 ```bash
 pnpm install

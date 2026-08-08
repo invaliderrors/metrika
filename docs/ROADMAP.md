@@ -82,10 +82,14 @@
 
 Progress: 0.1–0.5, 0.12 complete for what Plan 0A scoped. Remaining: 0.6–0.11,
 0.13–0.16. Caveats on the ✅ rows: several describe end-state work that lands
-incrementally as the runtimes that need it are built. 0.2's `next`/`nest`
-tsconfigs and 0.3's `react`/`next`/`nest`/`workflows` ESLint profiles arrive
-with `apps/web` and `apps/api` (Plan 0B) — today only `base`/`node`/`react-library`
-and `base`/`typeChecked`/`test`/`contractsBoundary` exist. 0.4's `ruff`/`mypy`
+incrementally as the runtimes that need it are built. 0.1's `test:integration`
+turbo task and remote caching don't exist yet — `turbo.json` defines only
+`typecheck`, `lint`, `test:unit` and `build`, and `pnpm verify` logs "Remote
+caching disabled"; both land once there's something to integration-test and a
+Vercel remote-cache token to configure. 0.2's `next`/`nest` tsconfigs and 0.3's
+`react`/`next`/`nest`/`workflows` ESLint profiles arrive with `apps/web` and
+`apps/api` (Plan 0B) — today only `base`/`node`/`react-library` and
+`base`/`typeChecked`/`test`/`contractsBoundary` exist. 0.4's `ruff`/`mypy`
 land with `apps/workers` (Plan 0B); only the Prettier/`.editorconfig` half is
 done. 0.12's CI currently runs format, lint, typecheck and unit tests only —
 the rest of [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)'s gate list

@@ -1,6 +1,8 @@
 # Metrika — Local Development
 
-> Clone to a working end-to-end quote flow in five commands. Verified by CI on a clean checkout.
+> Target: clone to a working end-to-end quote flow in five commands, verified by CI on
+> a clean checkout. **Not yet reachable** — `apps/` doesn't exist, so there is no quote
+> flow to run yet, and CI currently runs `pnpm verify` only. See §2 for what works today.
 
 ---
 
