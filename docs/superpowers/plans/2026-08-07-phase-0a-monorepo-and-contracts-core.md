@@ -10,8 +10,9 @@
 
 ## Global Constraints
 
-- **Node: pin the current Active LTS**, in `.nvmrc` and `engines`. ⚠️ The blueprint ([docs/TYPESCRIPT_AND_TOOLING.md §6](../../TYPESCRIPT_AND_TOOLING.md#6-runtime-versions)) says Node 22, but this machine has **v26.5.0** installed and Node 22 has since moved to maintenance. Resolve this in Task 1 Step 2 — check `https://nodejs.org/en/about/previous-releases` for what is Active LTS today, pin that, and update the blueprint to match. Do not pin a version because a document written earlier named it.
-- **Python 3.12**, pinned in `.python-version`. ⚠️ This machine has **3.9.6**, which is too old. Not needed for Plan 0A, but install it before Plan 0B (`mise install python@3.12`).
+- **Node 24 (Krypton)** — pinned in `.nvmrc` and `engines`. Resolved from nodejs.org during pre-flight: v24 is **Active LTS**, v22 has moved to **Maintenance LTS** (so the blueprint's Node 22 is stale), and v26 is **Current**, which production must not run. The blueprint ([docs/TYPESCRIPT_AND_TOOLING.md §6](../../TYPESCRIPT_AND_TOOLING.md#6-runtime-versions)) is corrected to 24 in Task 12. Revisit when v26 reaches Active LTS (expected October 2026).
+- This machine has **v26.5.0** installed; install 24 (`mise install node@24` or `nvm install 24`) before starting. `engines.node` is `>=24 <25` so a mismatch fails loudly rather than producing subtle differences from CI.
+- **Python 3.12**, pinned in `.python-version`. ⚠️ This machine has **3.9.6**, which is too old. Not needed for Plan 0A, but install before Plan 0B (`mise install python@3.12`).
 - **No `any`.** `@typescript-eslint/no-explicit-any` and all six `no-unsafe-*` rules are errors with no exceptions.
 - **`packages/contracts` may import nothing but `zod`.** No Node built-ins, no framework, no React. Enforced by a lint zone in Task 10.
 - **CI runs `eslint --max-warnings=0`.** There is no warning tier.
@@ -83,9 +84,9 @@ packages:
   - 'packages/*'
 ```
 
-`.nvmrc` — one line, the exact current Node 22 LTS patch. Get it with `node --version` after `mise use node@22` (or `nvm install 22`), e.g.:
+`.nvmrc` — the exact Node 24 patch you installed. Get it with `mise install node@24 && mise use node@24 && node --version` (or the nvm equivalent), then write it without the leading `v`:
 ```
-22.11.0
+24.10.0
 ```
 
 `.python-version`:
@@ -123,6 +124,9 @@ coverage/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
+
+# agent scratch — ledgers, briefs, review packages
+.superpowers/
 ```
 
 - [ ] **Step 3: Write the root `package.json`**
@@ -133,7 +137,7 @@ __pycache__/
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.12.3",
-  "engines": { "node": ">=22 <23" },
+  "engines": { "node": ">=24 <25" },
   "scripts": {
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint -- --fix",
@@ -224,9 +228,17 @@ export function classify(n: number): string {
 ```json
 {
   "extends": "../base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
   "include": ["fixtures/**/*.ts"]
 }
 ```
+
+`composite` must be switched off here: `tsc` rejects `--noEmit` together with `composite: true` ("Option 'noEmit' cannot be specified with option 'composite'"), and these fixtures are only ever type-checked, never built. The strict flags under test are inherited from `base.json` unchanged, which is the point.
 
 `packages/typescript-config/test/flags.test.ts`:
 ```ts
@@ -341,13 +353,17 @@ Expected: FAIL — the package and its `base.json` do not exist yet.
 
 - [ ] **Step 4: Install dependencies and run the test**
 
+pnpm's node_modules is strict: a workspace package can only resolve dependencies it declares itself. Root devDependencies are **not** visible to `pnpm --filter <pkg> run …`, so `typescript` and `vitest` must be added to this package, not only to the root.
+
 ```bash
-pnpm add -Dw -E typescript vitest @types/node
-pnpm install
+pnpm add -Dw -E @types/node
+pnpm --filter @metrika/typescript-config add -DE typescript vitest
 pnpm --filter @metrika/typescript-config test:unit
 ```
 
 Expected: PASS — all three fixtures produce their expected error codes.
+
+If instead you see `Option 'noEmit' cannot be specified with option 'composite'`, the `composite: false` override in `tsconfig.fixtures.json` is missing.
 
 - [ ] **Step 5: Commit**
 
@@ -658,7 +674,7 @@ git commit -m "feat(eslint-config): add base and type-checked flat config profil
 
 **Files:**
 - Create: `packages/contracts/package.json`, `tsconfig.json`, `eslint.config.js`, `vitest.config.ts`, `src/brand.ts`, `src/ids.ts`, `src/index.ts`
-- Test: `packages/contracts/test/ids.test.ts`
+- Test: `packages/contracts/test/ids.test.ts` (runtime), `packages/contracts/test/ids.test-d.ts` (types)
 
 **Interfaces:**
 - Consumes: Tasks 2 and 4
@@ -670,8 +686,8 @@ git commit -m "feat(eslint-config): add base and type-checked flat config profil
 
 `packages/contracts/test/ids.test.ts`:
 ```ts
-import { describe, expect, expectTypeOf, it } from 'vitest';
-import { ModelId, ProjectId } from '../src/index.js';
+import { describe, expect, it } from 'vitest';
+import { ModelId } from '../src/index.js';
 
 describe('branded IDs', () => {
   it('accepts a UUIDv4', () => {
@@ -691,10 +707,27 @@ describe('branded IDs', () => {
   it('rejects the nil UUID', () => {
     expect(ModelId.safeParse('00000000-0000-0000-0000-000000000000').success).toBe(false);
   });
+});
+```
 
-  it('is nominally distinct from another ID type', () => {
-    const modelId = ModelId.parse('9f1c2b3a-4d5e-4f60-8a1b-2c3d4e5f6071');
-    expectTypeOf(modelId).not.toMatchTypeOf<ProjectId>();
+Nominal distinctness is a **compile-time** property, so it goes in a type test, not a runtime test. `expectTypeOf` compiles to a no-op at runtime — placed in a `*.test.ts` it asserts nothing and passes even when branding is broken. Vitest only evaluates it under `--typecheck`, against `*.test-d.ts` files.
+
+`packages/contracts/test/ids.test-d.ts`:
+```ts
+import { describe, expectTypeOf, it } from 'vitest';
+import type { ModelId, ProjectId } from '../src/index.js';
+
+describe('branded IDs are nominally distinct', () => {
+  it('does not let a ProjectId satisfy ModelId', () => {
+    expectTypeOf<ProjectId>().not.toEqualTypeOf<ModelId>();
+  });
+
+  it('does not let a bare string satisfy ModelId', () => {
+    expectTypeOf<string>().not.toEqualTypeOf<ModelId>();
+  });
+
+  it('lets a ModelId be used as a string', () => {
+    expectTypeOf<ModelId>().toExtend<string>();
   });
 });
 ```
@@ -786,6 +819,12 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    include: ['test/**/*.test.ts'],
+    typecheck: {
+      enabled: true,
+      include: ['test/**/*.test-d.ts'],
+      tsconfig: './tsconfig.json',
+    },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
@@ -794,6 +833,8 @@ export default defineConfig({
   },
 });
 ```
+
+`typecheck.enabled` is what makes the `*.test-d.ts` assertions real — without it Vitest never type-checks them and branding regressions pass silently.
 
 `packages/contracts/package.json`:
 ```json
@@ -1004,7 +1045,7 @@ git commit -m "feat(contracts): add Money as minor units with explicit currency 
 **Files:**
 - Create: `packages/contracts/src/units.ts`
 - Modify: `packages/contracts/src/index.ts`
-- Test: `packages/contracts/test/units.test.ts`
+- Test: `packages/contracts/test/units.test.ts` (runtime), `packages/contracts/test/units.test-d.ts` (types)
 
 **Interfaces:**
 - Consumes: Task 5
@@ -1014,8 +1055,8 @@ git commit -m "feat(contracts): add Money as minor units with explicit currency 
 
 `packages/contracts/test/units.test.ts`:
 ```ts
-import { describe, expect, expectTypeOf, it } from 'vitest';
-import { CubicMillimeters, Grams, grams, mm, Millimeters, Seconds } from '../src/index.js';
+import { describe, expect, it } from 'vitest';
+import { CubicMillimeters, Grams, Millimeters, Seconds } from '../src/index.js';
 
 describe('physical units', () => {
   it('accepts a finite non-negative value', () => {
@@ -1045,10 +1086,29 @@ describe('physical units', () => {
   it('rejects negative volume', () => {
     expect(CubicMillimeters.safeParse(-1).success).toBe(false);
   });
+});
+```
 
-  it('is nominally distinct across quantities', () => {
-    expectTypeOf(grams(1)).not.toMatchTypeOf<Millimeters>();
-    expectTypeOf(mm(1)).not.toMatchTypeOf<Grams>();
+`packages/contracts/test/units.test-d.ts`:
+```ts
+import { describe, expectTypeOf, it } from 'vitest';
+import type { CubicMillimeters, Grams, Millimeters, Seconds } from '../src/index.js';
+
+describe('units are nominally distinct', () => {
+  it('does not let Grams satisfy Millimeters', () => {
+    expectTypeOf<Grams>().not.toEqualTypeOf<Millimeters>();
+  });
+
+  it('does not let Millimeters satisfy Grams', () => {
+    expectTypeOf<Millimeters>().not.toEqualTypeOf<Grams>();
+  });
+
+  it('does not let CubicMillimeters satisfy Grams — the mix-up that becomes a wrong price', () => {
+    expectTypeOf<CubicMillimeters>().not.toEqualTypeOf<Grams>();
+  });
+
+  it('does not let a bare number satisfy Seconds', () => {
+    expectTypeOf<number>().not.toEqualTypeOf<Seconds>();
   });
 });
 ```
