@@ -1,0 +1,13 @@
+{
+  "name": "@metrika/typescript-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "base.json",
+    "node.json",
+    "react-library.json",
+    "next.json",
+    "nest.json"
+  ]
+}
