@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && tsc -b tsconfig.build.json",
     "lint": "eslint .",
     "test:unit": "vitest run --coverage"
   },

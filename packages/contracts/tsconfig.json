@@ -7,8 +7,14 @@
     // crypto.subtle — rather than DOM's much larger surface (Window,
     // document, HTMLElement, ...) that nothing here uses.
     "lib": ["ES2023", "WebWorker"],
-    "outDir": "dist",
-    "rootDir": "."
+    // Editor/lint/full-program type-checking only — this is the project
+    // ESLint's typeChecked() points `parserOptions.project` at, so it has to
+    // include test/** too (type-aware lint needs every linted file inside
+    // the program). It must never emit: the actual package build comes from
+    // tsconfig.build.json (src only), and if this config emitted as well it
+    // would put test/** back into an output directory. See
+    // tsconfig.build.json for why the two are split.
+    "noEmit": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }
