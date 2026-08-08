@@ -35,8 +35,13 @@ export const Money = z.object({
 export type Money = z.infer<typeof Money>;
 
 export class MoneyMismatchError extends Error {
-  constructor(a: Money, b: Money) {
-    super(`Cannot combine ${a.currency}/${String(a.exponent)} with ${b.currency}/${String(b.exponent)}`);
+  constructor(
+    readonly a: Money,
+    readonly b: Money,
+  ) {
+    super(
+      `Cannot combine ${a.currency}/${String(a.exponent)} with ${b.currency}/${String(b.exponent)}`,
+    );
     this.name = 'MoneyMismatchError';
   }
 }
@@ -57,5 +62,9 @@ export function addMoney(a: Money, b: Money): Money {
   if (a.currency !== b.currency || a.exponent !== b.exponent) {
     throw new MoneyMismatchError(a, b);
   }
-  return { ...a, amountMinor: (toBigInt(a) + toBigInt(b)).toString() };
+  return {
+    amountMinor: (toBigInt(a) + toBigInt(b)).toString(),
+    currency: a.currency,
+    exponent: a.exponent,
+  };
 }

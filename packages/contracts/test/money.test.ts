@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { addMoney, CURRENCY_REGISTRY, Money, MoneyMismatchError, money, toBigInt } from '../src/index.js';
+import {
+  addMoney,
+  CURRENCY_REGISTRY,
+  Money,
+  MoneyMismatchError,
+  money,
+  toBigInt,
+} from '../src/index.js';
 
 describe('Money', () => {
   it('constructs COP with exponent 0 from the registry', () => {
@@ -21,11 +28,15 @@ describe('Money', () => {
   });
 
   it('parses a valid wire representation', () => {
-    expect(Money.safeParse({ amountMinor: '-500', currency: 'COP', exponent: 0 }).success).toBe(true);
+    expect(Money.safeParse({ amountMinor: '-500', currency: 'COP', exponent: 0 }).success).toBe(
+      true,
+    );
   });
 
   it('rejects a non-integer amount string', () => {
-    expect(Money.safeParse({ amountMinor: '1.5', currency: 'COP', exponent: 0 }).success).toBe(false);
+    expect(Money.safeParse({ amountMinor: '1.5', currency: 'COP', exponent: 0 }).success).toBe(
+      false,
+    );
   });
 
   it('rejects a numeric amount', () => {
@@ -45,6 +56,31 @@ describe('Money', () => {
     expect(() => addMoney(money(1n, 'COP'), odd)).toThrow(MoneyMismatchError);
   });
 
+  it('names the thrown error MoneyMismatchError, not the generic Error', () => {
+    // toThrow(MoneyMismatchError) checks `instanceof`, which passes even if
+    // `.name` regresses to the inherited "Error" — a divergence that would
+    // silently corrupt every serialised log line. Assert `.name` directly.
+    try {
+      addMoney(money(1n, 'COP'), money(1n, 'USD'));
+      expect.unreachable('addMoney should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MoneyMismatchError);
+      expect((err as MoneyMismatchError).name).toBe('MoneyMismatchError');
+    }
+  });
+
+  it('preserves both operands on the thrown error for diagnostics', () => {
+    const a = money(1n, 'COP');
+    const b = money(1n, 'USD');
+    try {
+      addMoney(a, b);
+      expect.unreachable('addMoney should have thrown');
+    } catch (err) {
+      expect((err as MoneyMismatchError).a).toEqual(a);
+      expect((err as MoneyMismatchError).b).toEqual(b);
+    }
+  });
+
   it('registry declares COP as exponent 0 — Colombian commerce uses whole pesos', () => {
     expect(CURRENCY_REGISTRY.COP.exponent).toBe(0);
   });
@@ -56,15 +92,21 @@ describe('Money', () => {
   // serialisations of the same value as different.
 
   it('rejects a leading-zero amount string', () => {
-    expect(Money.safeParse({ amountMinor: '0100', currency: 'COP', exponent: 0 }).success).toBe(false);
+    expect(Money.safeParse({ amountMinor: '0100', currency: 'COP', exponent: 0 }).success).toBe(
+      false,
+    );
   });
 
   it('rejects an amount string with a leading plus sign', () => {
-    expect(Money.safeParse({ amountMinor: '+500', currency: 'COP', exponent: 0 }).success).toBe(false);
+    expect(Money.safeParse({ amountMinor: '+500', currency: 'COP', exponent: 0 }).success).toBe(
+      false,
+    );
   });
 
   it('rejects "-0" so zero has exactly one wire representation', () => {
-    expect(Money.safeParse({ amountMinor: '-0', currency: 'COP', exponent: 0 }).success).toBe(false);
+    expect(Money.safeParse({ amountMinor: '-0', currency: 'COP', exponent: 0 }).success).toBe(
+      false,
+    );
   });
 
   it('accepts and round-trips a zero amount', () => {
@@ -81,6 +123,17 @@ describe('Money', () => {
     expect(addMoney(money(1000n, 'COP'), money(-300n, 'COP')).amountMinor).toBe('700');
   });
 
+  it('adds two amounts well beyond Number.MAX_SAFE_INTEGER without precision loss', () => {
+    // toBigInt/money round-tripping a single huge value beyond 2^53 is
+    // covered above, but addMoney does its own bigint arithmetic — a
+    // regression to Number-based addition here would corrupt the result
+    // only above 2^53, exactly where a naive test using small numbers would
+    // never catch it.
+    const big1 = 9_007_199_254_740_993n; // MAX_SAFE_INTEGER + 2
+    const big2 = 9_007_199_254_740_995n; // MAX_SAFE_INTEGER + 4
+    expect(addMoney(money(big1, 'COP'), money(big2, 'COP')).amountMinor).toBe('18014398509481988');
+  });
+
   it('rejects a non-integer exponent', () => {
     const bad = { ...money(1n, 'COP'), exponent: 2.5 };
     expect(Money.safeParse(bad).success).toBe(false);
@@ -88,6 +141,11 @@ describe('Money', () => {
 
   it('rejects a negative exponent', () => {
     const bad = { ...money(1n, 'COP'), exponent: -1 };
+    expect(Money.safeParse(bad).success).toBe(false);
+  });
+
+  it('rejects an exponent above the declared upper bound', () => {
+    const bad = { ...money(1n, 'COP'), exponent: 5 };
     expect(Money.safeParse(bad).success).toBe(false);
   });
 });
