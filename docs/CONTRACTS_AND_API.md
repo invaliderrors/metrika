@@ -33,37 +33,34 @@ import { initContract } from '@ts-rest/core';
 
 const c = initContract();
 
-export const quotesContract = c.router(
-  {
-    create: {
-      method: 'POST',
-      path: '/quotes',
-      body: CreateQuoteRequest,
-      responses: { 202: QuoteResponse, 400: ApiErrorResponse, 409: ApiErrorResponse },
-      summary: 'Create a quote for a configured model version',
-    },
-    get: {
-      method: 'GET',
-      path: '/quotes/:quoteId',
-      pathParams: z.object({ quoteId: QuoteId }),
-      responses: { 200: QuoteResponse, 404: ApiErrorResponse },
-    },
-    accept: {
-      method: 'POST',
-      path: '/quotes/:quoteId/accept',
-      pathParams: z.object({ quoteId: QuoteId }),
-      body: AcceptQuoteRequest,
-      responses: { 200: OrderResponse, 409: ApiErrorResponse, 410: ApiErrorResponse },
-    },
-    list: {
-      method: 'GET',
-      path: '/quotes',
-      query: CursorPaginationQuery.merge(QuoteFilterQuery),
-      responses: { 200: paginated(QuoteSummary) },
-    },
+export const quotesContract = c.router({
+  create: {
+    method: 'POST',
+    path: '/quotes',
+    body: CreateQuoteRequest,
+    responses: { 202: QuoteResponse, 400: ApiErrorResponse, 409: ApiErrorResponse },
+    summary: 'Create a quote for a configured model version',
   },
-  { pathPrefix: '/api/v1' },
-);
+  get: {
+    method: 'GET',
+    path: '/quotes/:quoteId',
+    pathParams: z.object({ quoteId: QuoteId }),
+    responses: { 200: QuoteResponse, 404: ApiErrorResponse },
+  },
+  accept: {
+    method: 'POST',
+    path: '/quotes/:quoteId/accept',
+    pathParams: z.object({ quoteId: QuoteId }),
+    body: AcceptQuoteRequest,
+    responses: { 200: OrderResponse, 409: ApiErrorResponse, 410: ApiErrorResponse },
+  },
+  list: {
+    method: 'GET',
+    path: '/quotes',
+    query: CursorPaginationQuery.merge(QuoteFilterQuery),
+    responses: { 200: paginated(QuoteSummary) },
+  },
+}, { pathPrefix: '/api/v1' });
 ```
 
 The NestJS controller is type-checked against this contract — a response missing a field does not compile. The client is generated from the same object. OpenAPI is emitted from it.
@@ -145,7 +142,7 @@ The cursor is an opaque base64 of `(sortValue, id)`, matching the `(organization
 export const ApiErrorResponse = z.object({
   error: z.object({
     code: DomainErrorCode,
-    message: z.string(), // localised, safe to display
+    message: z.string(),               // localised, safe to display
     details: z.record(z.unknown()).optional(),
     requestId: z.string(),
     retryable: z.boolean(),
@@ -193,7 +190,7 @@ export interface ClientConfig {
   readonly getAccessToken: () => Promise<string | null>;
   readonly onUnauthenticated?: () => void;
   readonly requestIdFactory?: () => string;
-  readonly retry?: RetryPolicy; // idempotent methods only, exponential backoff + jitter
+  readonly retry?: RetryPolicy;    // idempotent methods only, exponential backoff + jitter
 }
 ```
 

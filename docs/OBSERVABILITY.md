@@ -41,19 +41,12 @@ Structured JSON everywhere. Pino (Node), structlog (Python). Never `console.log`
 
 ```jsonc
 {
-  "level": "info",
-  "time": "2026-08-07T14:22:31.442Z",
-  "requestId": "req_01H...",
-  "traceId": "4bf92f...",
-  "spanId": "00f067...",
-  "userId": "usr_...",
-  "organizationId": "org_...",
-  "modelVersionId": "mv_...",
-  "workflowId": "model-processing:mv_...",
+  "level": "info", "time": "2026-08-07T14:22:31.442Z",
+  "requestId": "req_01H...", "traceId": "4bf92f...", "spanId": "00f067...",
+  "userId": "usr_...", "organizationId": "org_...",
+  "modelVersionId": "mv_...", "workflowId": "model-processing:mv_...",
   "msg": "geometry analysis completed",
-  "durationMs": 8420,
-  "triangleCount": 1240000,
-  "analyzerVersion": "geometry-worker@1.4.2",
+  "durationMs": 8420, "triangleCount": 1240000, "analyzerVersion": "geometry-worker@1.4.2"
 }
 ```
 

@@ -28,8 +28,8 @@
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
 
-    "noUnusedLocals": false, // ← ESLint instead; see below
-    "noUnusedParameters": false, // ← ESLint instead; see below
+    "noUnusedLocals": false,        // ← ESLint instead; see below
+    "noUnusedParameters": false,    // ← ESLint instead; see below
 
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
@@ -41,8 +41,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "incremental": true,
-  },
+    "incremental": true
+  }
 }
 ```
 
@@ -74,7 +74,7 @@ The one place this flag hurts. The pattern, documented once and confined to the 
 // apps/api/src/infrastructure/persistence/model-version.repository.ts
 const data: Prisma.ModelVersionUpdateInput = {
   state: next,
-  ...(failureCode !== undefined && { failureCode }), // conditional spread, not `failureCode`
+  ...(failureCode !== undefined && { failureCode }),        // conditional spread, not `failureCode`
   ...(failureDetail !== undefined && { failureDetail }),
 };
 ```
@@ -96,7 +96,7 @@ const payload = JSON.parse(body) as WebhookPayload;
 // right
 const parsed = WebhookPayload.safeParse(JSON.parse(body));
 if (!parsed.success) return err({ code: 'VALIDATION_FAILED', issues: parsed.error.issues });
-const payload = parsed.data; // typed, and true
+const payload = parsed.data;   // typed, and true
 ```
 
 ### Branded types
@@ -106,24 +106,24 @@ Defined once via Zod, in `packages/contracts`:
 ```ts
 const brandedUuid = <B extends string>(brand: B) => z.string().uuid().brand<B>();
 
-export const UserId = brandedUuid('UserId');
-export const OrganizationId = brandedUuid('OrganizationId');
-export const ProjectId = brandedUuid('ProjectId');
-export const ModelId = brandedUuid('ModelId');
-export const ModelVersionId = brandedUuid('ModelVersionId');
-export const QuoteId = brandedUuid('QuoteId');
-export const OrderId = brandedUuid('OrderId');
-export const SliceJobId = brandedUuid('SliceJobId');
-export const PrintJobId = brandedUuid('PrintJobId');
-export const MaterialId = brandedUuid('MaterialId');
+export const UserId          = brandedUuid('UserId');
+export const OrganizationId  = brandedUuid('OrganizationId');
+export const ProjectId       = brandedUuid('ProjectId');
+export const ModelId         = brandedUuid('ModelId');
+export const ModelVersionId  = brandedUuid('ModelVersionId');
+export const QuoteId         = brandedUuid('QuoteId');
+export const OrderId         = brandedUuid('OrderId');
+export const SliceJobId      = brandedUuid('SliceJobId');
+export const PrintJobId      = brandedUuid('PrintJobId');
+export const MaterialId      = brandedUuid('MaterialId');
 export const PrinterProfileVersionId = brandedUuid('PrinterProfileVersionId');
-export type UserId = z.infer<typeof UserId>; // ...etc
+export type  UserId = z.infer<typeof UserId>;   // ...etc
 
-export const Millimeters = z.number().finite().brand<'Millimeters'>();
-export const CubicMillimeters = z.number().nonnegative().finite().brand<'CubicMillimeters'>();
-export const Grams = z.number().nonnegative().finite().brand<'Grams'>();
-export const Seconds = z.number().nonnegative().finite().brand<'Seconds'>();
-export const MinorUnits = z.bigint().brand<'MinorUnits'>();
+export const Millimeters       = z.number().finite().brand<'Millimeters'>();
+export const CubicMillimeters  = z.number().nonnegative().finite().brand<'CubicMillimeters'>();
+export const Grams             = z.number().nonnegative().finite().brand<'Grams'>();
+export const Seconds           = z.number().nonnegative().finite().brand<'Seconds'>();
+export const MinorUnits        = z.bigint().brand<'MinorUnits'>();
 ```
 
 **Where branding is applied:** every entity ID, and the five physical quantities that flow into money. **Where it is not:** ordinary strings, emails, names, arbitrary numbers. Branding everything requires a units algebra (`add`, `mul`, `div` for every pair) and produces friction well beyond its value. Branding IDs and money-adjacent quantities catches the two mix-ups that actually cause damage: passing a `ProjectId` where a `ModelId` belongs, and passing grams where cubic millimetres belong.
@@ -148,16 +148,11 @@ export function assertNever(value: never, context: string): never {
 }
 
 switch (fit.kind) {
-  case 'FITS':
-    return renderFits(fit);
-  case 'FITS_ROTATED':
-    return renderRotated(fit);
-  case 'REQUIRES_SEGMENTATION':
-    return renderSegmentation(fit);
-  case 'EXCEEDS_ALL_PRINTERS':
-    return renderTooLarge(fit);
-  default:
-    return assertNever(fit, 'FitResult');
+  case 'FITS':                   return renderFits(fit);
+  case 'FITS_ROTATED':           return renderRotated(fit);
+  case 'REQUIRES_SEGMENTATION':  return renderSegmentation(fit);
+  case 'EXCEEDS_ALL_PRINTERS':   return renderTooLarge(fit);
+  default:                       return assertNever(fit, 'FitResult');
 }
 ```
 
@@ -184,7 +179,7 @@ export { typeChecked } from './type-checked.js';
 export { react } from './react.js';
 export { next } from './next.js';
 export { nest } from './nest.js';
-export { workflows } from './workflows.js'; // Temporal determinism
+export { workflows } from './workflows.js';   // Temporal determinism
 export { test } from './test.js';
 export { script } from './script.js';
 export { boundaries } from './boundaries.js';
@@ -287,13 +282,9 @@ Prettier owns formatting entirely. No ESLint formatting rules; `eslint-config-pr
 
 ```jsonc
 {
-  "semi": true,
-  "singleQuote": true,
-  "trailingComma": "all",
-  "printWidth": 100,
-  "tabWidth": 2,
-  "arrowParens": "always",
-  "plugins": ["prettier-plugin-tailwindcss"],
+  "semi": true, "singleQuote": true, "trailingComma": "all",
+  "printWidth": 100, "tabWidth": 2, "arrowParens": "always",
+  "plugins": ["prettier-plugin-tailwindcss"]
 }
 ```
 
@@ -311,7 +302,7 @@ Internal packages are **source-only**:
 {
   "name": "@metrika/contracts",
   "exports": { ".": "./src/index.ts", "./events": "./src/events/index.ts" },
-  "scripts": { "typecheck": "tsc -b" },
+  "scripts": { "typecheck": "tsc -b" }
 }
 ```
 
@@ -360,7 +351,7 @@ CI reads the same files. A version mismatch between local and CI is not a debugg
   "db:seed": "pnpm --filter @metrika/database seed",
   "db:reset": "pnpm --filter @metrika/database reset",
   "contracts:emit": "pnpm --filter @metrika/contracts emit:json-schema && pnpm --filter @metrika/contracts emit:pydantic",
-  "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit",
+  "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit"
 }
 ```
 

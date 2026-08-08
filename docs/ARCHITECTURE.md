@@ -444,9 +444,8 @@ onEvent: (e: ModelProcessingEvent) => {
   queryClient.setQueryData(modelVersionKey(e.modelVersionId), (prev) =>
     prev ? { ...prev, state: e.state, progress: e.progress } : prev,
   );
-  if (e.state === 'READY')
-    void queryClient.invalidateQueries({ queryKey: modelVersionKey(e.modelVersionId) });
-};
+  if (e.state === 'READY') void queryClient.invalidateQueries({ queryKey: modelVersionKey(e.modelVersionId) });
+}
 ```
 
 This is the single most commonly botched piece of a real-time UI. One cache, one read path.
@@ -843,7 +842,7 @@ Refunds are a **separate `Refund` entity**, not payment states. `PARTIALLY_REFUN
 Every transition goes through one function:
 
 ```ts
-transition(entity, event, ctx); // validates against the table, writes entity + StatusTransition row, emits domain event — one transaction
+transition(entity, event, ctx) // validates against the table, writes entity + StatusTransition row, emits domain event — one transaction
 ```
 
 Illegal transitions throw a typed `InvalidStateTransitionError`. The transition tables are exhaustively unit-tested, including that every state is reachable and every terminal state is terminal.
@@ -930,24 +929,13 @@ A closed, typed domain error union in `packages/contracts`, mapped to HTTP once,
 
 ```ts
 type DomainErrorCode =
-  | 'MODEL_NOT_FOUND'
-  | 'MODEL_NOT_READY'
-  | 'MODEL_NOT_PRINTABLE'
-  | 'UNSUPPORTED_FILE_FORMAT'
-  | 'FILE_TOO_LARGE'
-  | 'CHECKSUM_MISMATCH'
-  | 'UNITS_NOT_CONFIRMED'
-  | 'GEOMETRY_ANALYSIS_FAILED'
-  | 'INVALID_PRINT_CONFIGURATION'
-  | 'DOES_NOT_FIT_BUILD_VOLUME'
-  | 'SLICING_FAILED'
-  | 'QUOTE_EXPIRED'
-  | 'QUOTE_SUPERSEDED'
-  | 'INVALID_STATE_TRANSITION'
-  | 'PAYMENT_VERIFICATION_FAILED'
-  | 'INSUFFICIENT_PERMISSIONS'
-  | 'RATE_LIMITED'
-  | 'QUOTA_EXCEEDED';
+  | 'MODEL_NOT_FOUND' | 'MODEL_NOT_READY' | 'MODEL_NOT_PRINTABLE'
+  | 'UNSUPPORTED_FILE_FORMAT' | 'FILE_TOO_LARGE' | 'CHECKSUM_MISMATCH'
+  | 'UNITS_NOT_CONFIRMED' | 'GEOMETRY_ANALYSIS_FAILED'
+  | 'INVALID_PRINT_CONFIGURATION' | 'DOES_NOT_FIT_BUILD_VOLUME'
+  | 'SLICING_FAILED' | 'QUOTE_EXPIRED' | 'QUOTE_SUPERSEDED'
+  | 'INVALID_STATE_TRANSITION' | 'PAYMENT_VERIFICATION_FAILED'
+  | 'INSUFFICIENT_PERMISSIONS' | 'RATE_LIMITED' | 'QUOTA_EXCEEDED';
 ```
 
 Domain code throws typed errors carrying structured `details`. A single Nest exception filter maps code → HTTP status → response body, and logs at the right level: expected domain errors at `info`/`warn`, unexpected at `error` with a Sentry event. A generic `500` for a known domain failure is a bug. Stack traces never leave the process.

@@ -35,18 +35,15 @@ Workflow code runs in the TypeScript SDK inside `apps/api`'s worker process (a s
 export async function modelProcessingWorkflow(input: ModelProcessingInput): Promise<void> {
   const progress = defineProgress('UPLOADED');
 
-  await act.validateFile(input); // format sniff, limits, archive guards
-  const parsed = await act.parseModel(input); // routed by size to small/large queue
+  await act.validateFile(input);                              // format sniff, limits, archive guards
+  const parsed = await act.parseModel(input);                 // routed by size to small/large queue
 
   let units = parsed.unitInterpretation;
   if (units.confidence === 'AMBIGUOUS') {
     progress.set('AWAITING_UNIT_CONFIRMATION');
     await act.persistAwaitingUnits(input, units);
     const confirmed = await condition(() => unitSignal !== undefined, '7 days');
-    if (!confirmed) {
-      await act.failModelVersion(input, 'UNITS_NOT_CONFIRMED');
-      return;
-    }
+    if (!confirmed) { await act.failModelVersion(input, 'UNITS_NOT_CONFIRMED'); return; }
     units = unitSignal!;
   }
 
@@ -59,18 +56,14 @@ export async function modelProcessingWorkflow(input: ModelProcessingInput): Prom
     progress.set('AWAITING_REPAIR_APPROVAL');
     const decision = await condition(() => repairSignal !== undefined, '7 days');
     if (decision && repairSignal!.approved) {
-      await act.destructiveRepair({
-        ...input,
-        operations: repairSignal!.operations,
-        approvedBy: repairSignal!.userId,
-      });
+      await act.destructiveRepair({ ...input, operations: repairSignal!.operations, approvedBy: repairSignal!.userId });
     }
   }
 
   progress.set('GENERATING_PREVIEW');
   await Promise.all([act.generatePreview(input), act.generateSliceInput(input)]);
 
-  await act.persistAnalysisAndComplete({ ...input, analysis, repair }); // one transaction → READY
+  await act.persistAnalysisAndComplete({ ...input, analysis, repair });   // one transaction → READY
 }
 ```
 
@@ -83,17 +76,16 @@ Note the shape of the human-in-the-loop steps: **a signal with a timeout, not a 
 
 ```ts
 export async function quoteWorkflow(input: QuoteInput): Promise<void> {
-  await act.validateConfiguration(input); // profile compatibility, override allowlist
-  const fit = await act.checkFit(input); // BEFORE slicing — cheap rejection
+  await act.validateConfiguration(input);                     // profile compatibility, override allowlist
+  const fit = await act.checkFit(input);                      // BEFORE slicing — cheap rejection
   if (fit.kind === 'EXCEEDS_ALL_PRINTERS' || fit.kind === 'REQUIRES_SEGMENTATION') {
-    await act.failQuote(input, 'DOES_NOT_FIT_BUILD_VOLUME', fit);
-    return;
+    await act.failQuote(input, 'DOES_NOT_FIT_BUILD_VOLUME', fit); return;
   }
 
   const cached = await act.lookupSliceCache(input.cacheKey);
-  const slice = cached ?? (await act.slice(input)); // Python worker, heartbeating
+  const slice = cached ?? await act.slice(input);             // Python worker, heartbeating
 
-  await act.computeAndPersistQuote({ ...input, sliceResultId: slice.id }); // one transaction → READY
+  await act.computeAndPersistQuote({ ...input, sliceResultId: slice.id });   // one transaction → READY
 }
 ```
 

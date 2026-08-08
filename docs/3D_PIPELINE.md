@@ -267,11 +267,9 @@ The rule: **the viewer scene is glTF-native Y-up. Exactly one module converts pr
 
 ```ts
 // features/model-viewer/lib/coordinates.ts — the only file allowed to define these
-export const MM_TO_SCENE = 0.01; // 1 scene unit = 100 mm
+export const MM_TO_SCENE = 0.01;                      // 1 scene unit = 100 mm
 export const PRINTER_TO_SCENE = new Matrix4().makeRotationX(-Math.PI / 2);
-export function printerVecToScene(v: Vec3Mm): Vector3 {
-  /* ... */
-}
+export function printerVecToScene(v: Vec3Mm): Vector3 { /* ... */ }
 ```
 
 Build volumes, orientations and dimension annotations come from the domain in printer space and pass through this module. A lint rule forbids `makeRotationX` and raw `rotation.` assignments elsewhere in the feature.

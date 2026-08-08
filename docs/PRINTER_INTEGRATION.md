@@ -20,7 +20,7 @@ The consequence that matters: **the `PrintJob` state machine does not change whe
 // packages/printer-sdk/src/driver.ts
 
 export interface PrinterDriver {
-  readonly kind: PrinterDriverKind; // 'MANUAL' | 'OCTOPRINT' | 'KLIPPER' | 'PRUSA_CONNECT' | 'BAMBU' | 'SIMULATOR'
+  readonly kind: PrinterDriverKind;   // 'MANUAL' | 'OCTOPRINT' | 'KLIPPER' | 'PRUSA_CONNECT' | 'BAMBU' | 'SIMULATOR'
 
   getCapabilities(): Promise<PrinterCapabilities>;
   getStatus(): Promise<PrinterStatus>;
@@ -31,10 +31,7 @@ export interface PrinterDriver {
   resumeJob(handle: PrinterJobHandle): Promise<Result<void, PrinterError>>;
   getJobStatus(handle: PrinterJobHandle): Promise<Result<PrinterJobStatus, PrinterError>>;
 
-  subscribeTelemetry(
-    handle: PrinterJobHandle,
-    signal: AbortSignal,
-  ): AsyncIterable<PrinterTelemetry>;
+  subscribeTelemetry(handle: PrinterJobHandle, signal: AbortSignal): AsyncIterable<PrinterTelemetry>;
 }
 
 export interface PrinterCapabilities {
@@ -51,7 +48,7 @@ export interface PrinterCapabilities {
 
 export interface PrinterTelemetry {
   readonly at: IsoDateTime;
-  readonly progressRatio: number; // 0..1
+  readonly progressRatio: number;              // 0..1
   readonly currentLayer?: number;
   readonly nozzleTempC?: number;
   readonly bedTempC?: number;

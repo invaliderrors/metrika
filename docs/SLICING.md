@@ -12,17 +12,17 @@ Slicing is an infrastructure concern behind a port. **No business code ever refe
 // apps/api/src/modules/slicing/application/ports/slicer-engine.port.ts
 
 export interface SlicerEngine {
-  readonly kind: SlicerEngineKind; // 'PRUSA_SLICER' | 'CURA_ENGINE' | 'FAKE'
+  readonly kind: SlicerEngineKind;               // 'PRUSA_SLICER' | 'CURA_ENGINE' | 'FAKE'
 
-  getVersion(): Promise<SlicerVersion>; // { engine, semver, imageDigest }
+  getVersion(): Promise<SlicerVersion>;          // { engine, semver, imageDigest }
   getCapabilities(): Promise<SlicerCapabilities>;
   validateProfile(profile: SlicerProfilePayload): Promise<Result<void, ProfileValidationError>>;
-  estimate(request: SliceRequest): Promise<Result<SliceEstimate, SlicingError>>; // fast, approximate
+  estimate(request: SliceRequest): Promise<Result<SliceEstimate, SlicingError>>;   // fast, approximate
   slice(request: SliceRequest, signal: AbortSignal): Promise<Result<SliceOutput, SlicingError>>;
 }
 
 export interface SliceRequest {
-  readonly inputMeshUri: S3Uri; // SLICE_INPUT_3MF derivative
+  readonly inputMeshUri: S3Uri;                  // SLICE_INPUT_3MF derivative
   readonly transform: { scale: ScaleSpec; orientation: Orientation };
   readonly printerProfile: SlicerProfilePayload;
   readonly printProfile: SlicerProfilePayload;
@@ -33,10 +33,10 @@ export interface SliceRequest {
 }
 
 export interface SliceOutput {
-  readonly metrics: SliceMetrics; // branded units
+  readonly metrics: SliceMetrics;                // branded units
   readonly gcodeUri: S3Uri;
   readonly slicerVersion: SlicerVersion;
-  readonly rawMetrics: Readonly<Record<string, string>>; // everything the slicer emitted
+  readonly rawMetrics: Readonly<Record<string, string>>;   // everything the slicer emitted
   readonly warnings: readonly SlicerWarning[];
 }
 ```

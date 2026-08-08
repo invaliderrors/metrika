@@ -27,7 +27,7 @@ The purity constraint is not aesthetic. It is what makes golden-file testing pos
 export function computePrice(input: PriceInput): Result<PriceOutput, PricingError>;
 
 export interface PriceInput {
-  readonly evaluatedAt: IsoDateTime; // injected — never Date.now()
+  readonly evaluatedAt: IsoDateTime;          // injected — never Date.now()
   readonly ruleSet: PricingRuleSetVersionPayload;
   readonly items: readonly PriceItemInput[];
   readonly commercial: CommercialContext;
@@ -35,7 +35,7 @@ export interface PriceInput {
 }
 
 export interface PriceItemInput {
-  readonly slice: SliceMetrics; // branded units — see DOMAIN_MODEL.md §4
+  readonly slice: SliceMetrics;               // branded units — see DOMAIN_MODEL.md §4
   readonly geometry: GeometrySummary;
   readonly material: MaterialPricingSnapshot;
   readonly printer: PrinterCostSnapshot;
@@ -75,22 +75,22 @@ Not a scripting language (unversionable in practice, a security surface, impossi
 
 ```ts
 export type PricingComponent =
-  | { kind: 'MATERIAL_COST'; id: string; wasteFactor: DecimalString }
+  | { kind: 'MATERIAL_COST';         id: string; wasteFactor: DecimalString }
   | { kind: 'SUPPORT_MATERIAL_COST'; id: string; wasteFactor: DecimalString }
-  | { kind: 'MACHINE_TIME'; id: string; includeDepreciation: boolean; includeEnergy: boolean }
-  | { kind: 'SETUP'; id: string; amountMinor: MinorUnitsString; perOrder: boolean }
-  | { kind: 'LABOR'; id: string; minutesPerPart: DecimalString; hourlyRateMinor: MinorUnitsString }
-  | { kind: 'POST_PROCESSING'; id: string; byFinish: Record<FinishLevel, MinorUnitsString> }
-  | { kind: 'PACKAGING'; id: string; tiers: readonly VolumeTier[] }
-  | { kind: 'COMPLEXITY_SURCHARGE'; id: string; metric: ComplexityMetric; bands: readonly Band[] }
-  | { kind: 'RISK_ADJUSTMENT'; id: string; byRiskBand: Record<RiskBand, DecimalString> }
-  | { kind: 'URGENCY_MULTIPLIER'; id: string; byLevel: Record<Urgency, DecimalString> }
-  | { kind: 'QUANTITY_DISCOUNT'; id: string; tiers: readonly QuantityTier[] }
-  | { kind: 'TIER_DISCOUNT'; id: string; byTier: Record<OrganizationTier, DecimalString> }
-  | { kind: 'PROMOTION'; id: string; code: string; effect: PromotionEffect }
-  | { kind: 'MARGIN'; id: string; factor: DecimalString }
-  | { kind: 'MINIMUM_ORDER'; id: string; floorMinor: MinorUnitsString }
-  | { kind: 'TAX'; id: string; source: 'JURISDICTION' };
+  | { kind: 'MACHINE_TIME';          id: string; includeDepreciation: boolean; includeEnergy: boolean }
+  | { kind: 'SETUP';                 id: string; amountMinor: MinorUnitsString; perOrder: boolean }
+  | { kind: 'LABOR';                 id: string; minutesPerPart: DecimalString; hourlyRateMinor: MinorUnitsString }
+  | { kind: 'POST_PROCESSING';       id: string; byFinish: Record<FinishLevel, MinorUnitsString> }
+  | { kind: 'PACKAGING';             id: string; tiers: readonly VolumeTier[] }
+  | { kind: 'COMPLEXITY_SURCHARGE';  id: string; metric: ComplexityMetric; bands: readonly Band[] }
+  | { kind: 'RISK_ADJUSTMENT';       id: string; byRiskBand: Record<RiskBand, DecimalString> }
+  | { kind: 'URGENCY_MULTIPLIER';    id: string; byLevel: Record<Urgency, DecimalString> }
+  | { kind: 'QUANTITY_DISCOUNT';     id: string; tiers: readonly QuantityTier[] }
+  | { kind: 'TIER_DISCOUNT';         id: string; byTier: Record<OrganizationTier, DecimalString> }
+  | { kind: 'PROMOTION';             id: string; code: string; effect: PromotionEffect }
+  | { kind: 'MARGIN';                id: string; factor: DecimalString }
+  | { kind: 'MINIMUM_ORDER';         id: string; floorMinor: MinorUnitsString }
+  | { kind: 'TAX';                   id: string; source: 'JURISDICTION' };
 ```
 
 The rule set version stores an ordered array of these plus currency, exponent, rounding policy and `engineSchemaVersion`.
@@ -167,7 +167,7 @@ export interface PricingTrace {
   readonly schemaVersion: 1;
   readonly ruleSetVersionId: string;
   readonly ruleSetContentHash: string;
-  readonly engineVersion: string; // "pricing-engine@1.2.0"
+  readonly engineVersion: string;              // "pricing-engine@1.2.0"
   readonly evaluatedAt: IsoDateTime;
   readonly currency: CurrencyCode;
   readonly exponent: number;
@@ -190,9 +190,9 @@ export interface PricingTraceLine {
   readonly sequence: number;
   readonly componentId: string;
   readonly kind: PricingComponentKind;
-  readonly label: string; // localisation key, not a Spanish string
-  readonly inputs: Readonly<Record<string, string>>; // decimal strings, never floats
-  readonly formula: string; // human-readable, for the admin UI
+  readonly label: string;                       // localisation key, not a Spanish string
+  readonly inputs: Readonly<Record<string, string>>;   // decimal strings, never floats
+  readonly formula: string;                     // human-readable, for the admin UI
   readonly amountMinor: string;
   readonly runningSubtotalMinor: string;
 }
@@ -207,7 +207,7 @@ The trace is stored on `Quote.trace` and is **part of the immutable snapshot**. 
 ## 6. Money and rounding
 
 ```ts
-const RATE = new Decimal(materialCostPerKgMinor); // full precision throughout
+const RATE = new Decimal(materialCostPerKgMinor);   // full precision throughout
 const cost = massG.div(1000).mul(wasteFactor).mul(RATE);
 ```
 

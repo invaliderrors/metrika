@@ -235,9 +235,7 @@ export function first(items: readonly string[]): string {
 `packages/typescript-config/test/fixtures/exact-optional.ts`:
 
 ```ts
-interface Update {
-  readonly name?: string;
-}
+interface Update { readonly name?: string }
 export const update: Update = { name: undefined }; // exactOptionalPropertyTypes
 ```
 
@@ -590,11 +588,7 @@ export const base = [
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-restricted-properties': [
         'error',
-        {
-          object: 'process',
-          property: 'env',
-          message: 'Read configuration from config/env.ts only',
-        },
+        { object: 'process', property: 'env', message: 'Read configuration from config/env.ts only' },
       ],
     },
   },
@@ -613,44 +607,48 @@ import { base } from './base.js';
  * @returns {import('eslint').Linter.Config[]}
  */
 export function typeChecked(options) {
-  return tseslint.config(...base, ...tseslint.configs.strictTypeChecked, {
-    files: ['**/*.ts', '**/*.tsx'],
-    languageOptions: {
-      parserOptions: {
-        projectService: options.project === undefined,
-        project: options.project,
-        tsconfigRootDir: options.tsconfigRootDir,
+  return tseslint.config(
+    ...base,
+    ...tseslint.configs.strictTypeChecked,
+    {
+      files: ['**/*.ts', '**/*.tsx'],
+      languageOptions: {
+        parserOptions: {
+          projectService: options.project === undefined,
+          project: options.project,
+          tsconfigRootDir: options.tsconfigRootDir,
+        },
+      },
+      rules: {
+        '@typescript-eslint/no-explicit-any': 'error',
+        '@typescript-eslint/no-floating-promises': 'error',
+        '@typescript-eslint/no-misused-promises': 'error',
+        '@typescript-eslint/switch-exhaustiveness-check': 'error',
+        '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
+        '@typescript-eslint/consistent-type-exports': 'error',
+        '@typescript-eslint/no-non-null-assertion': 'error',
+        '@typescript-eslint/promise-function-async': 'error',
+        '@typescript-eslint/no-unused-vars': [
+          'error',
+          { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+        ],
+        '@typescript-eslint/strict-boolean-expressions': [
+          'error',
+          {
+            allowNullableBoolean: true,
+            allowNullableString: true,
+            allowNullableObject: true,
+            allowNumber: false,
+            allowString: false,
+          },
+        ],
+        // Documented exceptions — see docs/TYPESCRIPT_AND_TOOLING.md §3
+        '@typescript-eslint/require-await': 'off',
+        '@typescript-eslint/explicit-function-return-type': 'off',
+        '@typescript-eslint/explicit-module-boundary-types': 'off',
       },
     },
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/no-misused-promises': 'error',
-      '@typescript-eslint/switch-exhaustiveness-check': 'error',
-      '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
-      '@typescript-eslint/consistent-type-exports': 'error',
-      '@typescript-eslint/no-non-null-assertion': 'error',
-      '@typescript-eslint/promise-function-async': 'error',
-      '@typescript-eslint/no-unused-vars': [
-        'error',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
-      ],
-      '@typescript-eslint/strict-boolean-expressions': [
-        'error',
-        {
-          allowNullableBoolean: true,
-          allowNullableString: true,
-          allowNullableObject: true,
-          allowNumber: false,
-          allowString: false,
-        },
-      ],
-      // Documented exceptions — see docs/TYPESCRIPT_AND_TOOLING.md §3
-      '@typescript-eslint/require-await': 'off',
-      '@typescript-eslint/explicit-function-return-type': 'off',
-      '@typescript-eslint/explicit-module-boundary-types': 'off',
-    },
-  });
+  );
 }
 ```
 
@@ -805,7 +803,8 @@ import { z } from 'zod';
  * which have differed on which versions they accept.
  * The nil UUID is deliberately rejected: it is never a valid identifier here.
  */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function brandedUuid<B extends string>(brand: B) {
   return z.string().regex(UUID_PATTERN, `must be a UUID (${brand})`).brand<B>();
@@ -968,14 +967,7 @@ git commit -m "feat(contracts): add branded UUID identifiers for every entity"
 
 ```ts
 import { describe, expect, it } from 'vitest';
-import {
-  addMoney,
-  CURRENCY_REGISTRY,
-  Money,
-  MoneyMismatchError,
-  money,
-  toBigInt,
-} from '../src/index.js';
+import { addMoney, CURRENCY_REGISTRY, Money, MoneyMismatchError, money, toBigInt } from '../src/index.js';
 
 describe('Money', () => {
   it('constructs COP with exponent 0 from the registry', () => {
@@ -997,15 +989,11 @@ describe('Money', () => {
   });
 
   it('parses a valid wire representation', () => {
-    expect(Money.safeParse({ amountMinor: '-500', currency: 'COP', exponent: 0 }).success).toBe(
-      true,
-    );
+    expect(Money.safeParse({ amountMinor: '-500', currency: 'COP', exponent: 0 }).success).toBe(true);
   });
 
   it('rejects a non-integer amount string', () => {
-    expect(Money.safeParse({ amountMinor: '1.5', currency: 'COP', exponent: 0 }).success).toBe(
-      false,
-    );
+    expect(Money.safeParse({ amountMinor: '1.5', currency: 'COP', exponent: 0 }).success).toBe(false);
   });
 
   it('rejects a numeric amount', () => {
@@ -1303,18 +1291,15 @@ describe('Result', () => {
 
 describe('assertNever', () => {
   it('throws naming the context and the unhandled value', () => {
-    expect(() => assertNever('UNEXPECTED' as never, 'FitResult')).toThrow(/FitResult.*UNEXPECTED/s);
+    expect(() => assertNever('UNEXPECTED' as never, 'FitResult')).toThrow(
+      /FitResult.*UNEXPECTED/s,
+    );
   });
 });
 
 describe('DomainErrorCode', () => {
   it('includes the codes the domain throws', () => {
-    for (const code of [
-      'MODEL_NOT_FOUND',
-      'UNITS_NOT_CONFIRMED',
-      'QUOTE_EXPIRED',
-      'SLICING_FAILED',
-    ]) {
+    for (const code of ['MODEL_NOT_FOUND', 'UNITS_NOT_CONFIRMED', 'QUOTE_EXPIRED', 'SLICING_FAILED']) {
       expect(DomainErrorCode.safeParse(code).success).toBe(true);
     }
   });
@@ -1335,8 +1320,7 @@ Expected: FAIL — module not found.
 `packages/contracts/src/result.ts`:
 
 ```ts
-export type Result<T, E> =
-  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
 
 export function ok<T>(value: T): Result<T, never> {
   return { ok: true, value };
@@ -1346,15 +1330,11 @@ export function err<E>(error: E): Result<never, E> {
   return { ok: false, error };
 }
 
-export function isOk<T, E>(
-  result: Result<T, E>,
-): result is { readonly ok: true; readonly value: T } {
+export function isOk<T, E>(result: Result<T, E>): result is { readonly ok: true; readonly value: T } {
   return result.ok;
 }
 
-export function isErr<T, E>(
-  result: Result<T, E>,
-): result is { readonly ok: false; readonly error: E } {
+export function isErr<T, E>(result: Result<T, E>): result is { readonly ok: false; readonly error: E } {
   return !result.ok;
 }
 
@@ -1509,12 +1489,9 @@ describe('canonicalJson', () => {
 
   it('is deterministic across repeated calls', () => {
     fc.assert(
-      fc.property(
-        fc.dictionary(fc.string(), fc.oneof(fc.integer(), fc.string(), fc.boolean())),
-        (obj) => {
-          expect(canonicalJson(obj)).toBe(canonicalJson(obj));
-        },
-      ),
+      fc.property(fc.dictionary(fc.string(), fc.oneof(fc.integer(), fc.string(), fc.boolean())), (obj) => {
+        expect(canonicalJson(obj)).toBe(canonicalJson(obj));
+      }),
     );
   });
 });
@@ -1596,7 +1573,9 @@ function serialize(value: unknown, path: string): string {
         throw new CanonicalizationError(`Non-finite number at ${path}`);
       }
       if (!Number.isInteger(value)) {
-        throw new CanonicalizationError(`Non-integer number at ${path}; pass decimals as strings`);
+        throw new CanonicalizationError(
+          `Non-integer number at ${path}; pass decimals as strings`,
+        );
       }
       return value.toString();
     case 'object':

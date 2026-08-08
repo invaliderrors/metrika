@@ -9,7 +9,7 @@ Colombian pesos are the initial currency. ISO 4217 assigns COP two minor units, 
 ## Decision
 
 ```ts
-Money = { amountMinor: bigint, currency: CurrencyCode, exponent: number };
+Money = { amountMinor: bigint, currency: CurrencyCode, exponent: number }
 ```
 
 - `BigInt` in Postgres, `bigint` in TypeScript, **decimal strings on the wire** (JSON has no integer type wide enough to trust).

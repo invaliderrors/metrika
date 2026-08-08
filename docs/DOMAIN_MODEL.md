@@ -347,8 +347,8 @@ reprintOfJobId?, failureCode?, notes
 ```ts
 // packages/contracts/src/money.ts
 export const Money = z.object({
-  amountMinor: z.string().regex(/^-?\d+$/), // serialised as string; bigint in memory
-  currency: CurrencyCode, // 'COP' | 'USD' | ...
+  amountMinor: z.string().regex(/^-?\d+$/),   // serialised as string; bigint in memory
+  currency: CurrencyCode,                      // 'COP' | 'USD' | ...
   exponent: z.number().int().min(0).max(4),
 });
 ```
@@ -373,7 +373,7 @@ Rules, all non-negotiable:
 Display uses `Intl.NumberFormat` fed the exponent explicitly:
 
 ```ts
-formatMoney({ amountMinor: 350000n, currency: 'COP', exponent: 0 }); // "$ 350.000"
+formatMoney({ amountMinor: 350000n, currency: 'COP', exponent: 0 })  // "$ 350.000"
 ```
 
 ---
@@ -404,9 +404,7 @@ Branded IDs follow the same pattern for every entity. Conversion from database s
 
 ```ts
 // apps/api/src/infrastructure/persistence/branding.ts — importable ONLY from this directory
-export function brandUnsafe<T extends string>(value: string): T {
-  return value as T;
-}
+export function brandUnsafe<T extends string>(value: string): T { return value as T; }
 ```
 
 Parsing every ID out of the database with Zod would be wasteful; a single, lint-restricted, named assertion in the mapping layer is the honest trade. It is named `brandUnsafe` so nobody reaches for it casually.
@@ -420,18 +418,17 @@ STL and OBJ do not reliably encode units. 3MF does. This is the highest-conseque
 ```jsonc
 {
   "unit": "MM",
-  "source": "USER_CONFIRMED", // FILE_DECLARED | INFERRED | USER_CONFIRMED
-  "confidence": "CERTAIN", // CERTAIN | LIKELY | AMBIGUOUS
+  "source": "USER_CONFIRMED",          // FILE_DECLARED | INFERRED | USER_CONFIRMED
+  "confidence": "CERTAIN",             // CERTAIN | LIKELY | AMBIGUOUS
   "inferenceEvidence": {
     "rawBoundingBox": [184.2, 127.4, 72.1],
     "candidates": [
-      { "unit": "MM", "impliedRealSizeM": 0.184, "plausibility": 0.35 },
-      { "unit": "M", "impliedRealSizeM": 184.2, "plausibility": 0.55 },
-      { "unit": "CM", "impliedRealSizeM": 1.84, "plausibility": 0.1 },
-    ],
+      { "unit": "MM",  "impliedRealSizeM": 0.184, "plausibility": 0.35 },
+      { "unit": "M",   "impliedRealSizeM": 184.2, "plausibility": 0.55 },
+      { "unit": "CM",  "impliedRealSizeM": 1.84,  "plausibility": 0.10 }
+    ]
   },
-  "confirmedByUserId": "...",
-  "confirmedAt": "...",
+  "confirmedByUserId": "...", "confirmedAt": "..."
 }
 ```
 
@@ -449,15 +446,10 @@ Rules:
 
 ```ts
 export const ScaleSpec = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('RATIO'), denominator: z.number().int().positive() }), // 1:100
+  z.object({ kind: z.literal('RATIO'), denominator: z.number().int().positive() }),      // 1:100
   z.object({ kind: z.literal('ABSOLUTE_FACTOR'), factor: DecimalString }),
   z.object({ kind: z.literal('TARGET_LONGEST_EDGE'), lengthMm: Millimeters }),
-  z.object({
-    kind: z.literal('TARGET_BBOX'),
-    xMm: Millimeters,
-    yMm: Millimeters,
-    zMm: Millimeters,
-  }),
+  z.object({ kind: z.literal('TARGET_BBOX'), xMm: Millimeters, yMm: Millimeters, zMm: Millimeters }),
 ]);
 ```
 
@@ -469,7 +461,7 @@ The fit check is a pure function evaluated against the printer profile version:
 type FitResult =
   | { kind: 'FITS'; printerProfileVersionId: PrinterProfileVersionId; marginMm: Millimeters }
   | { kind: 'FITS_ROTATED'; rotation: Orientation; marginMm: Millimeters }
-  | { kind: 'REQUIRES_SEGMENTATION'; overflowMm: Vec3Mm; suggestedPartCount: number } // V2
+  | { kind: 'REQUIRES_SEGMENTATION'; overflowMm: Vec3Mm; suggestedPartCount: number }  // V2
   | { kind: 'EXCEEDS_ALL_PRINTERS'; largestAvailableMm: Vec3Mm };
 ```
 
@@ -581,13 +573,13 @@ Every machine is a declared transition table in `packages/contracts`, evaluated 
 type Transition<S extends string, E extends string> = { from: S; event: E; to: S; guard?: string };
 
 export const QUOTE_TRANSITIONS = [
-  { from: 'DRAFT', event: 'CALCULATION_STARTED', to: 'CALCULATING' },
+  { from: 'DRAFT',       event: 'CALCULATION_STARTED', to: 'CALCULATING' },
   { from: 'CALCULATING', event: 'CALCULATION_SUCCEEDED', to: 'READY' },
-  { from: 'CALCULATING', event: 'CALCULATION_FAILED', to: 'FAILED' },
-  { from: 'READY', event: 'ACCEPTED', to: 'ACCEPTED', guard: 'notExpired' },
-  { from: 'READY', event: 'EXPIRED', to: 'EXPIRED' },
-  { from: 'READY', event: 'SUPERSEDED', to: 'SUPERSEDED' },
-  { from: 'FAILED', event: 'RETRIED', to: 'CALCULATING' },
+  { from: 'CALCULATING', event: 'CALCULATION_FAILED',    to: 'FAILED' },
+  { from: 'READY',       event: 'ACCEPTED',              to: 'ACCEPTED', guard: 'notExpired' },
+  { from: 'READY',       event: 'EXPIRED',               to: 'EXPIRED' },
+  { from: 'READY',       event: 'SUPERSEDED',            to: 'SUPERSEDED' },
+  { from: 'FAILED',      event: 'RETRIED',               to: 'CALCULATING' },
 ] as const satisfies readonly Transition<QuoteState, QuoteEvent>[];
 ```
 

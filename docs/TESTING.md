@@ -59,15 +59,12 @@ Also property-tested: determinism (same input twice → identical bytes), monoto
 
 ```ts
 describe('QUOTE_TRANSITIONS', () => {
-  it('every state is reachable from the initial state', () => {
-    /* BFS over the table */
-  });
-  it('terminal states have no outgoing transitions', () => {
-    /* ... */
-  });
-  it.each(illegalPairs(QUOTE_TRANSITIONS))('rejects %s --%s-->', (from, event) => {
-    expect(() => transition({ state: from }, event, ctx)).toThrow(InvalidStateTransitionError);
-  });
+  it('every state is reachable from the initial state', () => { /* BFS over the table */ });
+  it('terminal states have no outgoing transitions', () => { /* ... */ });
+  it.each(illegalPairs(QUOTE_TRANSITIONS))(
+    'rejects %s --%s-->', (from, event) => {
+      expect(() => transition({ state: from }, event, ctx)).toThrow(InvalidStateTransitionError);
+    });
 });
 ```
 
@@ -86,7 +83,7 @@ Every policy is a pure function, so the test is a truth table over (subject kind
 ```ts
 // packages/testing/src/harness.ts
 export async function withDatabase<T>(fn: (db: PrismaClient) => Promise<T>): Promise<T>;
-export async function withStorage<T>(fn: (s3: S3Client) => Promise<T>): Promise<T>; // MinIO
+export async function withStorage<T>(fn: (s3: S3Client) => Promise<T>): Promise<T>;      // MinIO
 export async function withTemporal<T>(fn: (env: TestWorkflowEnvironment) => Promise<T>): Promise<T>;
 ```
 
@@ -100,7 +97,7 @@ Covered: repositories against real Postgres (including RLS behaviour), API modul
 it('returns zero rows when the org context does not match', async () => {
   await withOrgContext(orgA, async (db) => {
     const found = await db.project.findUnique({ where: { id: projectOwnedByOrgB } });
-    expect(found).toBeNull(); // RLS, not application logic
+    expect(found).toBeNull();     // RLS, not application logic
   });
 });
 ```
