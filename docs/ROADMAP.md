@@ -61,24 +61,41 @@
 
 **Deliverables**
 
-| #    | Task                                                                                                                                                                 | Location                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 0.1  | pnpm workspace + Turborepo pipeline (`typecheck`, `lint`, `test:unit`, `test:integration`, `build`), remote cache                                                    | root                                                                          |
-| 0.2  | `packages/typescript-config` — `base`, `node`, `react-library`, `next`, `nest` configs with every flag from [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md) | `packages/typescript-config`                                                  |
-| 0.3  | `packages/eslint-config` — flat config profiles: `base`, `typeChecked`, `react`, `next`, `nest`, `workflows`, `test`, `boundaries`                                   | `packages/eslint-config`                                                      |
-| 0.4  | Prettier (exact-pinned) + `.editorconfig` + `ruff` + `mypy --strict` for Python                                                                                      | root, `apps/workers`                                                          |
-| 0.5  | `packages/contracts` skeleton: `Brand` helper, all branded IDs, `Money`, unit types, `Result`, `assertNever`, `DomainErrorCode`, canonical JSON hashing              | `packages/contracts/src`                                                      |
-| 0.6  | `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness                                                        | `packages/database`                                                           |
-| 0.7  | `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                | `apps/api/src`                                                                |
-| 0.8  | `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                  | `apps/web/src`                                                                |
-| 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs               | `apps/workers`                                                                |
-| 0.10 | `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit                                                                                         | `infra/docker`                                                                |
-| 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                           | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
-| 0.12 | GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                               | `.github/workflows`                                                           |
-| 0.13 | `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env                                                                           | `packages/testing`                                                            |
-| 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role                                                                                                        | `infra/terraform/shared`                                                      |
-| 0.15 | **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in ADR-0009                             | throwaway branch                                                              |
-| 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                             | root, `docs/`                                                                 |
+| #    | Task                                                                                                                                                                    | Location                                                                      |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 0.1  | ✅ pnpm workspace + Turborepo pipeline (`typecheck`, `lint`, `test:unit`, `test:integration`, `build`), remote cache                                                    | root                                                                          |
+| 0.2  | ✅ `packages/typescript-config` — `base`, `node`, `react-library`, `next`, `nest` configs with every flag from [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md) | `packages/typescript-config`                                                  |
+| 0.3  | ✅ `packages/eslint-config` — flat config profiles: `base`, `typeChecked`, `react`, `next`, `nest`, `workflows`, `test`, `boundaries`                                   | `packages/eslint-config`                                                      |
+| 0.4  | ✅ Prettier (exact-pinned) + `.editorconfig` + `ruff` + `mypy --strict` for Python                                                                                      | root, `apps/workers`                                                          |
+| 0.5  | ✅ `packages/contracts` skeleton: `Brand` helper, all branded IDs, `Money`, unit types, `Result`, `assertNever`, `DomainErrorCode`, canonical JSON hashing              | `packages/contracts/src`                                                      |
+| 0.6  | `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness                                                           | `packages/database`                                                           |
+| 0.7  | `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                   | `apps/api/src`                                                                |
+| 0.8  | `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                     | `apps/web/src`                                                                |
+| 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                  | `apps/workers`                                                                |
+| 0.10 | `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit                                                                                            | `infra/docker`                                                                |
+| 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                              | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
+| 0.12 | ✅ GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                               | `.github/workflows`                                                           |
+| 0.13 | `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env                                                                              | `packages/testing`                                                            |
+| 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role                                                                                                           | `infra/terraform/shared`                                                      |
+| 0.15 | **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in ADR-0009                                | throwaway branch                                                              |
+| 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                                | root, `docs/`                                                                 |
+
+Progress: 0.1–0.5, 0.12 complete for what Plan 0A scoped. Remaining: 0.6–0.11,
+0.13–0.16. Caveats on the ✅ rows: several describe end-state work that lands
+incrementally as the runtimes that need it are built. 0.2's `next`/`nest`
+tsconfigs and 0.3's `react`/`next`/`nest`/`workflows` ESLint profiles arrive
+with `apps/web` and `apps/api` (Plan 0B) — today only `base`/`node`/`react-library`
+and `base`/`typeChecked`/`test`/`contractsBoundary` exist. 0.4's `ruff`/`mypy`
+land with `apps/workers` (Plan 0B); only the Prettier/`.editorconfig` half is
+done. 0.12's CI currently runs format, lint, typecheck and unit tests only —
+the rest of [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)'s gate list
+(integration tests, `contracts:emit`, security scanning, deploys) grows in
+later plans. 0.6 (`packages/database`) has no code at all yet — it needs
+Postgres via `docker compose`, which Plan 0A deliberately does not stand up
+(see [Plan 0A](./superpowers/plans/2026-08-07-phase-0a-monorepo-and-contracts-core.md)'s
+deferred-work table) — it lands in Plan 0B along with `apps/`. 0.16's root docs
+(`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) predate this plan and were not
+produced by it; the ADRs it lists are still outstanding.
 
 **Contracts.** `Brand<T,K>`, every `*Id`, `Money`, `Millimeters`/`Grams`/`Seconds`/`CubicMillimeters`, `Result<T,E>`, `DomainErrorCode`, `canonicalJson()` + `sha256Canonical()`.
 

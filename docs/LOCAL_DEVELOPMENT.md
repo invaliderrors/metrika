@@ -6,20 +6,24 @@
 
 ## 1. Prerequisites
 
-| Tool   | Version                | Install                                                                   |
-| ------ | ---------------------- | ------------------------------------------------------------------------- |
-| mise   | latest                 | `curl https://mise.run \| sh` — manages Node and Python from `.mise.toml` |
-| Node   | from `.nvmrc`          | `mise install`                                                            |
-| Python | from `.python-version` | `mise install`                                                            |
-| pnpm   | from `packageManager`  | `corepack enable`                                                         |
-| uv     | latest                 | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                        |
-| Docker | 24+                    | Docker Desktop or OrbStack                                                |
+| Tool   | Version                | Install                                                                  |
+| ------ | ---------------------- | ------------------------------------------------------------------------ |
+| mise   | latest                 | `curl https://mise.run \| sh` — manages Node and Python from `mise.toml` |
+| Node   | from `.nvmrc`          | `mise install`                                                           |
+| Python | from `.python-version` | `mise install`                                                           |
+| pnpm   | from `packageManager`  | `corepack enable`                                                        |
+| uv     | latest                 | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                       |
+| Docker | 24+                    | Docker Desktop or OrbStack                                               |
 
 `mise` is recommended over nvm + pyenv because a polyglot repository with two version managers has two ways to be subtly wrong. `.nvmrc` and `.python-version` are committed anyway so nobody is forced to adopt it.
 
 ---
 
 ## 2. Getting running
+
+Working after Plan 0A: `mise install`, `pnpm install`, `pnpm verify`.
+`docker compose up -d`, `pnpm db:migrate`, `pnpm db:seed` and `pnpm dev`
+arrive in Plan 0B.
 
 ```bash
 git clone git@github.com:<org>/metrika.git && cd metrika

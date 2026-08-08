@@ -4,15 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**There is no application code yet.** This repository currently contains only the architecture blueprint in [`docs/`](./docs/). Phase 0 (foundations) has not been built.
+Phase 0A is complete: the monorepo, quality-gate config packages, and
+`packages/contracts` core primitives exist and are tested. `apps/` is still
+empty — Plan 0B builds the runtime skeletons.
 
-Before writing any code, read [`docs/ROADMAP.md`](./docs/ROADMAP.md) and confirm which phase the work belongs to. Do not scaffold `apps/` or `packages/` ad hoc — Phase 0 defines the exact order and contents, and skipping it produces a repo the later phases assume does not exist.
+Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
+which phase it belongs to.
+
+Do not scaffold `apps/` or `packages/` ad hoc — Phase 0 defines the exact order and contents, and skipping it produces a repo the later phases assume does not exist.
 
 The blueprint is the source of truth. If a request conflicts with it, say so and either follow the blueprint or write an ADR superseding the relevant decision — do not silently diverge.
 
 ## Commands
 
-None of these work yet; they are the script surface Phase 0 must create. Once it exists, use these rather than invoking tools directly:
+Working today: `verify`, `lint`, `typecheck`, `test:unit`, `format`, `format:check`.
+Not yet created (Plans 0B/0C): `dev`, `test:integration`, `test:e2e`, `db:*`, `contracts:emit`.
 
 ```bash
 pnpm verify              # format:check + lint + typecheck + test:unit — the gate to run before claiming done
