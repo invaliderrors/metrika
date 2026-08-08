@@ -79,13 +79,45 @@ describe('DomainErrorCode', () => {
   });
 
   // --- Additional edge cases beyond the brief ---
-  // The brief only spot-checks four of the twenty-six codes; without this,
-  // a typo in any of the other twenty-two would go undetected forever.
+  // The brief only spot-checks four of the twenty-six codes. A loop asserting
+  // `safeParse(code).success` for every `code` in `DomainErrorCode.options`
+  // cannot fail: `.options` *is* the parse whitelist a `z.enum` builds itself
+  // from, so every element trivially round-trips by construction, on any
+  // enum, including an empty one. Catching a typo, an accidental deletion, or
+  // an unreviewed addition requires comparing the membership list against an
+  // independent, hard-coded source of truth — this list, spelled out in full
+  // and in order, duplicated deliberately so that changing the enum without
+  // updating this test is exactly the event that fails the build.
 
-  it('accepts every declared code, not just the four spot-checked above', () => {
-    for (const code of DomainErrorCode.options) {
-      expect(DomainErrorCode.safeParse(code).success).toBe(true);
-    }
+  it('is exactly this set of twenty-six codes, in this order', () => {
+    expect(DomainErrorCode.options).toEqual([
+      'VALIDATION_FAILED',
+      'UNAUTHENTICATED',
+      'INSUFFICIENT_PERMISSIONS',
+      'MODEL_NOT_FOUND',
+      'MODEL_NOT_READY',
+      'MODEL_NOT_PRINTABLE',
+      'MODEL_TOO_COMPLEX',
+      'UNSUPPORTED_FILE_FORMAT',
+      'FILE_TOO_LARGE',
+      'CHECKSUM_MISMATCH',
+      'MALICIOUS_ARCHIVE',
+      'UNITS_NOT_CONFIRMED',
+      'IMPLAUSIBLE_SCALE',
+      'GEOMETRY_ANALYSIS_FAILED',
+      'INVALID_PRINT_CONFIGURATION',
+      'DOES_NOT_FIT_BUILD_VOLUME',
+      'SLICING_FAILED',
+      'QUOTE_NOT_FOUND',
+      'QUOTE_EXPIRED',
+      'QUOTE_SUPERSEDED',
+      'INVALID_STATE_TRANSITION',
+      'PAYMENT_VERIFICATION_FAILED',
+      'IDEMPOTENCY_KEY_REUSED',
+      'RATE_LIMITED',
+      'QUOTA_EXCEEDED',
+      'INTERNAL_ERROR',
+    ]);
   });
 
   it('rejects a lowercase variant of a real code — the union is exact strings, not case-insensitive', () => {
