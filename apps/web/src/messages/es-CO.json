@@ -1,0 +1,11 @@
+{
+  "app": {
+    "name": "Metrika",
+    "tagline": "Impresión 3D con cotización reproducible"
+  },
+  "home": {
+    "title": "Cotiza tu modelo 3D",
+    "subtitle": "Sube tu modelo. Recibe un precio que puedes auditar.",
+    "cta": "Subir modelo"
+  }
+}
