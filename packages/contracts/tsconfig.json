@@ -1,5 +1,14 @@
 {
   "extends": "@metrika/typescript-config/base.json",
-  "compilerOptions": { "outDir": "dist", "rootDir": "." },
+  "compilerOptions": {
+    // WebWorker, not DOM: this package must stay safe to bundle for the
+    // browser (see docs/ARCHITECTURE.md §7), so it gets only the narrow
+    // worker-scope globals hashing.ts actually needs — TextEncoder and
+    // crypto.subtle — rather than DOM's much larger surface (Window,
+    // document, HTMLElement, ...) that nothing here uses.
+    "lib": ["ES2023", "WebWorker"],
+    "outDir": "dist",
+    "rootDir": "."
+  },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }
