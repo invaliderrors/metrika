@@ -101,6 +101,73 @@ deferred-work table) — it lands in Plan 0B along with `apps/`. 0.16's root doc
 (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) and ADRs 0001–0018 in
 [`docs/adr/`](./adr/) all predate this plan and were not produced by it.
 
+### Carried into Plan 0B from Plan 0A's final review
+
+Plan 0A's whole-branch review ran 51 mutations against `packages/contracts`; 46
+were killed and 5 survived, all of which were fixed. These items were
+adjudicated as deferrable rather than merge-blocking. None lets a bad quote
+through today; each is cheap to close and should be closed early in 0B, before
+more code depends on the surface it protects.
+
+**Blocks `apps/api` — resolve first**
+
+1. **`@metrika/contracts` exports raw TypeScript and no package has a `build`
+   script.** `exports` is `./src/index.ts`, with no `main` and no `types`,
+   though `turbo.json` declares a `build` task. NestJS compiling to
+   `dist/main.js` will resolve the package to a `.ts` file and fail at runtime.
+   `tsconfig.build.json` already emits a flat `dist/`; the remaining work is the
+   `build` script and the conditional `exports` map.
+2. **No decorator support.** `packages/typescript-config` has no
+   `experimentalDecorators`, no `emitDecoratorMetadata`, and no `nest.json` or
+   `next.json` (both named in row 0.2). Compounding it, `base.json` sets
+   `verbatimModuleSyntax: true`, which is the known NestJS DI friction point —
+   `import type` erases the constructor parameter type that
+   `emitDecoratorMetadata` needs, producing runtime failures rather than
+   compile errors. Decide the `nest.json` shape deliberately.
+3. **`composite: true` in `base.json`** is right for project references but
+   fights Next.js, which rewrites `tsconfig.json` on `next dev`. Expect
+   `next.json` to turn it off.
+
+**Test and gate gaps**
+
+4. **ID distinctness covers 11 of 55 pairs.** `test/ids.test-d.ts` asserts a
+   declaration-order ring, so an _adjacent_ brand collision fails but a
+   non-adjacent one (e.g. `UserId = brandedUuid('QuoteId')`) still passes the
+   whole suite. The file's own comment overstates what the ring catches — fix
+   the comment along with the coverage. A full 55-pair matrix, or one
+   union-cardinality assertion, closes it.
+5. **The dynamic-import boundary rule misses template literals.** The selector
+   is narrowed to `ImportExpression[source.type='Literal']`, so
+   ``import(`node:crypto`)`` with backticks lints clean. Backstopped for
+   Node built-ins by `tsc` (TS2307); the live residual is a template-literal
+   import of an already-installed, typed package.
+6. **`packages/contracts/tsconfig.json` admits Node ambients into `src/**`.**
+   Only `tsc -b tsconfig.build.json` rejects `Buffer`/`__dirname`/`require`.
+   Since editors and ESLint's type-aware program both read `tsconfig.json`, a
+   Node global in `src/` looks clean in-editor and fails only in CI.
+7. **`lib` is duplicated** across `tsconfig.json` and `tsconfig.build.json`.
+   Divergence would silently undo the browser-safety guarantee. A shared
+   `web-library.json` in `@metrika/typescript-config` is the durable home.
+8. **`packages/typescript-config`'s local ESLint config is weaker than the
+   shared one.** It composes the libraries directly to avoid a real package
+   cycle, and so misses the four type-aware rules plus `base`'s
+   `no-restricted-properties` on `process.env` — the last of which is a
+   repo-wide invariant and should be added back explicitly.
+
+**Domain obligations**
+
+9. **Validate `Money.exponent` against `CURRENCY_REGISTRY` at the API request
+   boundary.** `Money` deliberately does not, for the reason in
+   [ADR-0014](./adr/0014-money-representation.md); see the money rules in
+   [`CLAUDE.md`](../CLAUDE.md).
+10. **Add `ORDER_NOT_FOUND` to `DomainErrorCode`** when the HTTP-status mapping
+    lands. It was deliberately withheld from Plan 0A as speculative.
+11. **The production Docker base image** is still pinned to
+    `node:22-bookworm-slim` in [ARCHITECTURE.md](./ARCHITECTURE.md) and
+    [INFRASTRUCTURE.md](./INFRASTRUCTURE.md), while dev and CI run Node 24.
+    Reconcile when the Dockerfiles are written in 0.10 — the production image
+    tag is a separate decision from the toolchain pin, not an oversight.
+
 **Contracts.** `Brand<T,K>`, every `*Id`, `Money`, `Millimeters`/`Grams`/`Seconds`/`CubicMillimeters`, `Result<T,E>`, `DomainErrorCode`, `canonicalJson()` + `sha256Canonical()`.
 
 **Database.** Initial migration: none beyond a health-check table. RLS helper functions and the `app.current_org_id` convention established.

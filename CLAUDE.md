@@ -53,7 +53,8 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
 
 **Money and units**
 
-- Money is `bigint` minor units + currency + **explicit exponent**, decimal strings on the wire. Never `number`, never `Float`, never an implicit exponent (COP renders wrong without it).
+- Money is `bigint` minor units + currency + **explicit exponent**. On the wire `amountMinor` is an **integer** string (base-10 digits, optional leading `-`, no decimal point — `"350000"`, never `"3500.00"`). Never `number`, never `Float`, never an implicit exponent (COP renders wrong without it).
+- `Money` deliberately does **not** cross-check `exponent` against `CURRENCY_REGISTRY`. Pinning a stored value to today's registry would make an old quote unparseable the moment a currency's used exponent changes, which breaks the reconstruct-indefinitely property. The gap that leaves — a request supplying an `exponent` that contradicts its `currency` — is closed at the **API request boundary** in `apps/api`, where today's registry is the right authority. Already-persisted `Money` is never revalidated against it.
 - Every physical quantity carries its unit in its name (`lengthMm`, `massG`, `volumeMm3`, `durationS`). The five that flow into money are branded types.
 - Rounding happens at exactly two declared points, using the policy stored on the rule-set version. The total is authoritative; a `ROUNDING_ADJUSTMENT` line reconciles displayed lines to it.
 
