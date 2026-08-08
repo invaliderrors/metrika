@@ -150,19 +150,19 @@ export const ApiErrorResponse = z.object({
 });
 ```
 
-| Code | HTTP |
-|---|---|
-| `VALIDATION_FAILED`, `INVALID_PRINT_CONFIGURATION`, `UNSUPPORTED_FILE_FORMAT` | 400 |
-| `UNAUTHENTICATED` | 401 |
-| `INSUFFICIENT_PERMISSIONS` | 403 |
-| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND` | 404 |
-| `INVALID_STATE_TRANSITION`, `QUOTE_SUPERSEDED`, `IDEMPOTENCY_KEY_REUSED` | 409 |
-| `QUOTE_EXPIRED` | 410 |
-| `FILE_TOO_LARGE`, `MODEL_TOO_COMPLEX` | 413 |
-| `UNITS_NOT_CONFIRMED`, `MODEL_NOT_READY`, `DOES_NOT_FIT_BUILD_VOLUME`, `MODEL_NOT_PRINTABLE` | 422 |
-| `RATE_LIMITED`, `QUOTA_EXCEEDED` | 429 |
-| `GEOMETRY_ANALYSIS_FAILED`, `SLICING_FAILED`, `PAYMENT_VERIFICATION_FAILED` | 502 |
-| `INTERNAL_ERROR` | 500 |
+| Code                                                                                         | HTTP |
+| -------------------------------------------------------------------------------------------- | ---- |
+| `VALIDATION_FAILED`, `INVALID_PRINT_CONFIGURATION`, `UNSUPPORTED_FILE_FORMAT`                | 400  |
+| `UNAUTHENTICATED`                                                                            | 401  |
+| `INSUFFICIENT_PERMISSIONS`                                                                   | 403  |
+| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND`                                                         | 404  |
+| `INVALID_STATE_TRANSITION`, `QUOTE_SUPERSEDED`, `IDEMPOTENCY_KEY_REUSED`                     | 409  |
+| `QUOTE_EXPIRED`                                                                              | 410  |
+| `FILE_TOO_LARGE`, `MODEL_TOO_COMPLEX`                                                        | 413  |
+| `UNITS_NOT_CONFIRMED`, `MODEL_NOT_READY`, `DOES_NOT_FIT_BUILD_VOLUME`, `MODEL_NOT_PRINTABLE` | 422  |
+| `RATE_LIMITED`, `QUOTA_EXCEEDED`                                                             | 429  |
+| `GEOMETRY_ANALYSIS_FAILED`, `SLICING_FAILED`, `PAYMENT_VERIFICATION_FAILED`                  | 502  |
+| `INTERNAL_ERROR`                                                                             | 500  |
 
 **A known domain failure never returns 500.** A generic 500 for a condition the domain understands is a bug — it tells the client nothing and hides a real state from monitoring.
 
@@ -170,12 +170,12 @@ Stack traces never cross the boundary. Unexpected errors log at `error` with a S
 
 ### Headers
 
-| Header | Direction | Purpose |
-|---|---|---|
-| `Authorization: Bearer` | in | Clerk JWT |
-| `X-Request-Id` | both | Client may supply; otherwise generated. Echoed on every response including errors |
-| `Idempotency-Key` | in | Required on `POST /quotes/:id/accept` and payment intent creation |
-| `X-Metrika-Org-Id` | in | A *claim*, always verified against membership. Never trusted |
+| Header                  | Direction | Purpose                                                                           |
+| ----------------------- | --------- | --------------------------------------------------------------------------------- |
+| `Authorization: Bearer` | in        | Clerk JWT                                                                         |
+| `X-Request-Id`          | both      | Client may supply; otherwise generated. Echoed on every response including errors |
+| `Idempotency-Key`       | in        | Required on `POST /quotes/:id/accept` and payment intent creation                 |
+| `X-Metrika-Org-Id`      | in        | A _claim_, always verified against membership. Never trusted                      |
 
 ---
 

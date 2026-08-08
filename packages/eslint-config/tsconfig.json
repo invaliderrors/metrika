@@ -1,0 +1,11 @@
+{
+  "extends": "@metrika/typescript-config/node.json",
+  "compilerOptions": { "noEmit": true },
+  // test/fixtures/**: deliberately invalid or forbidden-import fixtures used
+  // by test/rules.test.ts through its own nested ESLint configs
+  // (test/eslint.config.js, test/eslint.boundaries.config.js), which point
+  // at test/tsconfig.json — not this one. They are exercised, just not by
+  // this program: including them here would mean type-checking input that
+  // exists specifically to be rejected.
+  "include": ["test/rules.test.ts"]
+}

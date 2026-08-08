@@ -6,14 +6,14 @@
 
 ## 1. Assets, ranked
 
-| Asset | Why it matters | Worst case |
-|---|---|---|
-| **Customer 3D models** | An unreleased building design. Losing one is a professional catastrophe for the customer and an existential reputational event for Metrika | Competitor obtains an architect's unbuilt design |
-| Authentication credentials | Account takeover → access to all of the above | Full tenant compromise |
-| Payment data | Regulatory and financial exposure | Fraud, liability |
-| Pricing rules and margins | Commercially sensitive | Competitor intelligence |
-| Compute capacity | Slicing is genuinely expensive per request | Cost-amplification attack |
-| Audit logs | The record of what happened | Undetectable tampering |
+| Asset                      | Why it matters                                                                                                                             | Worst case                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| **Customer 3D models**     | An unreleased building design. Losing one is a professional catastrophe for the customer and an existential reputational event for Metrika | Competitor obtains an architect's unbuilt design |
+| Authentication credentials | Account takeover → access to all of the above                                                                                              | Full tenant compromise                           |
+| Payment data               | Regulatory and financial exposure                                                                                                          | Fraud, liability                                 |
+| Pricing rules and margins  | Commercially sensitive                                                                                                                     | Competitor intelligence                          |
+| Compute capacity           | Slicing is genuinely expensive per request                                                                                                 | Cost-amplification attack                        |
+| Audit logs                 | The record of what happened                                                                                                                | Undetectable tampering                           |
 
 The ranking matters because it drives where effort goes. Confidentiality of customer geometry is the top priority, above availability.
 
@@ -60,34 +60,34 @@ A 3D model parser is a complex binary/text parser processing attacker-controlled
 
 The geometry worker task:
 
-| Control | Setting |
-|---|---|
-| Network | **No egress.** VPC endpoints to S3 and Temporal only. No NAT, no internet route |
-| Database | **No credentials exist in the task.** Workers cannot reach Postgres at all |
-| Filesystem | Read-only root; `tmpfs` scratch with a hard size cap |
-| User | Non-root, no shell in the runtime layer |
-| Capabilities | All dropped (`--cap-drop ALL`), `no-new-privileges` |
-| Seccomp | Default Docker profile, tightened over time |
-| Memory | `RLIMIT_AS` 2 GB (small queue) / 8 GB (large queue); container limit above it so the process dies before the task does |
-| CPU | `RLIMIT_CPU` plus a Temporal activity timeout plus an in-process `SIGALRM` — three independent stops |
-| Lifetime | One task per activity where practical; scratch scrubbed unconditionally, including on failure |
+| Control      | Setting                                                                                                                |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Network      | **No egress.** VPC endpoints to S3 and Temporal only. No NAT, no internet route                                        |
+| Database     | **No credentials exist in the task.** Workers cannot reach Postgres at all                                             |
+| Filesystem   | Read-only root; `tmpfs` scratch with a hard size cap                                                                   |
+| User         | Non-root, no shell in the runtime layer                                                                                |
+| Capabilities | All dropped (`--cap-drop ALL`), `no-new-privileges`                                                                    |
+| Seccomp      | Default Docker profile, tightened over time                                                                            |
+| Memory       | `RLIMIT_AS` 2 GB (small queue) / 8 GB (large queue); container limit above it so the process dies before the task does |
+| CPU          | `RLIMIT_CPU` plus a Temporal activity timeout plus an in-process `SIGALRM` — three independent stops                   |
+| Lifetime     | One task per activity where practical; scratch scrubbed unconditionally, including on failure                          |
 
 The "no database credentials" property is the one that matters most. An attacker achieving remote code execution in the parser lands in a task with no network, no credentials, no persistent storage, and a read-only filesystem, holding only the file they already uploaded. That is the whole point of workers being stateless compute.
 
 ### Format-specific defences
 
-| Format | Threat | Control |
-|---|---|---|
-| **3MF** | Zip bomb | ≤ 500 entries, ≤ 200:1 compression ratio, ≤ 4 GB total uncompressed, streaming size accounting during extraction |
-| **3MF** | XML entity expansion (billion laughs) | `defusedxml` — DTDs and external entities disabled entirely |
-| **3MF** | Zip path traversal (`../`) | Entry names validated against an allowlist pattern; extraction to a canonicalised path with a containment check |
-| **STL** | Header-declared triangle count mismatch | Cross-check `(fileSize - 84) / 50`; reject on mismatch before allocating |
-| **STL** | NaN / Inf coordinates | Rejected at parse; they cause infinite loops and pathological behaviour downstream |
-| **OBJ** | `mtllib` / `map_Kd` path traversal | All external references stripped, never resolved |
-| **OBJ** | SSRF via `http://` texture reference | Same — plus no network egress as the second layer |
-| **All** | Memory exhaustion via triangle count | Pre-parse estimation, then hard limits |
-| **All** | Algorithmic complexity attack (pathological topology) | Wall-clock timeout with heartbeat, so it is detected in seconds |
-| **All** | Extension spoofing | Magic-byte and structural detection; the extension is a hint, never a decision |
+| Format  | Threat                                                | Control                                                                                                          |
+| ------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **3MF** | Zip bomb                                              | ≤ 500 entries, ≤ 200:1 compression ratio, ≤ 4 GB total uncompressed, streaming size accounting during extraction |
+| **3MF** | XML entity expansion (billion laughs)                 | `defusedxml` — DTDs and external entities disabled entirely                                                      |
+| **3MF** | Zip path traversal (`../`)                            | Entry names validated against an allowlist pattern; extraction to a canonicalised path with a containment check  |
+| **STL** | Header-declared triangle count mismatch               | Cross-check `(fileSize - 84) / 50`; reject on mismatch before allocating                                         |
+| **STL** | NaN / Inf coordinates                                 | Rejected at parse; they cause infinite loops and pathological behaviour downstream                               |
+| **OBJ** | `mtllib` / `map_Kd` path traversal                    | All external references stripped, never resolved                                                                 |
+| **OBJ** | SSRF via `http://` texture reference                  | Same — plus no network egress as the second layer                                                                |
+| **All** | Memory exhaustion via triangle count                  | Pre-parse estimation, then hard limits                                                                           |
+| **All** | Algorithmic complexity attack (pathological topology) | Wall-clock timeout with heartbeat, so it is detected in seconds                                                  |
+| **All** | Extension spoofing                                    | Magic-byte and structural detection; the extension is a hint, never a decision                                   |
 
 Every one of these has a corresponding fixture in `fixtures/models/` and a test asserting rejection with the correct error code. A defence with no test is an intention.
 
@@ -106,7 +106,7 @@ Every one of these has a corresponding fixture in `fixtures/models/` and a test 
 
 Three independent layers, all required:
 
-1. **Policy functions** — pure, exhaustively tested, operating on the *loaded* resource. Load-then-authorize forces the tenancy predicate into the query.
+1. **Policy functions** — pure, exhaustively tested, operating on the _loaded_ resource. Load-then-authorize forces the tenancy predicate into the query.
 2. **Repository signatures** — every method requires an `AuthContext`. There is no signature that permits forgetting.
 3. **Postgres RLS** — `app.current_org_id` set per transaction. A query that somehow escapes both layers returns zero rows.
 
@@ -118,20 +118,20 @@ Three independent layers, all required:
 
 ## 6. Storage
 
-| Control | Implementation |
-|---|---|
-| Private by default | Block Public Access on every bucket; no bucket policy grants anonymous read |
-| Encryption at rest | SSE-KMS with a Metrika-owned CMK; a separate key for `originals/` |
-| Encryption in transit | TLS 1.2+ enforced by bucket policy (`aws:SecureTransport`) |
-| Upload URLs | 5-minute TTL, content-length range condition, content-type condition, one session ID |
-| Download URLs | 60-second TTL, `Content-Disposition: attachment`, never logged, never in a referrer |
-| Originals on CDN | **Never.** A CDN cache outlives the authorization decision that produced the URL |
-| Previews on CDN | CloudFront signed URLs; content-hash keys so the cache is immutable and safe |
-| Worker IAM | Scoped to specific prefixes; the geometry worker cannot read `gcode/`, the slicer cannot read `documents/` |
-| Versioning | Enabled on `originals/` — protects against accidental or malicious overwrite |
-| Object Lock | Considered for `gcode/` and `documents/` as commercial evidence; deferred to V1 |
-| Access logging | S3 server access logs to a separate account-level bucket |
-| Audit | Every signed-URL issuance for an original writes an `AuditLog` row with actor, resource and request ID |
+| Control               | Implementation                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Private by default    | Block Public Access on every bucket; no bucket policy grants anonymous read                                |
+| Encryption at rest    | SSE-KMS with a Metrika-owned CMK; a separate key for `originals/`                                          |
+| Encryption in transit | TLS 1.2+ enforced by bucket policy (`aws:SecureTransport`)                                                 |
+| Upload URLs           | 5-minute TTL, content-length range condition, content-type condition, one session ID                       |
+| Download URLs         | 60-second TTL, `Content-Disposition: attachment`, never logged, never in a referrer                        |
+| Originals on CDN      | **Never.** A CDN cache outlives the authorization decision that produced the URL                           |
+| Previews on CDN       | CloudFront signed URLs; content-hash keys so the cache is immutable and safe                               |
+| Worker IAM            | Scoped to specific prefixes; the geometry worker cannot read `gcode/`, the slicer cannot read `documents/` |
+| Versioning            | Enabled on `originals/` — protects against accidental or malicious overwrite                               |
+| Object Lock           | Considered for `gcode/` and `documents/` as commercial evidence; deferred to V1                            |
+| Access logging        | S3 server access logs to a separate account-level bucket                                                   |
+| Audit                 | Every signed-URL issuance for an original writes an `AuditLog` row with actor, resource and request ID     |
 
 Signed URLs appear in the Pino redaction path list and in the Sentry `beforeSend` scrubber. A signed URL in a log is a credential in a log.
 
@@ -149,18 +149,18 @@ Signed URLs appear in the Pino redaction path list and in the Sentry `beforeSend
 
 ## 8. Application security
 
-| Threat | Control |
-|---|---|
-| SQL injection | Prisma parameterises everything. Raw SQL requires `$queryRaw` with tagged templates; a lint rule forbids `$queryRawUnsafe` |
-| XSS | React escapes by default. `dangerouslySetInnerHTML` is banned by lint. CSP with nonces, no `unsafe-inline`, no `unsafe-eval` |
-| CSRF | Not applicable — bearer tokens, no cookie-based session |
-| SSRF | Workers have no egress. The API makes outbound calls only to a fixed allowlist (Clerk, payment provider, Temporal, OTLP) |
-| Clickjacking | `frame-ancestors 'none'`, `X-Frame-Options: DENY` |
-| Open redirect | Redirect targets validated against an allowlist |
-| Mass assignment | Zod schemas are strict; unknown keys are stripped or rejected, never passed through |
-| Dependency vulnerabilities | `pnpm audit` + Renovate + Trivy on images, all in CI |
-| Secret leakage | Gitleaks in CI and in the pre-commit hook; GitHub secret scanning with push protection |
-| Supply chain | Lockfiles committed; `--frozen-lockfile` in CI; base images pinned by digest; Renovate excludes the slicer image from automatic updates |
+| Threat                     | Control                                                                                                                                 |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| SQL injection              | Prisma parameterises everything. Raw SQL requires `$queryRaw` with tagged templates; a lint rule forbids `$queryRawUnsafe`              |
+| XSS                        | React escapes by default. `dangerouslySetInnerHTML` is banned by lint. CSP with nonces, no `unsafe-inline`, no `unsafe-eval`            |
+| CSRF                       | Not applicable — bearer tokens, no cookie-based session                                                                                 |
+| SSRF                       | Workers have no egress. The API makes outbound calls only to a fixed allowlist (Clerk, payment provider, Temporal, OTLP)                |
+| Clickjacking               | `frame-ancestors 'none'`, `X-Frame-Options: DENY`                                                                                       |
+| Open redirect              | Redirect targets validated against an allowlist                                                                                         |
+| Mass assignment            | Zod schemas are strict; unknown keys are stripped or rejected, never passed through                                                     |
+| Dependency vulnerabilities | `pnpm audit` + Renovate + Trivy on images, all in CI                                                                                    |
+| Secret leakage             | Gitleaks in CI and in the pre-commit hook; GitHub secret scanning with push protection                                                  |
+| Supply chain               | Lockfiles committed; `--frozen-lockfile` in CI; base images pinned by digest; Renovate excludes the slicer image from automatic updates |
 
 Security headers on every response: `Strict-Transport-Security` with preload, `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` denying everything unused.
 
@@ -170,16 +170,16 @@ Security headers on every response: `Strict-Transport-Security` with preload, `C
 
 Slicing costs real CPU money per request. This makes cost amplification a genuine attack, not a theoretical one.
 
-| Scope | Limit | Rationale |
-|---|---|---|
-| Auth endpoints | 10/min/IP | Credential stuffing |
-| General API | 300/min/org | Baseline |
-| Model uploads | 20/hour/org, 5 GB/day/org | Storage abuse |
-| Geometry analysis | 50/hour/org | CPU abuse |
-| **Slicing** | **60/hour/org, 5 concurrent** | The expensive one |
-| Price estimates | 300/hour/org | Cheap, but not free |
-| SSE connections | 10 concurrent/user | Connection exhaustion |
-| Public endpoints | 60/min/IP | — |
+| Scope             | Limit                         | Rationale             |
+| ----------------- | ----------------------------- | --------------------- |
+| Auth endpoints    | 10/min/IP                     | Credential stuffing   |
+| General API       | 300/min/org                   | Baseline              |
+| Model uploads     | 20/hour/org, 5 GB/day/org     | Storage abuse         |
+| Geometry analysis | 50/hour/org                   | CPU abuse             |
+| **Slicing**       | **60/hour/org, 5 concurrent** | The expensive one     |
+| Price estimates   | 300/hour/org                  | Cheap, but not free   |
+| SSE connections   | 10 concurrent/user            | Connection exhaustion |
+| Public endpoints  | 60/min/IP                     | —                     |
 
 Sliding-window counters in Redis, keyed by organization and endpoint class. Exceeding a limit returns `429` with `Retry-After`.
 
@@ -202,28 +202,28 @@ Beyond rate limits: per-organization monthly quotas with a soft warning and a ha
 
 STRIDE, scoped to what is actually reachable in this system.
 
-| # | Threat | STRIDE | Likelihood | Impact | Control | Verified by |
-|---|---|---|---|---|---|---|
-| 1 | RCE via malformed mesh parser | E | Medium | Critical | Sandboxed task: no network, no DB creds, read-only FS, rlimits, non-root | Fixture tests + container config test |
-| 2 | Zip bomb in 3MF | D | Medium | High | Entry/ratio/total limits, streaming accounting | Fixture test |
-| 3 | XML entity expansion in 3MF | D | Medium | High | `defusedxml`, no DTD | Fixture test |
-| 4 | Memory exhaustion via huge mesh | D | High | Medium | Pre-parse estimation, size gates, `RLIMIT_AS`, sized queues | Fixture test (20 M triangles) |
-| 5 | Path traversal via zip entry or OBJ ref | T | Low | High | Name validation, containment check, refs stripped | Fixture test |
-| 6 | SSRF via OBJ texture reference | I | Low | High | Refs stripped + no egress | Fixture test + network policy test |
-| 7 | **IDOR on model/quote/order IDs** | I | **High** | **Critical** | Policy on loaded resource + `AuthContext` in repositories + RLS | **Automated cross-tenant suite, every PR** |
-| 8 | Signed URL leaked via logs or referrer | I | Medium | Critical | Redaction list, short TTL, `Content-Disposition`, no CDN for originals | Log-redaction test |
-| 9 | Payment webhook forgery | S | Medium | High | HMAC over raw body, timestamp window | Integration test with a forged signature |
-| 10 | Webhook replay | T | Medium | Medium | `UNIQUE(provider, providerEventId)` | Integration test |
-| 11 | Compute cost amplification | D | Medium | High | Rate limits, quotas, slice cache, budget alarms | Rate-limit integration test |
-| 12 | Auth bypass via forged JWT | S | Low | Critical | JWKS verification, `aud`/`iss`/`exp` checks | Integration test with a forged token |
-| 13 | Privilege escalation via org role | E | Low | High | Roles from DB only, never from the token; separate platform-role table | Policy unit tests |
-| 14 | Dependency compromise | T | Medium | High | Lockfiles, `--frozen-lockfile`, Renovate, Trivy, gitleaks | CI |
-| 15 | Insider access to customer models | I | Low | Critical | Elevated role required, audited, customer-visible access log (V1) | Audit test |
-| 16 | Stack trace / internal detail leakage | I | Medium | Low | Exception filter maps to typed codes; traces never serialised | Integration test |
-| 17 | Enumeration of resource IDs | I | Medium | Low | UUIDs, `404` for unauthorized, rate limits | Cross-tenant suite |
-| 18 | XSS via model or project name | T | Medium | Medium | React escaping, CSP, name length/charset validation | Component test |
-| 19 | Tampering with pricing rules | T | Low | High | Publish requires an elevated role, is audited, and is immutable once published | Policy + audit tests |
-| 20 | Loss of audit integrity | R | Low | High | Append-only, no update/delete grants on the table to the application role | Migration + permission test |
+| #   | Threat                                  | STRIDE | Likelihood | Impact       | Control                                                                        | Verified by                                |
+| --- | --------------------------------------- | ------ | ---------- | ------------ | ------------------------------------------------------------------------------ | ------------------------------------------ |
+| 1   | RCE via malformed mesh parser           | E      | Medium     | Critical     | Sandboxed task: no network, no DB creds, read-only FS, rlimits, non-root       | Fixture tests + container config test      |
+| 2   | Zip bomb in 3MF                         | D      | Medium     | High         | Entry/ratio/total limits, streaming accounting                                 | Fixture test                               |
+| 3   | XML entity expansion in 3MF             | D      | Medium     | High         | `defusedxml`, no DTD                                                           | Fixture test                               |
+| 4   | Memory exhaustion via huge mesh         | D      | High       | Medium       | Pre-parse estimation, size gates, `RLIMIT_AS`, sized queues                    | Fixture test (20 M triangles)              |
+| 5   | Path traversal via zip entry or OBJ ref | T      | Low        | High         | Name validation, containment check, refs stripped                              | Fixture test                               |
+| 6   | SSRF via OBJ texture reference          | I      | Low        | High         | Refs stripped + no egress                                                      | Fixture test + network policy test         |
+| 7   | **IDOR on model/quote/order IDs**       | I      | **High**   | **Critical** | Policy on loaded resource + `AuthContext` in repositories + RLS                | **Automated cross-tenant suite, every PR** |
+| 8   | Signed URL leaked via logs or referrer  | I      | Medium     | Critical     | Redaction list, short TTL, `Content-Disposition`, no CDN for originals         | Log-redaction test                         |
+| 9   | Payment webhook forgery                 | S      | Medium     | High         | HMAC over raw body, timestamp window                                           | Integration test with a forged signature   |
+| 10  | Webhook replay                          | T      | Medium     | Medium       | `UNIQUE(provider, providerEventId)`                                            | Integration test                           |
+| 11  | Compute cost amplification              | D      | Medium     | High         | Rate limits, quotas, slice cache, budget alarms                                | Rate-limit integration test                |
+| 12  | Auth bypass via forged JWT              | S      | Low        | Critical     | JWKS verification, `aud`/`iss`/`exp` checks                                    | Integration test with a forged token       |
+| 13  | Privilege escalation via org role       | E      | Low        | High         | Roles from DB only, never from the token; separate platform-role table         | Policy unit tests                          |
+| 14  | Dependency compromise                   | T      | Medium     | High         | Lockfiles, `--frozen-lockfile`, Renovate, Trivy, gitleaks                      | CI                                         |
+| 15  | Insider access to customer models       | I      | Low        | Critical     | Elevated role required, audited, customer-visible access log (V1)              | Audit test                                 |
+| 16  | Stack trace / internal detail leakage   | I      | Medium     | Low          | Exception filter maps to typed codes; traces never serialised                  | Integration test                           |
+| 17  | Enumeration of resource IDs             | I      | Medium     | Low          | UUIDs, `404` for unauthorized, rate limits                                     | Cross-tenant suite                         |
+| 18  | XSS via model or project name           | T      | Medium     | Medium       | React escaping, CSP, name length/charset validation                            | Component test                             |
+| 19  | Tampering with pricing rules            | T      | Low        | High         | Publish requires an elevated role, is audited, and is immutable once published | Policy + audit tests                       |
+| 20  | Loss of audit integrity                 | R      | Low        | High         | Append-only, no update/delete grants on the table to the application role      | Migration + permission test                |
 
 ### Explicitly out of scope for MVP
 

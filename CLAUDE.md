@@ -4,15 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**There is no application code yet.** This repository currently contains only the architecture blueprint in [`docs/`](./docs/). Phase 0 (foundations) has not been built.
+Phase 0A is complete: the monorepo, quality-gate config packages, and
+`packages/contracts` core primitives exist and are tested. `apps/` is still
+empty — Plan 0B builds the runtime skeletons.
 
-Before writing any code, read [`docs/ROADMAP.md`](./docs/ROADMAP.md) and confirm which phase the work belongs to. Do not scaffold `apps/` or `packages/` ad hoc — Phase 0 defines the exact order and contents, and skipping it produces a repo the later phases assume does not exist.
+Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
+which phase it belongs to.
+
+Do not scaffold `apps/` or `packages/` ad hoc — Phase 0 defines the exact order and contents, and skipping it produces a repo the later phases assume does not exist.
 
 The blueprint is the source of truth. If a request conflicts with it, say so and either follow the blueprint or write an ADR superseding the relevant decision — do not silently diverge.
 
 ## Commands
 
-None of these work yet; they are the script surface Phase 0 must create. Once it exists, use these rather than invoking tools directly:
+Working today: `verify`, `lint`, `typecheck`, `test:unit`, `format`, `format:check`.
+Not yet created (Plans 0B/0C): `dev`, `test:integration`, `test:e2e`, `db:*`, `contracts:emit`.
 
 ```bash
 pnpm verify              # format:check + lint + typecheck + test:unit — the gate to run before claiming done
@@ -40,22 +46,26 @@ Metrika turns an uploaded 3D model into a binding, reproducible manufacturing qu
 These are the mistakes most likely to be made here. Each is enforced by lint, types or a database constraint — if you are fighting one, the design is probably wrong, not the rule.
 
 **Versioning and reproducibility**
+
 - Never read `currentVersionId` from anywhere in the quote chain. It exists for admin UI convenience only. A quote resolves and stores a `*VersionId` at creation and never looks at the pointer again.
 - Never mutate a `PUBLISHED` version entity. Correct a mistake by publishing a new version; the wrong one stays in history.
 - Every manufacturing-relevant config (`PrintProfile`, `PrinterProfile`, `MaterialProfile`, `PricingRuleSet`) is Identity + immutable Version. See [`docs/DOMAIN_MODEL.md`](./docs/DOMAIN_MODEL.md#1-the-organising-principle).
 
 **Money and units**
+
 - Money is `bigint` minor units + currency + **explicit exponent**, decimal strings on the wire. Never `number`, never `Float`, never an implicit exponent (COP renders wrong without it).
 - Every physical quantity carries its unit in its name (`lengthMm`, `massG`, `volumeMm3`, `durationS`). The five that flow into money are branded types.
 - Rounding happens at exactly two declared points, using the policy stored on the rule-set version. The total is authoritative; a `ROUNDING_ADJUSTMENT` line reconciles displayed lines to it.
 
 **Geometry**
+
 - The slicer gets `SLICE_INPUT_3MF` (repaired, full resolution). The browser gets `PREVIEW_GLB` (decimated). **Never slice the preview** — it silently under-reports material.
 - Exact results (watertight, manifold, triangle count, AABB, volume) get typed columns. Heuristics (wall thickness, overhangs, fragility) live in JSONB with `{value, method, confidence}` and are labelled as heuristics in the UI. A `BLOCKER`-severity issue may only ever have `certainty: EXACT`.
 - A non-watertight mesh has **no volume**. Return `null`, never a plausible-looking number.
 - No geometry work inside an HTTP request. Ever.
 
 **Boundaries**
+
 - `@prisma/client` may only be imported from `apps/api/src/infrastructure/persistence/**`.
 - `process.env` may only be read in `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts`.
 - `packages/contracts` imports nothing but `zod`. `packages/pricing-engine` imports only contracts + `decimal.js` — no framework, no I/O, no `Date`, no `Math.random`.
@@ -63,23 +73,27 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
 - Workers never touch Postgres. They receive activity args, read/write S3 under scoped IAM, return structured results.
 
 **Authorization**
+
 - Policies take the **loaded resource**, not an ID — this forces load-then-authorize, which forces the tenant predicate into the query.
 - Every repository method requires an `AuthContext`. Roles come from our database, never from the JWT's claims.
 - Postgres RLS is the backstop, not the primary control. Both, always.
 
 **Async and state**
+
 - Workflow code (`apps/api/src/workflows/**`) must be deterministic: no `Date`, `Math`, `crypto`, `node:*` or infrastructure imports. Do side effects in activities.
 - Every async operation is idempotent by a **database unique constraint**, not an application check. A constraint is a guarantee; a check is a hope.
 - State fields are only ever written through `transition()`, which validates against the declared table and writes a `StatusTransition` row in the same transaction. No booleans for lifecycle state.
 - `Order` carries customer-facing states only. Manufacturing states live on `ManufacturingJob`.
 
 **Frontend**
+
 - Server state lives in TanStack Query and is never mirrored into Zustand. SSE events write into the query cache via `setQueryData` — one cache, one read path.
 - Exactly two Zustand stores exist (`viewerStore`, `uploadStore`), both feature-scoped. There is no `useAppStore`.
 - Server Actions are for cookies, the SSE relay, and Vercel-side form posts only. **No domain mutations.** See [ADR-0015](./docs/adr/0015-server-actions.md).
 - Upload progress is real bytes. Never fake a progress bar.
 
 **Types and tests**
+
 - No `any`, no exceptions. External data is `unknown` and is parsed with Zod. `@ts-ignore` is banned; `@ts-expect-error` and `eslint-disable` require a `-- <justification>` or CI fails.
 - Vitest, not Jest. Zod contracts, not class-validator DTOs. Cursor pagination, not offset.
 - `packages/pricing-engine`, authorization policies and state machines are 100% coverage. Pricing changes must update golden files — **the golden-file diff is the review**.

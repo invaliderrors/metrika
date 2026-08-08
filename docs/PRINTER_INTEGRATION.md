@@ -66,15 +66,15 @@ Capabilities are queried rather than assumed. A driver that cannot pause reports
 
 ## 3. Implementations
 
-| Driver | Status | Notes |
-|---|---|---|
-| `NullPrinterDriver` | **Now** | Rejects everything; used where a driver is required but none is configured |
-| `ManualPrinterDriver` | **Now (Phase 11)** | State changes come from operator actions in the admin UI. `submitJob` records the assignment and marks the G-code ready for download |
-| `SimulatorPrinterDriver` | **Now** | Simulates a print with realistic timing and telemetry. Powers the driver conformance suite and the ops UI development |
-| `OctoPrintDriver` | Phase 14 | REST + WebSocket. The most widely deployed option and the natural first real driver |
-| `KlipperDriver` | Phase 14 | Moonraker JSON-RPC + WebSocket |
-| `PrusaConnectDriver` | Future | Prusa's cloud API |
-| `BambuDriver` | Future | MQTT-based; the protocol is less openly documented, which is a real integration risk |
+| Driver                   | Status             | Notes                                                                                                                                |
+| ------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `NullPrinterDriver`      | **Now**            | Rejects everything; used where a driver is required but none is configured                                                           |
+| `ManualPrinterDriver`    | **Now (Phase 11)** | State changes come from operator actions in the admin UI. `submitJob` records the assignment and marks the G-code ready for download |
+| `SimulatorPrinterDriver` | **Now**            | Simulates a print with realistic timing and telemetry. Powers the driver conformance suite and the ops UI development                |
+| `OctoPrintDriver`        | Phase 14           | REST + WebSocket. The most widely deployed option and the natural first real driver                                                  |
+| `KlipperDriver`          | Phase 14           | Moonraker JSON-RPC + WebSocket                                                                                                       |
+| `PrusaConnectDriver`     | Future             | Prusa's cloud API                                                                                                                    |
+| `BambuDriver`            | Future             | MQTT-based; the protocol is less openly documented, which is a real integration risk                                                 |
 
 `ManualPrinterDriver` is the important one. It means the manufacturing domain is complete and exercised from Phase 11 with zero hardware — the same code path, the same state machine, the same events. Phase 14 swaps an implementation rather than building a subsystem.
 

@@ -1,0 +1,26 @@
+{
+  "name": "@metrika/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b && tsc -b tsconfig.build.json",
+    "lint": "eslint .",
+    "test:unit": "vitest run --coverage"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@metrika/eslint-config": "workspace:*",
+    "@metrika/typescript-config": "workspace:*",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.8.0",
+    "fast-check": "4.9.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}

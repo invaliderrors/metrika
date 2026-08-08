@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.turbo/
+coverage/
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# agent scratch — ledgers, briefs, review packages
+.superpowers/

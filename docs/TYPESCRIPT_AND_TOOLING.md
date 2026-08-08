@@ -46,23 +46,25 @@
 }
 ```
 
+**TypeScript is pinned to 6.0.3, not the newest release.** `typescript-eslint@8.66.0` declares `peerDependencies.typescript: ">=4.8.4 <6.1.0"`, and npm currently tags TypeScript **7.0.2** (the Go-ported native compiler) as `latest` — which falls outside that range. Installing `latest` would silently disable every type-aware lint rule (`no-unsafe-*`, `no-floating-promises`, `switch-exhaustiveness-check`), and type-aware linting is this project's substitute for human code review on a solo-plus-agents team. 6.0.3 is the newest release inside typescript-eslint's supported range, so that is what is pinned. TS 6 makes `strict` default, defaults `types` to `[]` (which is why `node.json` lists `["node"]` explicitly), and removes the ES5/AMD/UMD/SystemJS targets, `--moduleResolution node`, `baseUrl` and `outFile` — none of which affect `base.json`, since it sets `module`/`moduleResolution` to `NodeNext` and `target` to `ES2023` explicitly. **Fallback: 5.9.3**, if a later phase finds Prisma, Nest or Next incompatible with 6.x.
+
 ### Every flag, and why
 
-| Flag | Decision | Reasoning |
-|---|---|---|
-| `strict` | **on** | Baseline. Non-negotiable |
-| `noUncheckedIndexedAccess` | **on** | The highest-value flag on this list. `arr[0]` becomes `T \| undefined`, which is the truth. Catches a real bug class around slice metrics arrays, trace lines and parsed CLI output. Friction is real; mitigate with `.at()`, destructuring and `for...of` |
-| `exactOptionalPropertyTypes` | **on** | Distinguishes "absent" from "present and undefined" — meaningful for partial updates, where `{ name: undefined }` and `{}` must not mean the same thing. **Costs real friction with Prisma**, whose generated types do not model the distinction. Confined to `infrastructure/persistence` with the documented pattern below |
-| `noImplicitOverride` | **on** | Cheap; prevents a silently-shadowed base method |
-| `noPropertyAccessFromIndexSignature` | **on** | Forces `env['KEY']`, which is correct — and irrelevant in practice because raw `process.env` is banned everywhere but two files |
-| `useUnknownInCatchVariables` | **on** | Implied by `strict`; stated explicitly so it survives a future config edit |
-| `noFallthroughCasesInSwitch` | **on** | Pairs with `switch-exhaustiveness-check` on the discriminated unions this codebase is full of |
-| `noImplicitReturns` | **on** | Cheap correctness |
-| `noUnusedLocals` / `noUnusedParameters` | **off in tsc, on in ESLint** | `tsc` errors on a variable you are halfway through using, which makes editing hostile and trains people to ignore red squiggles. ESLint autofixes and honours the `_` prefix for intentionally-unused parameters — which matters for interface implementations |
-| `verbatimModuleSyntax` | **on** | Import elision becomes explicit; required for correct `import type` behaviour with decorators and for fast transpile-only builds |
-| `isolatedModules` | **on** | Required by SWC/esbuild; prevents constructs that cannot be transpiled file-by-file |
-| `skipLibCheck` | **on** | Pragmatic. Third-party `.d.ts` errors are not actionable and block builds for no benefit |
-| `composite` / `declaration` | **on** | Required for project references |
+| Flag                                    | Decision                     | Reasoning                                                                                                                                                                                                                                                                                                                    |
+| --------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `strict`                                | **on**                       | Baseline. Non-negotiable                                                                                                                                                                                                                                                                                                     |
+| `noUncheckedIndexedAccess`              | **on**                       | The highest-value flag on this list. `arr[0]` becomes `T \| undefined`, which is the truth. Catches a real bug class around slice metrics arrays, trace lines and parsed CLI output. Friction is real; mitigate with `.at()`, destructuring and `for...of`                                                                   |
+| `exactOptionalPropertyTypes`            | **on**                       | Distinguishes "absent" from "present and undefined" — meaningful for partial updates, where `{ name: undefined }` and `{}` must not mean the same thing. **Costs real friction with Prisma**, whose generated types do not model the distinction. Confined to `infrastructure/persistence` with the documented pattern below |
+| `noImplicitOverride`                    | **on**                       | Cheap; prevents a silently-shadowed base method                                                                                                                                                                                                                                                                              |
+| `noPropertyAccessFromIndexSignature`    | **on**                       | Forces `env['KEY']`, which is correct — and irrelevant in practice because raw `process.env` is banned everywhere but two files                                                                                                                                                                                              |
+| `useUnknownInCatchVariables`            | **on**                       | Implied by `strict`; stated explicitly so it survives a future config edit                                                                                                                                                                                                                                                   |
+| `noFallthroughCasesInSwitch`            | **on**                       | Pairs with `switch-exhaustiveness-check` on the discriminated unions this codebase is full of                                                                                                                                                                                                                                |
+| `noImplicitReturns`                     | **on**                       | Cheap correctness                                                                                                                                                                                                                                                                                                            |
+| `noUnusedLocals` / `noUnusedParameters` | **off in tsc, on in ESLint** | `tsc` errors on a variable you are halfway through using, which makes editing hostile and trains people to ignore red squiggles. ESLint autofixes and honours the `_` prefix for intentionally-unused parameters — which matters for interface implementations                                                               |
+| `verbatimModuleSyntax`                  | **on**                       | Import elision becomes explicit; required for correct `import type` behaviour with decorators and for fast transpile-only builds                                                                                                                                                                                             |
+| `isolatedModules`                       | **on**                       | Required by SWC/esbuild; prevents constructs that cannot be transpiled file-by-file                                                                                                                                                                                                                                          |
+| `skipLibCheck`                          | **on**                       | Pragmatic. Third-party `.d.ts` errors are not actionable and block builds for no benefit                                                                                                                                                                                                                                     |
+| `composite` / `declaration`             | **on**                       | Required for project references                                                                                                                                                                                                                                                                                              |
 
 `moduleResolution` is `bundler` in `apps/web` (Next requirement) and `NodeNext` everywhere else.
 
@@ -101,10 +103,18 @@ const payload = parsed.data;   // typed, and true
 
 ### Branded types
 
-Defined once via Zod, in `packages/contracts`:
+Defined once via Zod, in `packages/contracts`. `brandedUuid` validates against an explicit
+regex rather than Zod's own `.uuid()`, deliberately: the schema uses UUIDv7 for
+time-sortable primary keys, and Zod majors have differed on which UUID versions
+`.uuid()` accepts. The regex accepts variants 1–8 (RFC 9562, which includes v7) and
+rejects the nil UUID, which is never a valid identifier here:
 
 ```ts
-const brandedUuid = <B extends string>(brand: B) => z.string().uuid().brand<B>();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function brandedUuid<B extends string>(brand: B) {
+  return z.string().regex(UUID_PATTERN, `must be a UUID (${brand})`).brand<B>();
+}
 
 export const UserId          = brandedUuid('UserId');
 export const OrganizationId  = brandedUuid('OrganizationId');
@@ -319,12 +329,16 @@ This removes an entire build step from the inner loop — editing `packages/cont
 ## 6. Runtime versions
 
 ```
-.nvmrc            22.x  (pinned to the exact LTS patch)
+.nvmrc            24.x  (pinned to the exact LTS patch)
 .python-version   3.12.x
-package.json      "packageManager": "pnpm@x.y.z", "engines": { "node": ">=22 <23" }
+package.json      "packageManager": "pnpm@x.y.z", "engines": { "node": ">=24 <25" }
 ```
 
-**mise** is the recommended version manager — it handles Node and Python from one `.mise.toml`, which matters in a polyglot repository where nvm plus pyenv means two tools and two failure modes. `.nvmrc` and `.python-version` are committed anyway so nvm and pyenv users are not excluded.
+**Node is pinned to 24 (Krypton), not 22.** Resolved from nodejs.org's release schedule: v24 is **Active LTS**, v22 has moved to **Maintenance LTS**, and v26 is **Current** — production must not run a Current release. Revisit this pin once v26 reaches Active LTS.
+
+`engines.node` alone is advisory under pnpm: `pnpm install` on a mismatched Node major only warns (`[WARN] Unsupported engine`) and exits 0. `.npmrc`'s `engine-strict=true` does not change that under pnpm 11.20.0 — it binds for npm, not pnpm. The check that actually fails an install on the wrong Node version is `scripts/check-node-version.mjs`, wired as the root `preinstall` script; it reads the required major straight out of `.nvmrc` so there is exactly one place to bump.
+
+**mise** is the recommended version manager — it handles Node and Python from one `mise.toml`, which matters in a polyglot repository where nvm plus pyenv means two tools and two failure modes. `.nvmrc` and `.python-version` are committed anyway so nvm and pyenv users are not excluded.
 
 CI reads the same files. A version mismatch between local and CI is not a debugging session anyone should have.
 

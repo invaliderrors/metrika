@@ -1,0 +1,16 @@
+{
+  "extends": "@metrika/typescript-config/base.json",
+  "compilerOptions": {
+    // Mirrors tsconfig.json's lib choice — see the comment there.
+    "lib": ["ES2023", "WebWorker"],
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  // src only, deliberately: this is what "pnpm typecheck" actually emits
+  // to dist/. Compiling test/** here too (as tsconfig.json still does, for
+  // linting) would put dist/test/* into the package's build output, and a
+  // rootDir wide enough to cover both src/ and test/ pushes the entry point
+  // to dist/src/index.js instead of dist/index.js — a trap for whatever
+  // later compiles against this package's dist output.
+  "include": ["src/**/*.ts"]
+}

@@ -43,11 +43,11 @@ export interface SliceOutput {
 
 Implementations:
 
-| Implementation | Where | Used by |
-|---|---|---|
-| `PrusaSlicerEngine` | dispatches a Temporal activity to the slicer worker | staging, production |
-| `FakeSlicerEngine` | `packages/testing` — deterministic metrics from a hash of the request | E2E, local dev by default, CI |
-| `CuraSlicerEngine` | not built | contingency if PrusaSlicer becomes unusable |
+| Implementation      | Where                                                                 | Used by                                     |
+| ------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
+| `PrusaSlicerEngine` | dispatches a Temporal activity to the slicer worker                   | staging, production                         |
+| `FakeSlicerEngine`  | `packages/testing` — deterministic metrics from a hash of the request | E2E, local dev by default, CI               |
+| `CuraSlicerEngine`  | not built                                                             | contingency if PrusaSlicer becomes unusable |
 
 `FakeSlicerEngine` is not a convenience; it is a load-bearing architectural payoff. It makes the Playwright golden-path test run in seconds instead of minutes, makes it deterministic, and lets a developer get a complete quote flow working locally without a 400 MB slicer container. Real slicer behaviour is covered by the regression suite, where it belongs.
 
@@ -55,13 +55,13 @@ Implementations:
 
 ## 2. Why PrusaSlicer
 
-| Option | For | Against | Verdict |
-|---|---|---|---|
-| **PrusaSlicer CLI** | Mature, excellent FDM output, exposes filament volume/mass, print time and layer count directly from the CLI; huge profile ecosystem; well-understood G-code | **AGPL-3.0**; CLI surface changes between majors; heavyweight image | **Chosen** |
-| CuraEngine | Also AGPL; lighter; embeddable | Its metrics are less directly exposed; profile model is more awkward to drive from a CLI | Contingency |
-| OrcaSlicer | Better modern-printer profiles, actively developed | AGPL as well; a PrusaSlicer fork, so the licensing question is identical | Re-evaluate at Phase 14 for Bambu support |
-| Write our own | No licence question | Years of work to reach industrial quality; would produce wrong estimates for a long time | Rejected |
-| Commercial SDK | Clear licensing | Cost and lock-in at a stage where neither is affordable | Rejected for now |
+| Option              | For                                                                                                                                                          | Against                                                                                  | Verdict                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------- |
+| **PrusaSlicer CLI** | Mature, excellent FDM output, exposes filament volume/mass, print time and layer count directly from the CLI; huge profile ecosystem; well-understood G-code | **AGPL-3.0**; CLI surface changes between majors; heavyweight image                      | **Chosen**                                |
+| CuraEngine          | Also AGPL; lighter; embeddable                                                                                                                               | Its metrics are less directly exposed; profile model is more awkward to drive from a CLI | Contingency                               |
+| OrcaSlicer          | Better modern-printer profiles, actively developed                                                                                                           | AGPL as well; a PrusaSlicer fork, so the licensing question is identical                 | Re-evaluate at Phase 14 for Bambu support |
+| Write our own       | No licence question                                                                                                                                          | Years of work to reach industrial quality; would produce wrong estimates for a long time | Rejected                                  |
+| Commercial SDK      | Clear licensing                                                                                                                                              | Cost and lock-in at a stage where neither is affordable                                  | Rejected for now                          |
 
 Every credible open slicer is AGPL. That is the state of the ecosystem, and it means the licensing question must be answered rather than avoided.
 
@@ -124,7 +124,7 @@ Execution, step by step:
 
 ## 5. Reproducibility and the cache
 
-The cache key is the reproducibility key. They are the same value because they answer the same question: *does this exact combination of inputs already have an answer?*
+The cache key is the reproducibility key. They are the same value because they answer the same question: _does this exact combination of inputs already have an answer?_
 
 ```
 cacheKey = sha256(canonicalJson({
@@ -158,15 +158,15 @@ Consequences that follow automatically:
 
 ## 6. Failure taxonomy
 
-| Failure | Retry | Customer sees |
-|---|---|---|
-| Spot interruption / worker crash | Yes, Temporal automatic | Nothing — "calculando" continues |
-| S3 transient error | Yes, exponential backoff | Nothing |
-| Slicer non-zero exit, geometry-related | **No** | `SLICING_FAILED` with the slicer's diagnostic, plus the related geometry issues |
-| Slicer timeout | Once, on the large queue | `SLICING_FAILED` — "model too complex for automatic quoting; contact us" |
-| Profile validation failure | No | `INVALID_PRINT_CONFIGURATION`, naming the parameter |
-| Metrics disagreement beyond tolerance | Once | `SLICING_FAILED` — a bug alert fires internally |
-| Model does not fit build volume | No — caught before slicing | `DOES_NOT_FIT_BUILD_VOLUME` with the overflow per axis |
+| Failure                                | Retry                      | Customer sees                                                                   |
+| -------------------------------------- | -------------------------- | ------------------------------------------------------------------------------- |
+| Spot interruption / worker crash       | Yes, Temporal automatic    | Nothing — "calculando" continues                                                |
+| S3 transient error                     | Yes, exponential backoff   | Nothing                                                                         |
+| Slicer non-zero exit, geometry-related | **No**                     | `SLICING_FAILED` with the slicer's diagnostic, plus the related geometry issues |
+| Slicer timeout                         | Once, on the large queue   | `SLICING_FAILED` — "model too complex for automatic quoting; contact us"        |
+| Profile validation failure             | No                         | `INVALID_PRINT_CONFIGURATION`, naming the parameter                             |
+| Metrics disagreement beyond tolerance  | Once                       | `SLICING_FAILED` — a bug alert fires internally                                 |
+| Model does not fit build volume        | No — caught before slicing | `DOES_NOT_FIT_BUILD_VOLUME` with the overflow per axis                          |
 
 The distinction that matters: **retry infrastructure failures, never retry deterministic failures.** A slicer that rejected this geometry will reject it again, and retrying wastes CPU and delays the customer's answer.
 

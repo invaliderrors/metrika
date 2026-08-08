@@ -8,50 +8,50 @@
 
 ## Scope classification
 
-| Feature | MVP | V1 | V2 | Future |
-|---|:--:|:--:|:--:|:--:|
-| Email/Google/Microsoft signup | ● | | | |
-| Personal + team organizations, invitations, 4 roles | ● | | | |
-| Projects, models, model versions | ● | | | |
-| STL / OBJ / 3MF upload, multipart, checksum | ● | | | |
-| Geometry analysis — exact metrics | ● | | | |
-| Geometry heuristics — thickness, overhangs | ● | | | |
-| Conservative auto-repair + repair log | ● | | | |
-| Destructive repair with customer approval | | ● | | |
-| GLB preview generation + LOD | ● | | | |
-| 3D viewer: orbit, ortho, grid, dimensions, bbox, overhangs, issues | ● | | | |
-| Cross-section, wireframe, component selection | | ● | | |
-| Layer preview from G-code | | | ● | |
-| Architectural scale (ratio / target size) + fit check | ● | | | |
-| Unit ambiguity detection + confirmation | ● | | | |
-| Print configuration with curated presets | ● | | | |
-| Advanced parameter overrides (admin) | | ● | | |
-| Real slicing (PrusaSlicer) + content-addressed cache | ● | | | |
-| Versioned pricing engine + trace | ● | | | |
-| Admin pricing management + publish preview diff | ● | | | |
-| Promotions, customer-specific pricing | | ● | | |
-| Quotes: lifecycle, expiry, acceptance | ● | | | |
-| Multi-item quotes and orders | | ● | | |
-| Payments: one Colombian provider, PSE + card | ● | | | |
-| Orders + customer-facing state machine | ● | | | |
-| Manufacturing jobs + operator tracking + actuals capture | ● | | | |
-| Shipping and tracking | | ● | | |
-| Minimal internal admin (route group) | ● | | | |
-| Full ops platform (`apps/admin`) | | ● | | |
-| Transactional email (es-CO) | ● | | | |
-| In-app notifications | | ● | | |
-| WhatsApp / SMS | | | ● | |
-| `en-US` locale | | ● | | |
-| Resin (SLA) as a second technology | | ● | | |
-| Automatic model segmentation | | | ● | |
-| Auto-orientation | | | ● | |
-| Printer integration (OctoPrint, Klipper) | | | ● | |
-| Printer telemetry over WebSockets | | | ● | |
-| Partner manufacturing network | | | | ● |
-| Multi-region manufacturing, data residency | | | | ● |
-| Enterprise SSO / SCIM | | | | ● |
-| CAD conversion (STEP / IFC / RVT) | | | | ● |
-| Public quoting API for third parties | | | | ● |
+| Feature                                                            | MVP | V1  | V2  | Future |
+| ------------------------------------------------------------------ | :-: | :-: | :-: | :----: |
+| Email/Google/Microsoft signup                                      |  ●  |     |     |        |
+| Personal + team organizations, invitations, 4 roles                |  ●  |     |     |        |
+| Projects, models, model versions                                   |  ●  |     |     |        |
+| STL / OBJ / 3MF upload, multipart, checksum                        |  ●  |     |     |        |
+| Geometry analysis — exact metrics                                  |  ●  |     |     |        |
+| Geometry heuristics — thickness, overhangs                         |  ●  |     |     |        |
+| Conservative auto-repair + repair log                              |  ●  |     |     |        |
+| Destructive repair with customer approval                          |     |  ●  |     |        |
+| GLB preview generation + LOD                                       |  ●  |     |     |        |
+| 3D viewer: orbit, ortho, grid, dimensions, bbox, overhangs, issues |  ●  |     |     |        |
+| Cross-section, wireframe, component selection                      |     |  ●  |     |        |
+| Layer preview from G-code                                          |     |     |  ●  |        |
+| Architectural scale (ratio / target size) + fit check              |  ●  |     |     |        |
+| Unit ambiguity detection + confirmation                            |  ●  |     |     |        |
+| Print configuration with curated presets                           |  ●  |     |     |        |
+| Advanced parameter overrides (admin)                               |     |  ●  |     |        |
+| Real slicing (PrusaSlicer) + content-addressed cache               |  ●  |     |     |        |
+| Versioned pricing engine + trace                                   |  ●  |     |     |        |
+| Admin pricing management + publish preview diff                    |  ●  |     |     |        |
+| Promotions, customer-specific pricing                              |     |  ●  |     |        |
+| Quotes: lifecycle, expiry, acceptance                              |  ●  |     |     |        |
+| Multi-item quotes and orders                                       |     |  ●  |     |        |
+| Payments: one Colombian provider, PSE + card                       |  ●  |     |     |        |
+| Orders + customer-facing state machine                             |  ●  |     |     |        |
+| Manufacturing jobs + operator tracking + actuals capture           |  ●  |     |     |        |
+| Shipping and tracking                                              |     |  ●  |     |        |
+| Minimal internal admin (route group)                               |  ●  |     |     |        |
+| Full ops platform (`apps/admin`)                                   |     |  ●  |     |        |
+| Transactional email (es-CO)                                        |  ●  |     |     |        |
+| In-app notifications                                               |     |  ●  |     |        |
+| WhatsApp / SMS                                                     |     |     |  ●  |        |
+| `en-US` locale                                                     |     |  ●  |     |        |
+| Resin (SLA) as a second technology                                 |     |  ●  |     |        |
+| Automatic model segmentation                                       |     |     |  ●  |        |
+| Auto-orientation                                                   |     |     |  ●  |        |
+| Printer integration (OctoPrint, Klipper)                           |     |     |  ●  |        |
+| Printer telemetry over WebSockets                                  |     |     |  ●  |        |
+| Partner manufacturing network                                      |     |     |     |   ●    |
+| Multi-region manufacturing, data residency                         |     |     |     |   ●    |
+| Enterprise SSO / SCIM                                              |     |     |     |   ●    |
+| CAD conversion (STEP / IFC / RVT)                                  |     |     |     |   ●    |
+| Public quoting API for third parties                               |     |     |     |   ●    |
 
 ---
 
@@ -61,24 +61,45 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 0.1 | pnpm workspace + Turborepo pipeline (`typecheck`, `lint`, `test:unit`, `test:integration`, `build`), remote cache | root |
-| 0.2 | `packages/typescript-config` — `base`, `node`, `react-library`, `next`, `nest` configs with every flag from [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md) | `packages/typescript-config` |
-| 0.3 | `packages/eslint-config` — flat config profiles: `base`, `typeChecked`, `react`, `next`, `nest`, `workflows`, `test`, `boundaries` | `packages/eslint-config` |
-| 0.4 | Prettier (exact-pinned) + `.editorconfig` + `ruff` + `mypy --strict` for Python | root, `apps/workers` |
-| 0.5 | `packages/contracts` skeleton: `Brand` helper, all branded IDs, `Money`, unit types, `Result`, `assertNever`, `DomainErrorCode`, canonical JSON hashing | `packages/contracts/src` |
-| 0.6 | `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness | `packages/database` |
-| 0.7 | `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}` | `apps/api/src` |
-| 0.8 | `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO` | `apps/web/src` |
-| 0.9 | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs | `apps/workers` |
-| 0.10 | `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit | `infra/docker` |
-| 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
-| 0.12 | GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd) | `.github/workflows` |
-| 0.13 | `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env | `packages/testing` |
-| 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role | `infra/terraform/shared` |
-| 0.15 | **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in ADR-0009 | throwaway branch |
-| 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018 | root, `docs/` |
+| #    | Task                                                                                                                                                                    | Location                                                                      |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 0.1  | ✅ pnpm workspace + Turborepo pipeline (`typecheck`, `lint`, `test:unit`, `test:integration`, `build`), remote cache                                                    | root                                                                          |
+| 0.2  | ✅ `packages/typescript-config` — `base`, `node`, `react-library`, `next`, `nest` configs with every flag from [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md) | `packages/typescript-config`                                                  |
+| 0.3  | ✅ `packages/eslint-config` — flat config profiles: `base`, `typeChecked`, `react`, `next`, `nest`, `workflows`, `test`, `boundaries`                                   | `packages/eslint-config`                                                      |
+| 0.4  | ✅ Prettier (exact-pinned) + `.editorconfig` + `ruff` + `mypy --strict` for Python                                                                                      | root, `apps/workers`                                                          |
+| 0.5  | ✅ `packages/contracts` skeleton: `Brand` helper, all branded IDs, `Money`, unit types, `Result`, `assertNever`, `DomainErrorCode`, canonical JSON hashing              | `packages/contracts/src`                                                      |
+| 0.6  | `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness                                                           | `packages/database`                                                           |
+| 0.7  | `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                   | `apps/api/src`                                                                |
+| 0.8  | `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                     | `apps/web/src`                                                                |
+| 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                  | `apps/workers`                                                                |
+| 0.10 | `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit                                                                                            | `infra/docker`                                                                |
+| 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                              | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
+| 0.12 | ✅ GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                               | `.github/workflows`                                                           |
+| 0.13 | `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env                                                                              | `packages/testing`                                                            |
+| 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role                                                                                                           | `infra/terraform/shared`                                                      |
+| 0.15 | **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in ADR-0009                                | throwaway branch                                                              |
+| 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                                | root, `docs/`                                                                 |
+
+Progress: 0.1–0.5, 0.12 complete for what Plan 0A scoped. Remaining: 0.6–0.11,
+0.13–0.16. Caveats on the ✅ rows: several describe end-state work that lands
+incrementally as the runtimes that need it are built. 0.1's `test:integration`
+turbo task and remote caching don't exist yet — `turbo.json` defines only
+`typecheck`, `lint`, `test:unit` and `build`, and `pnpm verify` logs "Remote
+caching disabled"; both land once there's something to integration-test and a
+Vercel remote-cache token to configure. 0.2's `next`/`nest` tsconfigs and 0.3's
+`react`/`next`/`nest`/`workflows` ESLint profiles arrive with `apps/web` and
+`apps/api` (Plan 0B) — today only `base`/`node`/`react-library` and
+`base`/`typeChecked`/`test`/`contractsBoundary` exist. 0.4's `ruff`/`mypy`
+land with `apps/workers` (Plan 0B); only the Prettier/`.editorconfig` half is
+done. 0.12's CI currently runs format, lint, typecheck and unit tests only —
+the rest of [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)'s gate list
+(integration tests, `contracts:emit`, security scanning, deploys) grows in
+later plans. 0.6 (`packages/database`) has no code at all yet — it needs
+Postgres via `docker compose`, which Plan 0A deliberately does not stand up
+(see [Plan 0A](./superpowers/plans/2026-08-07-phase-0a-monorepo-and-contracts-core.md)'s
+deferred-work table) — it lands in Plan 0B along with `apps/`. 0.16's root docs
+(`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) and ADRs 0001–0018 in
+[`docs/adr/`](./adr/) all predate this plan and were not produced by it.
 
 **Contracts.** `Brand<T,K>`, every `*Id`, `Money`, `Millimeters`/`Grams`/`Seconds`/`CubicMillimeters`, `Result<T,E>`, `DomainErrorCode`, `canonicalJson()` + `sha256Canonical()`.
 
@@ -102,19 +123,19 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 1.1 | Clerk integration: JWKS verification, `AuthContext` construction, Nest guard, Next middleware | `apps/api/src/modules/auth`, `apps/web/src/features/auth` |
-| 1.2 | `UsersModule`: local `User` with `externalAuthId`, first-login provisioning, **automatic personal organization creation** | `apps/api/src/modules/users` |
-| 1.3 | `OrganizationsModule`: organizations, members, roles, invitation issue/accept/revoke with hashed tokens; last-owner protection inside the transaction | `apps/api/src/modules/organizations` |
-| 1.4 | `ProjectsModule`: CRUD, org scoping, cursor pagination | `apps/api/src/modules/projects` |
-| 1.5 | **Authorization layer**: `Action`/`Resource` unions in contracts; pure policy functions per resource; `@Policy()` decorator + guard; `AuthContext` required on every repository method | `apps/api/src/authorization` |
-| 1.6 | **Postgres RLS**: enable on every tenant table; Prisma extension setting `app.current_org_id` per transaction; separate elevated client for platform admins with mandatory audit | `packages/database/src` |
-| 1.7 | `AuditModule`: append-only `AuditLog`, injected `AuditRecorder`, no update/delete grants on the table for the app role | `apps/api/src/modules/audit` |
-| 1.8 | `packages/api-client`: client factory, auth injection, request IDs, retry policy, typed errors, TanStack Query hooks | `packages/api-client` |
-| 1.9 | Web: signup/login, org switcher, member management, invitation acceptance, project list/detail | `apps/web/src/features/{auth,organizations,projects}` |
-| 1.10 | `packages/ui`: Button, Input, Select, Dialog, DataTable, Toast, Card, Badge, tokens | `packages/ui` |
-| 1.11 | Terraform `staging`: VPC + endpoints, RDS, ECS cluster, ALB, secrets | `infra/terraform/envs/staging` |
+| #    | Task                                                                                                                                                                                   | Location                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 1.1  | Clerk integration: JWKS verification, `AuthContext` construction, Nest guard, Next middleware                                                                                          | `apps/api/src/modules/auth`, `apps/web/src/features/auth` |
+| 1.2  | `UsersModule`: local `User` with `externalAuthId`, first-login provisioning, **automatic personal organization creation**                                                              | `apps/api/src/modules/users`                              |
+| 1.3  | `OrganizationsModule`: organizations, members, roles, invitation issue/accept/revoke with hashed tokens; last-owner protection inside the transaction                                  | `apps/api/src/modules/organizations`                      |
+| 1.4  | `ProjectsModule`: CRUD, org scoping, cursor pagination                                                                                                                                 | `apps/api/src/modules/projects`                           |
+| 1.5  | **Authorization layer**: `Action`/`Resource` unions in contracts; pure policy functions per resource; `@Policy()` decorator + guard; `AuthContext` required on every repository method | `apps/api/src/authorization`                              |
+| 1.6  | **Postgres RLS**: enable on every tenant table; Prisma extension setting `app.current_org_id` per transaction; separate elevated client for platform admins with mandatory audit       | `packages/database/src`                                   |
+| 1.7  | `AuditModule`: append-only `AuditLog`, injected `AuditRecorder`, no update/delete grants on the table for the app role                                                                 | `apps/api/src/modules/audit`                              |
+| 1.8  | `packages/api-client`: client factory, auth injection, request IDs, retry policy, typed errors, TanStack Query hooks                                                                   | `packages/api-client`                                     |
+| 1.9  | Web: signup/login, org switcher, member management, invitation acceptance, project list/detail                                                                                         | `apps/web/src/features/{auth,organizations,projects}`     |
+| 1.10 | `packages/ui`: Button, Input, Select, Dialog, DataTable, Toast, Card, Badge, tokens                                                                                                    | `packages/ui`                                             |
+| 1.11 | Terraform `staging`: VPC + endpoints, RDS, ECS cluster, ALB, secrets                                                                                                                   | `infra/terraform/envs/staging`                            |
 
 **Contracts.** `organizationsContract`, `projectsContract`, `usersContract`; `AuthContext`, `OrganizationRole`, `PlatformRole`, `PolicyResult`.
 
@@ -140,16 +161,16 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 2.1 | `StorageModule`: S3 adapter, key namespaces, presigned single + multipart, HEAD verification, lifecycle policy definitions | `apps/api/src/infrastructure/storage` |
-| 2.2 | `ModelsModule`: `Model`, `ModelVersion`, `UploadSession`, `FileAsset`; upload-session creation, completion verification, state machine | `apps/api/src/modules/models` |
-| 2.3 | Generic state-machine helper: transition table type, `transition()` writing entity + `StatusTransition` + event in one transaction | `apps/api/src/shared/state-machine` |
-| 2.4 | Transactional outbox: table, Prisma helper, poller with `FOR UPDATE SKIP LOCKED`, Temporal starter | `apps/api/src/infrastructure/temporal` |
-| 2.5 | Rate limiting + per-org quotas in Redis | `apps/api/src/shared/rate-limit` |
-| 2.6 | Web upload UX: drag-and-drop, streaming SHA-256 in a Web Worker, real progress, cancel, retry, multipart orchestration | `apps/web/src/features/models` |
-| 2.7 | Orphan cleanup job: abandoned sessions, unreferenced objects | `apps/api/src/workflows/cleanup` |
-| 2.8 | Terraform: S3 buckets, lifecycle rules, KMS keys, CloudFront distribution for previews | `infra/terraform/modules/storage` |
+| #   | Task                                                                                                                                   | Location                               |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| 2.1 | `StorageModule`: S3 adapter, key namespaces, presigned single + multipart, HEAD verification, lifecycle policy definitions             | `apps/api/src/infrastructure/storage`  |
+| 2.2 | `ModelsModule`: `Model`, `ModelVersion`, `UploadSession`, `FileAsset`; upload-session creation, completion verification, state machine | `apps/api/src/modules/models`          |
+| 2.3 | Generic state-machine helper: transition table type, `transition()` writing entity + `StatusTransition` + event in one transaction     | `apps/api/src/shared/state-machine`    |
+| 2.4 | Transactional outbox: table, Prisma helper, poller with `FOR UPDATE SKIP LOCKED`, Temporal starter                                     | `apps/api/src/infrastructure/temporal` |
+| 2.5 | Rate limiting + per-org quotas in Redis                                                                                                | `apps/api/src/shared/rate-limit`       |
+| 2.6 | Web upload UX: drag-and-drop, streaming SHA-256 in a Web Worker, real progress, cancel, retry, multipart orchestration                 | `apps/web/src/features/models`         |
+| 2.7 | Orphan cleanup job: abandoned sessions, unreferenced objects                                                                           | `apps/api/src/workflows/cleanup`       |
+| 2.8 | Terraform: S3 buckets, lifecycle rules, KMS keys, CloudFront distribution for previews                                                 | `infra/terraform/modules/storage`      |
 
 **Contracts.** `CreateUploadSessionRequest/Response`, `CompleteUploadRequest`, `ModelVersionState`, `FileAssetNamespace`, `ModelVersionResponse`.
 
@@ -177,22 +198,22 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 3.1 | Geometry worker: format sniffing, sandboxed parsing, archive/XML guards, rlimits, tmpfs scratch | `apps/workers/geometry/src/metrika_geometry` |
-| 3.2 | Exact metrics module (volume `null` when not watertight) | `.../analysis/exact.py` |
-| 3.3 | Heuristics module with `{value, method, confidence}` envelopes | `.../analysis/heuristics.py` |
-| 3.4 | **Unit inference + plausibility bounds**; `unitInterpretation` construction | `.../units.py` |
-| 3.5 | Conservative repair + `RepairLog` emission | `.../repair.py` |
-| 3.6 | Preview generation: decimation, LOD, GLB export, compression; thumbnail | `.../preview.py` |
-| 3.7 | Slice-input generation: full-resolution unit-normalised 3MF | `.../slice_input.py` |
-| 3.8 | `ModelProcessingWorkflow` + activities, with `confirmUnits` and `approveDestructiveRepair` signals | `apps/api/src/workflows/model-processing` |
-| 3.9 | `GeometryModule`: persist analysis, issues, derivatives; analysis read endpoints; unit confirmation endpoint | `apps/api/src/modules/geometry` |
-| 3.10 | SSE progress endpoint + Redis pub/sub fan-out + `Last-Event-ID` resume | `apps/api/src/modules/models/api/events.controller.ts` |
-| 3.11 | Web: processing status UI, analysis results, **unit confirmation card showing implied real and printed sizes** | `apps/web/src/features/geometry-analysis` |
-| 3.12 | `fixtures/models/` + generator script; every fixture from [TESTING.md](./TESTING.md#5-geometry-tests) | `fixtures/models` |
-| 3.13 | Terraform: geometry worker services (small + large), no-egress networking, autoscaling on queue depth | `infra/terraform/envs/*` |
-| 3.14 | **Decisions:** wall-thickness algorithm; Meshopt vs Draco. Resolved by measurement, recorded in ADRs | — |
+| #    | Task                                                                                                           | Location                                               |
+| ---- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 3.1  | Geometry worker: format sniffing, sandboxed parsing, archive/XML guards, rlimits, tmpfs scratch                | `apps/workers/geometry/src/metrika_geometry`           |
+| 3.2  | Exact metrics module (volume `null` when not watertight)                                                       | `.../analysis/exact.py`                                |
+| 3.3  | Heuristics module with `{value, method, confidence}` envelopes                                                 | `.../analysis/heuristics.py`                           |
+| 3.4  | **Unit inference + plausibility bounds**; `unitInterpretation` construction                                    | `.../units.py`                                         |
+| 3.5  | Conservative repair + `RepairLog` emission                                                                     | `.../repair.py`                                        |
+| 3.6  | Preview generation: decimation, LOD, GLB export, compression; thumbnail                                        | `.../preview.py`                                       |
+| 3.7  | Slice-input generation: full-resolution unit-normalised 3MF                                                    | `.../slice_input.py`                                   |
+| 3.8  | `ModelProcessingWorkflow` + activities, with `confirmUnits` and `approveDestructiveRepair` signals             | `apps/api/src/workflows/model-processing`              |
+| 3.9  | `GeometryModule`: persist analysis, issues, derivatives; analysis read endpoints; unit confirmation endpoint   | `apps/api/src/modules/geometry`                        |
+| 3.10 | SSE progress endpoint + Redis pub/sub fan-out + `Last-Event-ID` resume                                         | `apps/api/src/modules/models/api/events.controller.ts` |
+| 3.11 | Web: processing status UI, analysis results, **unit confirmation card showing implied real and printed sizes** | `apps/web/src/features/geometry-analysis`              |
+| 3.12 | `fixtures/models/` + generator script; every fixture from [TESTING.md](./TESTING.md#5-geometry-tests)          | `fixtures/models`                                      |
+| 3.13 | Terraform: geometry worker services (small + large), no-egress networking, autoscaling on queue depth          | `infra/terraform/envs/*`                               |
+| 3.14 | **Decisions:** wall-thickness algorithm; Meshopt vs Draco. Resolved by measurement, recorded in ADRs           | —                                                      |
 
 **Contracts.** `GeometryAnalysisResult`, `GeometryIssue`, `UnitInterpretation`, `HeuristicValue<T>`, `ModelDerivativeKind`, `RepairOperation`, `ModelProcessingEvent`.
 
@@ -220,19 +241,19 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 4.1 | `coordinates.ts` — `MM_TO_SCENE`, `PRINTER_TO_SCENE`, the only place these exist | `apps/web/src/features/model-viewer/lib` |
-| 4.2 | `ModelViewer` shell: Canvas, Suspense, error boundary, `frameloop="demand"`, context-loss recovery | `.../components` |
-| 4.3 | GLB loading with lazy decoder, LOD swap, **mandatory disposal** | `.../hooks/useModelGeometry.ts` |
-| 4.4 | Controls: orbit/zoom/pan, perspective ↔ orthographic, camera presets, fit-to-view | `.../components/ViewerControls.tsx` |
-| 4.5 | Build plate + mm grid from `PrinterProfileVersion` | `.../components/BuildPlate.tsx` |
-| 4.6 | Dimension annotations (printed mm + real-world equivalent at current scale) | `.../components/DimensionAnnotations.tsx` |
-| 4.7 | Overhang shader overlay | `.../components/OverhangOverlay.tsx` |
-| 4.8 | Issue highlighting from `GeometryIssue.detail.faceIndices` | `.../components/IssueHighlight.tsx` |
-| 4.9 | Wireframe + transparency modes | `.../components` |
-| 4.10 | `viewerStore` (Zustand): camera mode, overlay toggles, selection — **ephemeral UI state only** | `.../hooks/useViewerStore.ts` |
-| 4.11 | Bundle budget check in CI | `.github/workflows` |
+| #    | Task                                                                                               | Location                                  |
+| ---- | -------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 4.1  | `coordinates.ts` — `MM_TO_SCENE`, `PRINTER_TO_SCENE`, the only place these exist                   | `apps/web/src/features/model-viewer/lib`  |
+| 4.2  | `ModelViewer` shell: Canvas, Suspense, error boundary, `frameloop="demand"`, context-loss recovery | `.../components`                          |
+| 4.3  | GLB loading with lazy decoder, LOD swap, **mandatory disposal**                                    | `.../hooks/useModelGeometry.ts`           |
+| 4.4  | Controls: orbit/zoom/pan, perspective ↔ orthographic, camera presets, fit-to-view                  | `.../components/ViewerControls.tsx`       |
+| 4.5  | Build plate + mm grid from `PrinterProfileVersion`                                                 | `.../components/BuildPlate.tsx`           |
+| 4.6  | Dimension annotations (printed mm + real-world equivalent at current scale)                        | `.../components/DimensionAnnotations.tsx` |
+| 4.7  | Overhang shader overlay                                                                            | `.../components/OverhangOverlay.tsx`      |
+| 4.8  | Issue highlighting from `GeometryIssue.detail.faceIndices`                                         | `.../components/IssueHighlight.tsx`       |
+| 4.9  | Wireframe + transparency modes                                                                     | `.../components`                          |
+| 4.10 | `viewerStore` (Zustand): camera mode, overlay toggles, selection — **ephemeral UI state only**     | `.../hooks/useViewerStore.ts`             |
+| 4.11 | Bundle budget check in CI                                                                          | `.github/workflows`                       |
 
 **Contracts.** No new API contracts — consumes analysis and derivative endpoints.
 
@@ -252,16 +273,16 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 5.1 | `MaterialsModule`: `Material`, `MaterialProfileVersion`, `MaterialColor`, publish flow | `apps/api/src/modules/materials` |
-| 5.2 | `PrintersModule`: `PrinterProfile` + versions, build volumes, capabilities | `apps/api/src/modules/printers` |
-| 5.3 | `PrintProfilesModule`: customer-facing presets + internal advanced parameters | `apps/api/src/modules/print-profiles` |
-| 5.4 | Generic versioning helper: content hashing, publish/archive, `currentVersionId` pointer discipline | `apps/api/src/shared/versioning` |
-| 5.5 | `ConfigurationModule`: assembly, compatibility validation, override allowlist, content hashing | `apps/api/src/modules/configuration` |
-| 5.6 | **`ScaleSpec` + fit check** as pure functions | `packages/contracts` + `apps/api/src/modules/configuration/domain` |
-| 5.7 | Web: configuration form (RHF + Zod), material/colour picker, **scale control with live printed-size preview**, fit indicator | `apps/web/src/features/print-configuration` |
-| 5.8 | Seed data: 3 printer profiles, 4 materials, 4 print profiles | `packages/database/src/seed` |
+| #   | Task                                                                                                                         | Location                                                           |
+| --- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 5.1 | `MaterialsModule`: `Material`, `MaterialProfileVersion`, `MaterialColor`, publish flow                                       | `apps/api/src/modules/materials`                                   |
+| 5.2 | `PrintersModule`: `PrinterProfile` + versions, build volumes, capabilities                                                   | `apps/api/src/modules/printers`                                    |
+| 5.3 | `PrintProfilesModule`: customer-facing presets + internal advanced parameters                                                | `apps/api/src/modules/print-profiles`                              |
+| 5.4 | Generic versioning helper: content hashing, publish/archive, `currentVersionId` pointer discipline                           | `apps/api/src/shared/versioning`                                   |
+| 5.5 | `ConfigurationModule`: assembly, compatibility validation, override allowlist, content hashing                               | `apps/api/src/modules/configuration`                               |
+| 5.6 | **`ScaleSpec` + fit check** as pure functions                                                                                | `packages/contracts` + `apps/api/src/modules/configuration/domain` |
+| 5.7 | Web: configuration form (RHF + Zod), material/colour picker, **scale control with live printed-size preview**, fit indicator | `apps/web/src/features/print-configuration`                        |
+| 5.8 | Seed data: 3 printer profiles, 4 materials, 4 print profiles                                                                 | `packages/database/src/seed`                                       |
 
 **Contracts.** `PrintConfigurationRequest`, `ScaleSpec`, `Orientation`, `FitResult`, `MaterialSummary`, `PrintProfileSummary`, `SupportStrategy`.
 
@@ -277,24 +298,24 @@
 
 ---
 
-## Phase 7 — Pricing Engine *(executed before Phase 6)*
+## Phase 7 — Pricing Engine _(executed before Phase 6)_
 
 **Objective.** The pure kernel. Deterministic, versioned, traced, 100% covered — built against synthetic slice metrics so it needs no infrastructure.
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 7.1 | `PricingComponent` union, rule-set payload schema, `engineSchemaVersion` | `packages/contracts/src/pricing` |
-| 7.2 | `computePrice()` — pure, `Result`-returning, phase-ordered evaluation | `packages/pricing-engine/src` |
-| 7.3 | Money arithmetic + `RoundingPolicy` + `ROUNDING_ADJUSTMENT` reconciliation | `packages/pricing-engine/src/money.ts` |
-| 7.4 | Trace construction | `packages/pricing-engine/src/trace.ts` |
-| 7.5 | Rule-set validation (phase ordering, referential completeness) | `packages/pricing-engine/src/validate.ts` |
-| 7.6 | `PricingModule`: `PricingRuleSet` + versions, publish flow, **publish preview diff over recent quotes** | `apps/api/src/modules/pricing` |
-| 7.7 | `TaxConfiguration` + jurisdiction resolution | `apps/api/src/modules/pricing/domain` |
-| 7.8 | Golden-file corpus | `packages/pricing-engine/test/__golden__` |
-| 7.9 | Admin UI: rule-set editor, diff preview, publish | `apps/web/src/app/(admin)/pricing` |
-| 7.10 | Seed: one published rule set with a full component chain + one draft | `packages/database/src/seed` |
+| #    | Task                                                                                                    | Location                                  |
+| ---- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 7.1  | `PricingComponent` union, rule-set payload schema, `engineSchemaVersion`                                | `packages/contracts/src/pricing`          |
+| 7.2  | `computePrice()` — pure, `Result`-returning, phase-ordered evaluation                                   | `packages/pricing-engine/src`             |
+| 7.3  | Money arithmetic + `RoundingPolicy` + `ROUNDING_ADJUSTMENT` reconciliation                              | `packages/pricing-engine/src/money.ts`    |
+| 7.4  | Trace construction                                                                                      | `packages/pricing-engine/src/trace.ts`    |
+| 7.5  | Rule-set validation (phase ordering, referential completeness)                                          | `packages/pricing-engine/src/validate.ts` |
+| 7.6  | `PricingModule`: `PricingRuleSet` + versions, publish flow, **publish preview diff over recent quotes** | `apps/api/src/modules/pricing`            |
+| 7.7  | `TaxConfiguration` + jurisdiction resolution                                                            | `apps/api/src/modules/pricing/domain`     |
+| 7.8  | Golden-file corpus                                                                                      | `packages/pricing-engine/test/__golden__` |
+| 7.9  | Admin UI: rule-set editor, diff preview, publish                                                        | `apps/web/src/app/(admin)/pricing`        |
+| 7.10 | Seed: one published rule set with a full component chain + one draft                                    | `packages/database/src/seed`              |
 
 **Contracts.** `PricingRuleSetPayload`, `PricingComponent`, `PricingTrace`, `PricingTraceLine`, `RoundingPolicy`, `TaxConfigurationSnapshot`, `PriceInput`, `PriceOutput`.
 
@@ -320,16 +341,16 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 6.1 | `SlicerEngine` port + `SlicingModule` | `apps/api/src/modules/slicing` |
-| 6.2 | **Cache-key computation** using canonical hashing, with `cacheKeySchemaVersion` | `apps/api/src/modules/slicing/domain/cache-key.ts` |
-| 6.3 | Slicer worker: profile rendering, override allowlist, subprocess with limits, heartbeats | `apps/workers/slicer/src/metrika_slicer` |
-| 6.4 | G-code + `--info` parser with cross-check tolerance | `.../parser.py` |
-| 6.5 | `FakeSlicerEngine` (deterministic) | `packages/testing/src/fakes` |
-| 6.6 | Slicer container: pinned binary, `PROVENANCE.md` | `infra/docker/slicer` |
-| 6.7 | Regression suite + nightly workflow | `apps/workers/slicer/tests` |
-| 6.8 | Terraform: slicer service on Fargate Spot, queue-depth autoscaling | `infra/terraform/envs/*` |
+| #   | Task                                                                                     | Location                                           |
+| --- | ---------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 6.1 | `SlicerEngine` port + `SlicingModule`                                                    | `apps/api/src/modules/slicing`                     |
+| 6.2 | **Cache-key computation** using canonical hashing, with `cacheKeySchemaVersion`          | `apps/api/src/modules/slicing/domain/cache-key.ts` |
+| 6.3 | Slicer worker: profile rendering, override allowlist, subprocess with limits, heartbeats | `apps/workers/slicer/src/metrika_slicer`           |
+| 6.4 | G-code + `--info` parser with cross-check tolerance                                      | `.../parser.py`                                    |
+| 6.5 | `FakeSlicerEngine` (deterministic)                                                       | `packages/testing/src/fakes`                       |
+| 6.6 | Slicer container: pinned binary, `PROVENANCE.md`                                         | `infra/docker/slicer`                              |
+| 6.7 | Regression suite + nightly workflow                                                      | `apps/workers/slicer/tests`                        |
+| 6.8 | Terraform: slicer service on Fargate Spot, queue-depth autoscaling                       | `infra/terraform/envs/*`                           |
 
 **Contracts.** `SliceRequest`, `SliceOutput`, `SliceMetrics`, `SlicerVersion`, `SlicerCapabilities`, `SlicingError`.
 
@@ -355,14 +376,14 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 8.1 | `QuotesModule`: lifecycle, state machine, immutable snapshotting, supersession | `apps/api/src/modules/quotes` |
-| 8.2 | `QuoteWorkflow`: validate → fit-check → cache lookup → slice → price → persist | `apps/api/src/workflows/quote` |
-| 8.3 | Lazy expiry on read + sweeper job for notifications | `apps/api/src/modules/quotes` |
-| 8.4 | `PriceEstimate` endpoint (`isEstimate: true`, never a `Quote`) | `apps/api/src/modules/quotes/api` |
-| 8.5 | Web: quote view with **price breakdown from the trace**, expiry countdown, reconfigure → new quote | `apps/web/src/features/quotes` |
-| 8.6 | Quote PDF generation | `apps/api/src/modules/quotes/infrastructure` |
+| #   | Task                                                                                               | Location                                     |
+| --- | -------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| 8.1 | `QuotesModule`: lifecycle, state machine, immutable snapshotting, supersession                     | `apps/api/src/modules/quotes`                |
+| 8.2 | `QuoteWorkflow`: validate → fit-check → cache lookup → slice → price → persist                     | `apps/api/src/workflows/quote`               |
+| 8.3 | Lazy expiry on read + sweeper job for notifications                                                | `apps/api/src/modules/quotes`                |
+| 8.4 | `PriceEstimate` endpoint (`isEstimate: true`, never a `Quote`)                                     | `apps/api/src/modules/quotes/api`            |
+| 8.5 | Web: quote view with **price breakdown from the trace**, expiry countdown, reconfigure → new quote | `apps/web/src/features/quotes`               |
+| 8.6 | Quote PDF generation                                                                               | `apps/api/src/modules/quotes/infrastructure` |
 
 **Contracts.** `CreateQuoteRequest`, `QuoteResponse`, `QuoteState`, `QuoteSummary`, `PriceEstimateRequest/Response`.
 
@@ -386,15 +407,15 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 9.1 | `PaymentProvider` port designed around **redirect + async webhook** | `apps/api/src/modules/payments/application/ports` |
-| 9.2 | First Colombian adapter (Wompi or Mercado Pago — decided here) with PSE + card | `.../infrastructure/providers` |
-| 9.3 | `FakePaymentProvider` | `packages/testing/src/fakes` |
-| 9.4 | Webhook endpoint: raw-body HMAC verification, timestamp window, `WebhookEvent` dedupe, immediate 200, async processing | `.../api/webhooks.controller.ts` |
-| 9.5 | `Payment` + `Refund` entities and state machines | `.../domain` |
-| 9.6 | `Idempotency-Key` middleware | `apps/api/src/shared/idempotency` |
-| 9.7 | Web checkout: address, method selection, redirect handling, return page that **polls server state rather than trusting the redirect** | `apps/web/src/features/checkout` |
+| #   | Task                                                                                                                                  | Location                                          |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| 9.1 | `PaymentProvider` port designed around **redirect + async webhook**                                                                   | `apps/api/src/modules/payments/application/ports` |
+| 9.2 | First Colombian adapter (Wompi or Mercado Pago — decided here) with PSE + card                                                        | `.../infrastructure/providers`                    |
+| 9.3 | `FakePaymentProvider`                                                                                                                 | `packages/testing/src/fakes`                      |
+| 9.4 | Webhook endpoint: raw-body HMAC verification, timestamp window, `WebhookEvent` dedupe, immediate 200, async processing                | `.../api/webhooks.controller.ts`                  |
+| 9.5 | `Payment` + `Refund` entities and state machines                                                                                      | `.../domain`                                      |
+| 9.6 | `Idempotency-Key` middleware                                                                                                          | `apps/api/src/shared/idempotency`                 |
+| 9.7 | Web checkout: address, method selection, redirect handling, return page that **polls server state rather than trusting the redirect** | `apps/web/src/features/checkout`                  |
 
 **Contracts.** `CreatePaymentIntentRequest/Response`, `PaymentState`, `PaymentMethod`, `RefundRequest`.
 
@@ -418,14 +439,14 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 10.1 | `OrdersModule`: `Order`, `OrderItem` with **denormalised snapshot at acceptance** | `apps/api/src/modules/orders` |
-| 10.2 | **Quote acceptance transaction** — the most important transaction in the system | `.../application/accept-quote.use-case.ts` |
-| 10.3 | Customer-facing order state machine + projection from manufacturing jobs | `.../domain` |
-| 10.4 | `OrderFulfillmentWorkflow` | `apps/api/src/workflows/order-fulfillment` |
-| 10.5 | `NotificationsModule` + email adapter + localised templates | `apps/api/src/modules/notifications` |
-| 10.6 | Web: order list, detail, timeline, invoice download | `apps/web/src/features/orders` |
+| #    | Task                                                                              | Location                                   |
+| ---- | --------------------------------------------------------------------------------- | ------------------------------------------ |
+| 10.1 | `OrdersModule`: `Order`, `OrderItem` with **denormalised snapshot at acceptance** | `apps/api/src/modules/orders`              |
+| 10.2 | **Quote acceptance transaction** — the most important transaction in the system   | `.../application/accept-quote.use-case.ts` |
+| 10.3 | Customer-facing order state machine + projection from manufacturing jobs          | `.../domain`                               |
+| 10.4 | `OrderFulfillmentWorkflow`                                                        | `apps/api/src/workflows/order-fulfillment` |
+| 10.5 | `NotificationsModule` + email adapter + localised templates                       | `apps/api/src/modules/notifications`       |
+| 10.6 | Web: order list, detail, timeline, invoice download                               | `apps/web/src/features/orders`             |
 
 **Contracts.** `AcceptQuoteRequest`, `OrderResponse`, `OrderState`, `OrderItemSnapshot`, `NotificationTemplateKey`.
 
@@ -447,15 +468,15 @@
 
 **Deliverables**
 
-| # | Task | Location |
-|---|---|---|
-| 11.1 | `ManufacturingModule`: `ManufacturingJob`, `PrintJob`, independent state machines | `apps/api/src/modules/manufacturing` |
-| 11.2 | `packages/printer-sdk`: `PrinterDriver` interface, `Null`/`Manual`/`Simulator` drivers, **conformance suite** | `packages/printer-sdk` |
-| 11.3 | `Printer` entity with `driverKind: MANUAL` | `.../domain` |
-| 11.4 | **Actuals capture** (`actualPrintSeconds`, `actualMassG`) in the operator UI | `apps/web/src/app/(admin)/manufacturing` |
-| 11.5 | **`EstimateCalibrationJob`**: deviation analysis by profile, alerting | `apps/api/src/workflows/calibration` |
-| 11.6 | Ops UI: job queue, assignment, status transitions, G-code download, reprint | `apps/web/src/app/(admin)` |
-| 11.7 | Admin: users, orgs, quotes, orders, failed jobs, manual price override (audited) | `apps/web/src/app/(admin)` |
+| #    | Task                                                                                                          | Location                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| 11.1 | `ManufacturingModule`: `ManufacturingJob`, `PrintJob`, independent state machines                             | `apps/api/src/modules/manufacturing`     |
+| 11.2 | `packages/printer-sdk`: `PrinterDriver` interface, `Null`/`Manual`/`Simulator` drivers, **conformance suite** | `packages/printer-sdk`                   |
+| 11.3 | `Printer` entity with `driverKind: MANUAL`                                                                    | `.../domain`                             |
+| 11.4 | **Actuals capture** (`actualPrintSeconds`, `actualMassG`) in the operator UI                                  | `apps/web/src/app/(admin)/manufacturing` |
+| 11.5 | **`EstimateCalibrationJob`**: deviation analysis by profile, alerting                                         | `apps/api/src/workflows/calibration`     |
+| 11.6 | Ops UI: job queue, assignment, status transitions, G-code download, reprint                                   | `apps/web/src/app/(admin)`               |
+| 11.7 | Admin: users, orgs, quotes, orders, failed jobs, manual price override (audited)                              | `apps/web/src/app/(admin)`               |
 
 **Contracts.** `ManufacturingJobState`, `PrintJobState`, `PrinterDriver`, `PrinterCapabilities`, `PrinterTelemetry`, `RecordActualsRequest`.
 

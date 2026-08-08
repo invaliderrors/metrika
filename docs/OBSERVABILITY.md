@@ -6,12 +6,12 @@
 
 ## 1. Stack
 
-| Concern | Tool | Why |
-|---|---|---|
+| Concern               | Tool                              | Why                                                                                                                |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Traces, metrics, logs | **OpenTelemetry → Grafana Cloud** | One OTLP endpoint for all three signals; generous free tier; Grafana-native as required; no vendor SDK in the code |
-| Error tracking | **Sentry** (API, web, workers) | Grouping, release health and source maps are genuinely better than a logs-based approach |
-| Uptime | Grafana Synthetic Monitoring | External probe of `/health` and the golden path |
-| Product analytics | **PostHog**, fed by domain events | Never called from domain code |
+| Error tracking        | **Sentry** (API, web, workers)    | Grouping, release health and source maps are genuinely better than a logs-based approach                           |
+| Uptime                | Grafana Synthetic Monitoring      | External probe of `/health` and the golden path                                                                    |
+| Product analytics     | **PostHog**, fed by domain events | Never called from domain code                                                                                      |
 
 OpenTelemetry rather than a vendor SDK means the backend is a configuration change, not a refactor. That optionality matters when the free tier stops being enough.
 
@@ -81,20 +81,20 @@ Levels: `error` for unexpected failures (Sentry event); `warn` for expected doma
 
 ### Domain metrics — the ones that describe the business
 
-| Metric | Type | Alert |
-|---|---|---|
-| `metrika_upload_total{result}` | counter | Success rate < 97% over 1 h |
-| `metrika_analysis_duration_seconds` | histogram | p95 > 120 s |
-| `metrika_analysis_total{result}` | counter | Success rate < 95% |
-| `metrika_slice_duration_seconds` | histogram | p95 > 300 s |
-| `metrika_slice_total{result,cached}` | counter | Success rate < 95% |
-| `metrika_slice_cache_hit_ratio` | gauge | Sudden drop — a key input changed unexpectedly |
-| `metrika_quote_duration_seconds` | histogram | p95 > 180 s (upload → quote ready) |
-| `metrika_quote_total{result}` | counter | — |
-| `metrika_model_triangles` | histogram | Distribution shift → capacity planning |
-| `metrika_units_ambiguous_ratio` | gauge | Rising → the inference heuristic is degrading |
-| `metrika_payment_total{provider,result}` | counter | Failure rate > 10% |
-| `metrika_workflow_failures_total{workflow}` | counter | Any sustained increase |
+| Metric                                      | Type      | Alert                                          |
+| ------------------------------------------- | --------- | ---------------------------------------------- |
+| `metrika_upload_total{result}`              | counter   | Success rate < 97% over 1 h                    |
+| `metrika_analysis_duration_seconds`         | histogram | p95 > 120 s                                    |
+| `metrika_analysis_total{result}`            | counter   | Success rate < 95%                             |
+| `metrika_slice_duration_seconds`            | histogram | p95 > 300 s                                    |
+| `metrika_slice_total{result,cached}`        | counter   | Success rate < 95%                             |
+| `metrika_slice_cache_hit_ratio`             | gauge     | Sudden drop — a key input changed unexpectedly |
+| `metrika_quote_duration_seconds`            | histogram | p95 > 180 s (upload → quote ready)             |
+| `metrika_quote_total{result}`               | counter   | —                                              |
+| `metrika_model_triangles`                   | histogram | Distribution shift → capacity planning         |
+| `metrika_units_ambiguous_ratio`             | gauge     | Rising → the inference heuristic is degrading  |
+| `metrika_payment_total{provider,result}`    | counter   | Failure rate > 10%                             |
+| `metrika_workflow_failures_total{workflow}` | counter   | Any sustained increase                         |
 | `metrika_estimate_deviation_ratio{profile}` | histogram | **median deviation > 15% — margin is eroding** |
 
 That last metric is the one that protects the business. It exists from Phase 11 and is the closing of the loop described in [PRICING_ENGINE.md](./PRICING_ENGINE.md#10-calibration--closing-the-loop-with-reality).
@@ -124,11 +124,11 @@ Four dashboards: **Platform Health** (golden signals, error budget), **Pipeline*
 
 Alert routing is deliberately narrow, because a solo operator with a noisy pager stops reading it:
 
-| Severity | Examples | Route |
-|---|---|---|
-| **Page** | API down, database unreachable, payment webhooks failing, workflow failure rate spike | Push notification |
-| **Ticket** | Analysis success rate degraded, slicer regression failed, estimate deviation over threshold, cost anomaly | Daily digest |
-| **Log only** | Individual expected failures | Dashboards |
+| Severity     | Examples                                                                                                  | Route             |
+| ------------ | --------------------------------------------------------------------------------------------------------- | ----------------- |
+| **Page**     | API down, database unreachable, payment webhooks failing, workflow failure rate spike                     | Push notification |
+| **Ticket**   | Analysis success rate degraded, slicer regression failed, estimate deviation over threshold, cost anomaly | Daily digest      |
+| **Log only** | Individual expected failures                                                                              | Dashboards        |
 
 Every alert names a runbook in `docs/runbooks/`. An alert without a documented response is noise with a siren.
 
@@ -148,17 +148,17 @@ GET /health/deep     → authenticated; per-dependency latency. Used by monitori
 
 ## 8. Performance budgets
 
-| Surface | Budget | Instrumented by |
-|---|---|---|
-| API reads p95 | < 300 ms | OTel histogram per route |
-| API writes p95 | < 500 ms | Same |
-| DB query p95 | < 50 ms | Prisma OTel instrumentation |
-| Queries per request | Per-endpoint budget | Prisma middleware, asserted in tests |
-| Analysis p95 | < 120 s | Activity span |
-| Slice p95 | < 300 s | Activity span |
-| Upload → quote-ready p95 | < 180 s | Workflow span |
-| Web LCP p75 | < 2.0 s | Vercel Speed Insights |
-| Viewer chunk | < 400 KB gzip | CI bundle check |
-| Route JS (non-viewer) | < 180 KB gzip | CI bundle check |
+| Surface                  | Budget              | Instrumented by                      |
+| ------------------------ | ------------------- | ------------------------------------ |
+| API reads p95            | < 300 ms            | OTel histogram per route             |
+| API writes p95           | < 500 ms            | Same                                 |
+| DB query p95             | < 50 ms             | Prisma OTel instrumentation          |
+| Queries per request      | Per-endpoint budget | Prisma middleware, asserted in tests |
+| Analysis p95             | < 120 s             | Activity span                        |
+| Slice p95                | < 300 s             | Activity span                        |
+| Upload → quote-ready p95 | < 180 s             | Workflow span                        |
+| Web LCP p75              | < 2.0 s             | Vercel Speed Insights                |
+| Viewer chunk             | < 400 KB gzip       | CI bundle check                      |
+| Route JS (non-viewer)    | < 180 KB gzip       | CI bundle check                      |
 
 **Instrument first, optimise second.** No performance work begins without a span or a metric showing the cost. This is stated because the temptation to optimise the 3D viewer by intuition will be strong and usually wrong.

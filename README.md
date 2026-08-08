@@ -4,21 +4,25 @@ Digital manufacturing platform for professional 3D printing. Upload a 3D model, 
 
 Initial market: Colombia (`es-CO`, COP). Initial customers: architects and architecture studios. The architecture is internationalisation-ready and does not hardcode Colombia-specific business rules in the domain.
 
-> **Status: architecture blueprint.** No application code has been written yet. The complete engineering plan lives in [`docs/`](./docs/) and is intended to be executable without re-deriving fundamental decisions.
+> **Status: Phase 0A complete.** The monorepo, quality-gate config packages
+> (`packages/typescript-config`, `packages/eslint-config`) and `packages/contracts`
+> exist and are tested. `apps/` and the remaining `packages/*` do not exist yet. The
+> complete engineering plan lives in [`docs/`](./docs/) and is intended to be
+> executable without re-deriving fundamental decisions.
 
 ---
 
 ## Start here
 
-| If you want to… | Read |
-|---|---|
-| Understand the whole system | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
-| Know what to build next | [docs/ROADMAP.md](./docs/ROADMAP.md) |
-| Understand the data model | [docs/DOMAIN_MODEL.md](./docs/DOMAIN_MODEL.md) |
-| Know why a decision was made | [docs/adr/](./docs/adr/) |
-| Get running locally | [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md) |
-| Contribute | [CONTRIBUTING.md](./CONTRIBUTING.md) |
-| Report a vulnerability | [SECURITY.md](./SECURITY.md) |
+| If you want to…              | Read                                                     |
+| ---------------------------- | -------------------------------------------------------- |
+| Understand the whole system  | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)           |
+| Know what to build next      | [docs/ROADMAP.md](./docs/ROADMAP.md)                     |
+| Understand the data model    | [docs/DOMAIN_MODEL.md](./docs/DOMAIN_MODEL.md)           |
+| Know why a decision was made | [docs/adr/](./docs/adr/)                                 |
+| Get running locally          | [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md) |
+| Contribute                   | [CONTRIBUTING.md](./CONTRIBUTING.md)                     |
+| Report a vulnerability       | [SECURITY.md](./SECURITY.md)                             |
 
 Deep dives: [3D pipeline](./docs/3D_PIPELINE.md) · [slicing](./docs/SLICING.md) · [pricing engine](./docs/PRICING_ENGINE.md) · [contracts & API](./docs/CONTRACTS_AND_API.md) · [workflows & events](./docs/WORKFLOWS.md) · [security & threat model](./docs/SECURITY.md) · [observability](./docs/OBSERVABILITY.md) · [testing](./docs/TESTING.md) · [TypeScript & tooling](./docs/TYPESCRIPT_AND_TOOLING.md) · [infrastructure](./docs/INFRASTRUCTURE.md) · [printer integration](./docs/PRINTER_INTEGRATION.md) · [risk register](./docs/RISK_REGISTER.md)
 
@@ -50,7 +54,8 @@ Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zusta
 
 ## Quick start
 
-Not yet implementable — Phase 0 has not been built. The target experience, verified by CI once it exists:
+Not yet reachable — `apps/` has not been built (Phase 0A covered the monorepo and
+`packages/contracts` only). The target experience, verified by CI once it exists:
 
 ```bash
 pnpm install
