@@ -1,0 +1,35 @@
+{
+  "name": "@metrika/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./base": "./src/base.ts",
+    "./type-checked": "./src/type-checked.ts",
+    "./react": "./src/react.ts",
+    "./next": "./src/next.ts",
+    "./nest": "./src/nest.ts",
+    "./workflows": "./src/workflows.ts",
+    "./test": "./src/test.ts",
+    "./script": "./src/script.ts",
+    "./boundaries": "./src/boundaries.ts"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.25.0",
+    "@typescript-eslint/eslint-plugin": "^8.30.0",
+    "@typescript-eslint/parser": "^8.30.0",
+    "eslint-config-prettier": "^10.1.0",
+    "eslint-plugin-import-x": "^4.10.0",
+    "eslint-plugin-jsx-a11y": "^6.10.0",
+    "eslint-plugin-react": "^7.37.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-vitest": "^0.5.4",
+    "typescript-eslint": "^8.30.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.25.0",
+    "typescript": "^5.8.0"
+  }
+}
