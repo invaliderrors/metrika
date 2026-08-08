@@ -1,0 +1,38 @@
+{
+  "name": "@metrika/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./rls": "./src/rls.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "lint": "eslint . --max-warnings=0",
+    "test:unit": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "generate": "prisma generate",
+    "seed": "tsx prisma/seed.ts",
+    "reset": "tsx scripts/reset.ts",
+    "studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.6.0"
+  },
+  "devDependencies": {
+    "@metrika/eslint-config": "workspace:*",
+    "@metrika/typescript-config": "workspace:*",
+    "@types/node": "^22.14.0",
+    "prisma": "^6.6.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.0"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

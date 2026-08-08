@@ -1,0 +1,23 @@
+// Metrika Prisma schema.
+// Phase 0: health-check table only. Phase 1 adds identity.
+// RLS helper functions and the app.current_org_id convention are
+// established in the initial migration (prisma/migrations/).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Health check probe target. Phase 0 only.
+model HealthCheck {
+  id        String   @id @default(uuid()) @db.Uuid
+  probedAt  DateTime @default(now())
+  component String
+
+  @@map("health_check")
+}
