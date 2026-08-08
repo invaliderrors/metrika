@@ -446,6 +446,124 @@ describe('canonicalJson', () => {
     expect(getTrapCalls).toBe(0);
   });
 
+  // --- Fix round 2: accessor properties on array INDICES (Finding 1, Critical) ---
+  //
+  // Fix round 1 applied the descriptor-based accessor check to the object
+  // branch but left the array branch reading elements via `arr[i]`, i.e.
+  // `[[Get]]` — the exact same defect class the object-branch fix was meant
+  // to close, just on the other container type. `number[]` is a well-typed
+  // `CanonicalValue`; no cast, no Proxy needed to reach this.
+
+  it('rejects an accessor (getter) defined on an array index without ever invoking it', () => {
+    let calls = 0;
+    const arr: number[] = [];
+    Object.defineProperty(arr, 0, {
+      get() {
+        calls++;
+        return calls;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    expect(() => canonicalJson(arr)).toThrow(CanonicalizationError);
+    // Same discipline as the object case: detection must happen via the
+    // property descriptor, never by reading (and thereby invoking) the value.
+    expect(calls).toBe(0);
+  });
+
+  it('rejects a setter-only accessor defined on an array index', () => {
+    const arr: number[] = [];
+    Object.defineProperty(arr, 0, {
+      set: (_v: unknown) => undefined,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(() => canonicalJson(arr)).toThrow(CanonicalizationError);
+  });
+
+  it('produces stable output for a Proxy wrapping a plain array, and never triggers its get trap', () => {
+    let getTrapCalls = 0;
+    const target = [1, 2, 3];
+    const proxy = new Proxy(target, {
+      get(t, prop, receiver): unknown {
+        getTrapCalls++;
+        return Reflect.get(t, prop, receiver) as unknown;
+      },
+    });
+    const first = canonicalJson(proxy);
+    const second = canonicalJson(proxy);
+    expect(first).toBe(second);
+    expect(first).toBe('[1,2,3]');
+    // Mirrors the object-Proxy test above: descriptor-based array access
+    // must not trigger the `get` trap either. Fix round 1's JSDoc claimed
+    // this already held for "a Proxy's get trap" without qualifying it to
+    // objects only — this test is what makes that claim true for arrays too.
+    expect(getTrapCalls).toBe(0);
+  });
+
+  it('rejects an array-like Proxy whose length descriptor is misreported rather than silently truncating to []', () => {
+    // The length is read via `Object.getOwnPropertyDescriptor(arr, 'length')`
+    // rather than `arr.length` specifically so a Proxy cannot make the array
+    // branch perform a `[[Get]]`. That means an adversarial Proxy overriding
+    // the `getOwnPropertyDescriptor` trap itself — not `get` — can still
+    // misreport `length`. This is exactly the deliberately adversarial Proxy
+    // case documented as a known, accepted limit: it is not silently treated
+    // as an empty array (which would itself be a collision with a genuine
+    // `[]`), it throws.
+    //
+    // The reported descriptor must keep `configurable: false` — array
+    // `length` really is non-configurable, and a Proxy is not permitted to
+    // lie about that invariant (the engine throws a native `TypeError` if it
+    // tries). `length` is writable, though, so the invariant does permit
+    // reporting a different `value` for it, which is what this test does.
+    const target: number[] = [1, 2, 3];
+    const proxy = new Proxy(target, {
+      getOwnPropertyDescriptor(t, prop) {
+        if (prop === 'length') {
+          return { value: 'not-a-number', writable: true, enumerable: false, configurable: false };
+        }
+        return Reflect.getOwnPropertyDescriptor(t, prop);
+      },
+    });
+    expect(() => canonicalJson(proxy)).toThrow(CanonicalizationError);
+  });
+
+  // --- Fix round 2: the `enumerable` filter is load-bearing (Finding 2, Important) ---
+  //
+  // `Object.getOwnPropertyDescriptors` includes non-enumerable own
+  // properties, which `Object.entries` (the pre-round-1 access path) never
+  // did. Without the `.filter(([, d]) => d.enumerable)` line, a non-enumerable
+  // own property would leak into the output where it was previously and
+  // correctly absent — silently changing the hash of any object carrying one.
+
+  it('drops a non-enumerable own property, matching pre-fix Object.entries behaviour', () => {
+    const withHidden: Record<string, unknown> = { a: 1 };
+    Object.defineProperty(withHidden, 'hidden', {
+      value: 'should not appear',
+      enumerable: false,
+      configurable: true,
+    });
+    expect(canonicalJson(withHidden as never)).toBe('{"a":1}');
+  });
+
+  // --- Fix round 2: documented, pre-existing, unchanged behaviours ---
+  //
+  // Both were already true before fix round 1 and are not defects — they
+  // just belong in the JSDoc alongside the other documented normalisations
+  // so the comment describes what the function actually does.
+
+  it('drops extra non-index own properties attached to an array', () => {
+    const withExtra = Object.assign([1, 2], { foo: 'bar' });
+    expect(canonicalJson(withExtra)).toBe(canonicalJson([1, 2]));
+  });
+
+  it('drops symbol-keyed own properties', () => {
+    const sym = Symbol('hidden');
+    const withSymbol: Record<string, unknown> = { a: 1 };
+    (withSymbol as Record<string | symbol, unknown>)[sym] = 'should not appear';
+    expect(canonicalJson(withSymbol as never)).toBe('{"a":1}');
+  });
+
   // --- Fix round 1: -0 (Finding 4, minor — documented, not changed) ---
   //
   // `(-0).toString() === '0'`, same as `JSON.stringify(-0) === '0'`. This is

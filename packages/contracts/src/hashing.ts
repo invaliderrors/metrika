@@ -58,16 +58,28 @@ const MAX_DEPTH = 1000;
  * explicit per-index check, `[]` and `new Array(1)` would serialise
  * identically. A hole is rejected the same way an explicit `undefined` array
  * element already is, since both read as `undefined` and are otherwise
- * indistinguishable.
+ * indistinguishable. Extra own properties attached to an array outside its
+ * index range (e.g. `Object.assign([1, 2], {foo: 'bar'})`) are not
+ * serialised — only indices `0` to `length - 1` are — and any symbol-keyed
+ * own property, on an array or a plain object, is silently dropped, the same
+ * as `JSON.stringify`: symbol keys are never visited by `Object.entries` (nor
+ * by `Object.keys`/`Object.values`), regardless of what produced the object.
  *
- * Only own data properties are serialised. An accessor (`get`/`set`) is
- * rejected — via `Object.getOwnPropertyDescriptors`, never invoked — rather
- * than read, because invoking it could return a different value on every
- * call, making one logical object hash differently each time. Detecting
- * accessors this way, instead of through `Object.entries`/bracket access,
- * also means a `Proxy`'s `get` trap is never triggered, so a proxy that would
- * otherwise return different values per read cannot destabilise the hash
- * through that path either.
+ * Only own data properties are serialised, for both object values and array
+ * elements. An accessor (`get`/`set`) is rejected — via
+ * `Object.getOwnPropertyDescriptor(s)`, never invoked — rather than read,
+ * because invoking it could return a different value on every call, making
+ * one logical value hash differently each time. Detecting accessors this
+ * way, instead of through `Object.entries`/bracket access, also means a
+ * `Proxy`'s `get` trap is never triggered — by reading a property OR an array
+ * index OR an array's `length` — so a proxy that would otherwise return
+ * different values per read cannot destabilise the hash through that path.
+ * This is a defence against a proxy overriding `get`, specifically; a proxy
+ * that instead overrides `getOwnPropertyDescriptor` or `ownKeys` themselves
+ * to report different descriptors or key sets on each call is a known,
+ * accepted limit — closing that would mean distrusting the descriptor
+ * protocol itself, which is where this module's inspection necessarily
+ * bottoms out. No realistic manufacturing input constructs such a proxy.
  *
  * Nesting deeper than {@link MAX_DEPTH} — including a circular reference — is
  * rejected as `CanonicalizationError` rather than being left to surface as a
@@ -111,12 +123,44 @@ function serialize(value: unknown, path: string, depth: number): string {
 
   if (Array.isArray(value)) {
     const arr = value as readonly unknown[];
+    // Reading `.length` directly (`arr.length`) is itself a `[[Get]]`, which
+    // invokes a Proxy's `get` trap exactly as reading an element would — so
+    // the length is read via its own property descriptor too. Without this,
+    // every element could go through `Object.getOwnPropertyDescriptor` and
+    // the array branch would still perform one `[[Get]]` per serialise call,
+    // leaving a narrow gap in the "never invokes `[[Get]]`" guarantee below.
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(arr, 'length');
+    if (typeof lengthDescriptor?.value !== 'number') {
+      // Unreachable for a real array, and for a Proxy wrapping one that
+      // doesn't override `getOwnPropertyDescriptor` — every array has an own
+      // numeric `length`. A Proxy that overrides that trap specifically to
+      // misreport it is the deliberately adversarial case documented on
+      // `canonicalJson` as a known, accepted limit; failing loudly here
+      // rather than silently treating it as an empty array avoids that
+      // silent-collision case being worse than this thrown error.
+      throw new CanonicalizationError(`Array-like value at ${path} has no numeric length`);
+    }
+    const length = lengthDescriptor.value;
     const items: string[] = [];
-    for (let i = 0; i < arr.length; i++) {
-      if (!Object.hasOwn(arr, i)) {
+    for (let i = 0; i < length; i++) {
+      // `Object.getOwnPropertyDescriptor`, not bracket access (`arr[i]`):
+      // reading an index via `[[Get]]` invokes an accessor defined on that
+      // index (or a Proxy's `get` trap) the same way bracket access on an
+      // object property would — the array branch needs the identical
+      // discipline as the object branch below, for the identical reason. A
+      // missing descriptor is the hole case (replacing a separate
+      // `Object.hasOwn` lookup with this one); a descriptor present but
+      // lacking `value` is the accessor case.
+      const descriptor = Object.getOwnPropertyDescriptor(arr, i);
+      if (descriptor === undefined) {
         throw new CanonicalizationError(`Sparse array hole at ${path}[${i.toString()}]`);
       }
-      items.push(serialize(arr[i], `${path}[${i.toString()}]`, depth + 1));
+      if (!('value' in descriptor)) {
+        throw new CanonicalizationError(
+          `Accessor property at ${path}[${i.toString()}]; only data properties are supported`,
+        );
+      }
+      items.push(serialize(descriptor.value as unknown, `${path}[${i.toString()}]`, depth + 1));
     }
     return `[${items.join(',')}]`;
   }
