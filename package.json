@@ -1,0 +1,41 @@
+{
+  "name": "metrika",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint -- --fix",
+    "format": "prettier --write . && cd apps/workers && uv run ruff format .",
+    "format:check": "prettier --check . && cd apps/workers && uv run ruff format --check .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test:unit test:integration",
+    "test:unit": "turbo run test:unit",
+    "test:integration": "turbo run test:integration",
+    "test:e2e": "turbo run test:e2e",
+    "db:migrate": "pnpm --filter @metrika/database migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @metrika/database migrate:deploy",
+    "db:generate": "pnpm --filter @metrika/database generate",
+    "db:seed": "pnpm --filter @metrika/database seed",
+    "db:reset": "pnpm --filter @metrika/database reset",
+    "db:studio": "pnpm --filter @metrika/database studio",
+    "contracts:emit": "pnpm --filter @metrika/contracts emit:json-schema && pnpm --filter @metrika/contracts emit:pydantic",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.0",
+    "@commitlint/cli": "^19.8.0",
+    "@commitlint/config-conventional": "^19.8.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.1.0",
+    "prettier": "3.5.3",
+    "prettier-plugin-tailwindcss": "0.6.11",
+    "turbo": "^2.5.4"
+  }
+}

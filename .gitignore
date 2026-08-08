@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Builds
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# Turbo
+.turbo/
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Prisma
+packages/database/prisma/migrations/migration_lock.toml.bak
+
+# Test/coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+apps/workers/.venv/
+
+# Misc
+.cache/
+.vercel
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Husky
+.husky/_
