@@ -1,5 +1,17 @@
 {
   "extends": "@metrika/typescript-config/next.json",
+  "compilerOptions": {
+    // The `@/*` alias shadcn requires. `shadcn init` refuses to run without it
+    // ("Could not find valid path aliases or package imports for init") and the
+    // components it copies in import their siblings and `cn` through it, so this
+    // is part of the component vendoring contract rather than a style choice.
+    //
+    // No `baseUrl`: since TypeScript 4.4 a `paths` entry resolves relative to the
+    // directory holding the tsconfig that declares it, and adding `baseUrl` would
+    // additionally make every bare specifier resolvable against `src/`, which
+    // silently shadows node_modules.
+    "paths": { "@/*": ["./src/*"] }
+  },
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",

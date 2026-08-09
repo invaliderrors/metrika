@@ -14,19 +14,25 @@
   },
   "dependencies": {
     "@metrika/contracts": "workspace:*",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
     "next": "16.3.0",
     "next-intl": "4.13.5",
+    "radix-ui": "1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "tailwind-merge": "3.6.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@metrika/eslint-config": "workspace:*",
     "@metrika/typescript-config": "workspace:*",
+    "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "eslint": "10.8.0",
+    "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "vitest": "4.1.10"
   }
