@@ -1,6 +1,19 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  /**
+   * The `@/*` alias `tsconfig.json` declares, restated for Vitest.
+   *
+   * Vite does not read `compilerOptions.paths`, so without this entry the first
+   * test to import `@/lib/cn` fails to resolve at runtime while `tsc` is
+   * perfectly happy — a green typecheck and a red test suite, for a path that
+   * works in `next build`. Both files have to move together; there is no third
+   * place that derives one from the other.
+   */
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   test: {
     include: ['test/**/*.test.ts'],
     environment: 'node',
