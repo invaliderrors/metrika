@@ -1,6 +1,5 @@
-import type { IncomingHttpHeaders } from 'node:http';
 import { Logger } from '@nestjs/common';
-import type { FastifyError } from 'fastify';
+import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { frameworkErrorResponse, internalErrorResponse } from './error-response.js';
 import { normaliseRequestId } from '../request-context/request-context.js';
 import { REQUEST_ID_HEADER } from '../request-context/request-context.middleware.js';
@@ -8,27 +7,19 @@ import { REQUEST_ID_HEADER } from '../request-context/request-context.middleware
 const logger = new Logger('FrameworkError');
 
 /**
- * The request and reply are typed by what this handler TOUCHES rather than as
- * `FastifyRequest`/`FastifyReply`, and that is load-bearing rather than
- * fastidious. Fastify declares `frameworkErrors` as a GENERIC function type
- * whose request parameter is `FastifyRequest<RequestGenericInterface, …>`, while
- * `FastifyRequest`'s own default first type argument is `RouteGenericInterface`
- * — so a handler annotated with the plain aliases is not assignable to the hook
- * (TS2322), and an inline arrow gets no contextual type at all because
- * `FastifyAdapter`'s constructor takes a UNION of option shapes (TS7006).
- * Narrow structural parameters are contravariantly satisfied by the real
- * objects, so this function can simply be passed by reference — and they make
- * the unit test a plain object literal instead of a cast.
+ * Passed to Fastify's `frameworkErrors` hook BY REFERENCE, with no type
+ * assertion — worth stating, because it did not compile that way until the two
+ * Fastify copies in this tree were deduplicated. `apps/api` pinned 5.6.1 while
+ * `@nestjs/platform-fastify@11.1.28` resolved 5.10.0, so these
+ * identically-named types came from different packages and were not assignable
+ * to one another; the diagnostic named both `.pnpm` paths, which is the only
+ * reason it was diagnosable at all.
+ *
+ * RE-MEASURED after the dedupe: the plain `FastifyRequest`/`FastifyReply`
+ * annotation is assignable to the hook, and the assertion that used to stand at
+ * the wiring point in bootstrap.ts is gone. If it ever comes back, look for a
+ * second `fastify` under node_modules/.pnpm before anything else.
  */
-export interface FrameworkErrorRequest {
-  readonly headers: IncomingHttpHeaders;
-}
-
-export interface FrameworkErrorReply {
-  statusCode: number;
-  header: (name: string, value: string) => unknown;
-  send: (payload: unknown) => unknown;
-}
 
 /**
  * The failures that never reach the exception filter, because find-my-way raises
@@ -56,8 +47,8 @@ export interface FrameworkErrorReply {
  */
 export function handleFrameworkError(
   error: FastifyError,
-  request: FrameworkErrorRequest,
-  reply: FrameworkErrorReply,
+  request: FastifyRequest,
+  reply: FastifyReply,
 ): void {
   const requestId = normaliseRequestId(request.headers[REQUEST_ID_HEADER]);
   reply.header(REQUEST_ID_HEADER, requestId);

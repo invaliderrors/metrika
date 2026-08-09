@@ -4,33 +4,38 @@
 // matter most — a 5xx, and an error with no `statusCode` at all — are reachable
 // only from here.
 import { Logger } from '@nestjs/common';
-import type { FastifyError } from 'fastify';
+import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  handleFrameworkError,
-  type FrameworkErrorReply,
-} from '../src/shared/errors/framework-error.handler.js';
+import { handleFrameworkError } from '../src/shared/errors/framework-error.handler.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * The handler takes real `FastifyRequest`/`FastifyReply` — that annotation is
+ * what lets `bootstrap.ts` pass it to the hook with no type assertion — so the
+ * fixtures are cast rather than structurally typed. The cast is confined to
+ * these two factories, and what it stands in for is exercised for real by
+ * framework-error.integration.test.ts against the composed app.
+ */
 interface Sent {
-  readonly reply: FrameworkErrorReply;
+  readonly reply: FastifyReply;
   readonly headers: Map<string, string>;
   payload: unknown;
 }
 
 function fakeReply(): Sent {
   const headers = new Map<string, string>();
-  const sent: Sent = {
-    headers,
-    payload: undefined,
-    reply: {
-      statusCode: 0,
-      header: (name: string, value: string) => headers.set(name, value),
-      send: (payload: unknown) => (sent.payload = payload),
-    },
+  const reply = {
+    statusCode: 0,
+    header: (name: string, value: string) => headers.set(name, value),
+    send: (payload: unknown) => (sent.payload = payload),
   };
+  const sent: Sent = { headers, payload: undefined, reply: reply as unknown as FastifyReply };
   return sent;
+}
+
+function fakeRequest(headers: Record<string, string> = {}): FastifyRequest {
+  return { headers } as unknown as FastifyRequest;
 }
 
 function fastifyError(message: string, statusCode?: number): FastifyError {
@@ -51,7 +56,7 @@ afterEach(() => {
 describe('handleFrameworkError', () => {
   it('keeps a 4xx at its own status and names the mapped code', () => {
     const sent = fakeReply();
-    handleFrameworkError(fastifyError('too big', 413), { headers: {} }, sent.reply);
+    handleFrameworkError(fastifyError('too big', 413), fakeRequest(), sent.reply);
 
     expect(sent.reply.statusCode).toBe(413);
     expect((sent.payload as Envelope).error.code).toBe('FILE_TOO_LARGE');
@@ -61,7 +66,7 @@ describe('handleFrameworkError', () => {
     // The status collapse, at the unit boundary: 415 has no row, so it takes the
     // fallback CODE but must not take the fallback's 400.
     const sent = fakeReply();
-    handleFrameworkError(fastifyError('unsupported', 415), { headers: {} }, sent.reply);
+    handleFrameworkError(fastifyError('unsupported', 415), fakeRequest(), sent.reply);
 
     expect(sent.reply.statusCode).toBe(415);
     expect((sent.payload as Envelope).error.code).toBe('VALIDATION_FAILED');
@@ -71,7 +76,7 @@ describe('handleFrameworkError', () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const sent = fakeReply();
 
-    handleFrameworkError(fastifyError('upstream pod slicer-7f2', 503), { headers: {} }, sent.reply);
+    handleFrameworkError(fastifyError('upstream pod slicer-7f2', 503), fakeRequest(), sent.reply);
 
     expect(sent.reply.statusCode).toBe(500);
     const body = sent.payload as Envelope;
@@ -84,7 +89,7 @@ describe('handleFrameworkError', () => {
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const sent = fakeReply();
 
-    handleFrameworkError(fastifyError('no status at all'), { headers: {} }, sent.reply);
+    handleFrameworkError(fastifyError('no status at all'), fakeRequest(), sent.reply);
 
     expect(sent.reply.statusCode).toBe(500);
     expect((sent.payload as Envelope).error.code).toBe('INTERNAL_ERROR');
@@ -92,7 +97,7 @@ describe('handleFrameworkError', () => {
 
   it('puts the same minted id on the header and in the body', () => {
     const sent = fakeReply();
-    handleFrameworkError(fastifyError('bad url', 400), { headers: {} }, sent.reply);
+    handleFrameworkError(fastifyError('bad url', 400), fakeRequest(), sent.reply);
 
     const { requestId } = (sent.payload as Envelope).error;
     expect(requestId).toMatch(UUID);
@@ -103,7 +108,7 @@ describe('handleFrameworkError', () => {
     const echoed = fakeReply();
     handleFrameworkError(
       fastifyError('bad url', 400),
-      { headers: { 'x-request-id': 'client-id' } },
+      fakeRequest({ 'x-request-id': 'client-id' }),
       echoed.reply,
     );
     expect((echoed.payload as Envelope).error.requestId).toBe('client-id');
@@ -111,7 +116,7 @@ describe('handleFrameworkError', () => {
     const forged = fakeReply();
     handleFrameworkError(
       fastifyError('bad url', 400),
-      { headers: { 'x-request-id': 'unknown' } },
+      fakeRequest({ 'x-request-id': 'unknown' }),
       forged.reply,
     );
     expect((forged.payload as Envelope).error.requestId).toMatch(UUID);
