@@ -188,7 +188,7 @@ setupMinutes Int, failureRateEstimate Decimal(6,4),
 slicerProfileKey String, slicerProfilePayload Json
 ```
 
-`slicerProfilePayload` is the full PrusaSlicer `.ini` content as structured JSON, stored on the version so a slice is reproducible even if the profile repository changes.
+`slicerProfilePayload` is the full OrcaSlicer profile content — machine, process and filament — as structured JSON, stored on the version so a slice is reproducible even if the profile repository changes.
 
 **`PrintProfile`** (identity) + **`PrintProfileVersion`** — the customer-facing quality preset ("Borrador", "Estándar", "Alta definición", "Maqueta fina"). Maps a friendly name to layer height, perimeters, top/bottom layers, infill density and pattern, support strategy. **Customers select a `PrintProfile`; they never see raw slicer parameters.** Advanced parameters are internal and admin-editable.
 
@@ -217,7 +217,7 @@ The unique constraint means reconfiguring to an identical setup reuses the row, 
 
 ```
 id, printConfigurationId, sliceInputDerivativeId,
-slicerEngine   enum PRUSA_SLICER | CURA_ENGINE | FAKE
+slicerEngine   enum ORCA_SLICER | CURA_ENGINE | FAKE
 slicerVersion  String        // "2.8.1+build-abc123" — image digest derived
 cacheKey       String @db.Char(64)  @unique   ← the whole idempotency story
 state          SliceJobState

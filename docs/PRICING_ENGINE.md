@@ -266,7 +266,7 @@ stateDiagram-v2
 
 ## 10. Calibration — closing the loop with reality
 
-The pricing engine prices against _estimates_ from PrusaSlicer. Estimates drift from reality, particularly for complex parts, and drift in that direction is invisible until margin has already been lost. This is the highest-probability commercial failure mode in the business.
+The pricing engine prices against _estimates_ from the slicer. Estimates drift from reality, particularly for complex parts, and drift in that direction is invisible until margin has already been lost. This is the highest-probability commercial failure mode in the business.
 
 The architecture's answer:
 
