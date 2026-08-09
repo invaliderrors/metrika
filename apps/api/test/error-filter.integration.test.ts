@@ -25,6 +25,7 @@ import {
   HttpStatus,
   InternalServerErrorException,
   Module,
+  Param,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -71,6 +72,16 @@ class BoomController {
   @Get('http-429')
   httpThrottled(): never {
     throw new HttpException('Demasiadas solicitudes', HttpStatus.TOO_MANY_REQUESTS);
+  }
+
+  /**
+   * Any framework status on demand. This is how the branch is driven at the
+   * statuses that have no row — 405, 409, 415, 422 — which is where the status
+   * collapse was measured.
+   */
+  @Get('http/:status')
+  httpStatus(@Param('status') status: string): never {
+    throw new HttpException('El framework ha rechazado la solicitud', Number.parseInt(status, 10));
   }
 }
 
@@ -212,13 +223,75 @@ describe('DomainExceptionFilter', () => {
     expect(body.error.requestId).not.toBe('');
   });
 
-  it('never puts a code on the wire at a status the map disagrees with', async () => {
-    // The invariant the per-branch assertions above cannot state: for EVERY
-    // response this filter produces, the published mapping table and the wire
-    // agree on both status and retryable. `VALIDATION_FAILED` used to ship at
-    // 404, 500 and 503 while the table pinned it at 400 — a contradiction that
-    // no test over the table alone could see, because the table was right and
-    // the responses were wrong.
+  it('keeps a framework rejection at the status the framework chose', async () => {
+    // MEASURED before this: 415 → 400, 409 → 400, 422 → 400, 405 → 400. Two of
+    // those are statuses this API's own contract table uses heavily, and none of
+    // it needs application code to throw anything — `POST` with
+    // `content-type: application/x-tar` and Fastify raises the 415 itself. When
+    // the first upload endpoint lands, 413 and 415 are precisely the two
+    // statuses a client branches on.
+    //
+    // These four have no row in FRAMEWORK_ERROR_CODE, so they carry the fallback
+    // code at their own status — the one sanctioned place where a code and its
+    // mapped status differ.
+    for (const status of [405, 409, 415, 422]) {
+      const response = await fetch(`${baseUrl}/boom/http/${String(status)}`);
+      expect(response.status, `thrown ${String(status)}`).toBe(status);
+      const body = (await response.json()) as ErrorBody;
+      expect(body.error.code, `thrown ${String(status)}`).toBe('VALIDATION_FAILED');
+    }
+  });
+
+  it('serves every mapped framework status with its own code, over HTTP', async () => {
+    // Spelled out rather than iterated from FRAMEWORK_ERROR_CODE, because a test
+    // that reads the table cannot see a row DELETED from it. MEASURED: removing
+    // `413: 'FILE_TOO_LARGE'` or `401: 'UNAUTHENTICATED'` left both suites green
+    // at exit 0 while the wire silently degraded to VALIDATION_FAILED.
+    const rows = [
+      [400, 'VALIDATION_FAILED'],
+      [401, 'UNAUTHENTICATED'],
+      [403, 'INSUFFICIENT_PERMISSIONS'],
+      [404, 'ROUTE_NOT_FOUND'],
+      [413, 'FILE_TOO_LARGE'],
+      [429, 'RATE_LIMITED'],
+    ] as const;
+
+    for (const [status, code] of rows) {
+      const response = await fetch(`${baseUrl}/boom/http/${String(status)}`);
+      expect(response.status, `${String(status)} → ${code}`).toBe(status);
+      const body = (await response.json()) as ErrorBody;
+      expect(body.error.code, `${String(status)} → ${code}`).toBe(code);
+    }
+  });
+
+  it('puts a DOMAIN-decided code at the status the map pins', async () => {
+    // Where the code is the fact and the status is its published consequence.
+    // `VALIDATION_FAILED` used to ship at 404, 500 and 503 while the table
+    // pinned it at 400 — a contradiction no test over the table alone could
+    // see, because the table was right and the responses were wrong.
+    //
+    // Framework rejections are deliberately NOT in this list: there the status
+    // is the fact. That split is the whole point of the two tests above.
+    const paths = [
+      '/boom/domain',
+      '/boom/retryable',
+      '/boom/unexpected',
+      '/boom/http-500',
+      '/boom/http-503',
+    ];
+
+    for (const path of paths) {
+      const response = await fetch(`${baseUrl}${path}`);
+      const body = (await response.json()) as ErrorBody;
+      const code = DomainErrorCode.parse(body.error.code);
+      expect(DOMAIN_ERROR_RESPONSE[code].status, `${path} → ${code}`).toBe(response.status);
+    }
+  });
+
+  it('gives every response the map’s retryable for its code, whoever decided the status', async () => {
+    // This one holds across BOTH kinds. `retryable` is a property of the code
+    // alone — whether an identical retry could plausibly succeed — so nothing
+    // about who chose the status changes it.
     const paths = [
       '/boom/domain',
       '/boom/retryable',
@@ -226,6 +299,7 @@ describe('DomainExceptionFilter', () => {
       '/boom/http-500',
       '/boom/http-503',
       '/boom/http-429',
+      '/boom/http/415',
       '/no-such-route',
     ];
 
@@ -235,9 +309,7 @@ describe('DomainExceptionFilter', () => {
       // Parsed, not cast: this also asserts every code on the wire is a member
       // of the closed union.
       const code = DomainErrorCode.parse(body.error.code);
-      const mapped = DOMAIN_ERROR_RESPONSE[code];
-      expect(mapped.status, `${path} → ${code}`).toBe(response.status);
-      expect(mapped.retryable, `${path} → ${code}`).toBe(body.error.retryable);
+      expect(DOMAIN_ERROR_RESPONSE[code].retryable, `${path} → ${code}`).toBe(body.error.retryable);
     }
   });
 });

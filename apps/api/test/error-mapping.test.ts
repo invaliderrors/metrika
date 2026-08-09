@@ -55,6 +55,27 @@ describe('DOMAIN_ERROR_RESPONSE', () => {
 });
 
 describe('FRAMEWORK_ERROR_CODE', () => {
+  it('has exactly these rows, spelled out', () => {
+    // A change detector, and the ONLY thing that can see a DELETED row. Every
+    // other test here and over HTTP iterates the table, and iteration cannot
+    // observe a row that is not there — MEASURED, deleting `413` or `401` left
+    // unit and integration green, while a 2 MB body moved from
+    // `413 FILE_TOO_LARGE` to `400 VALIDATION_FAILED` on the wire.
+    //
+    // Deleting a row is not a neutral act: the status still travels correctly,
+    // but the code degrades to VALIDATION_FAILED, which is the code a client
+    // branches on. Changing this list is therefore a deliberate contract
+    // decision, which is exactly what a change detector is for.
+    expect(FRAMEWORK_ERROR_CODE).toEqual({
+      400: 'VALIDATION_FAILED',
+      401: 'UNAUTHENTICATED',
+      403: 'INSUFFICIENT_PERMISSIONS',
+      404: 'ROUTE_NOT_FOUND',
+      413: 'FILE_TOO_LARGE',
+      429: 'RATE_LIMITED',
+    });
+  });
+
   it('names, for every status, a code the response map pins to that same status', () => {
     // The table exists so that choosing a code and choosing a status are ONE
     // decision. Nothing in the type system enforces the agreement — the key is a
@@ -66,6 +87,9 @@ describe('FRAMEWORK_ERROR_CODE', () => {
   });
 
   it('has a fallback that is itself consistent, and is a 4xx', () => {
+    // Its MAPPED status is 400, but a framework rejection travels at the
+    // framework's status — so this code, alone, may appear at any 4xx. The
+    // invariant tests over responses are split along exactly that line.
     const fallback = DOMAIN_ERROR_RESPONSE[FRAMEWORK_FALLBACK_CODE];
     expect(fallback.status).toBe(400);
     expect(fallback.retryable).toBe(false);

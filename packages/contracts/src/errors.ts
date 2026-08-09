@@ -1,11 +1,17 @@
 import { z } from 'zod';
 
 /**
- * The closed set of domain failures. Mapped to HTTP status codes at exactly
- * one boundary (the API's exception filter) — a known domain failure must
- * never surface as a generic 500. Closed deliberately: this is not meant to
- * be extended casually, since every new code needs a home in that mapping
+ * The closed set of failures the API reports. Mapped to HTTP status codes at
+ * exactly one boundary (the API's exception filter) — a known domain failure
+ * must never surface as a generic 500. Closed deliberately: this is not meant
+ * to be extended casually, since every new code needs a home in that mapping
  * and, usually, a specific UI treatment.
+ *
+ * All but one describe something the DOMAIN decided. `ROUTE_NOT_FOUND` is the
+ * exception and says so at its own entry: it describes a rejection made before
+ * any domain code ran. It lives in this union rather than a second one because
+ * `ApiErrorResponse.error.code` is a single field, and giving clients two unions
+ * to branch on would cost every one of them a discriminator for no gain.
  */
 export const DomainErrorCode = z.enum([
   'VALIDATION_FAILED',

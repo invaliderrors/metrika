@@ -50,6 +50,18 @@ jobs:
       # break" into "silently reports it green". Turbo's `outputs` is not a substitute —
       # MEASURED, turbo does not clean declared outputs before a cache-miss run, so a
       # stale `*.tsbuildinfo` survives and `tsc -b` skips exactly as before.
+      #
+      # `--force` does NOT reach the `build` task, which skips for the same reason:
+      # MEASURED, `pnpm build` exits 0 on a tree that does not compile and never
+      # touches apps/api/dist. Turbo is not what saves us there — it ran the task as a
+      # cache MISS and `tsc -b` itself decided there was nothing to do. What keeps that
+      # harmless today is narrower and will not hold forever: apps/api's emitted JS
+      # inlines nothing from contracts, and no package re-exports a workspace
+      # dependency's types in its own `.d.ts`. The day packages/database re-exports a
+      # contracts type — it already declares the dependency — apps/api's
+      # `typecheck --force` will be checking against a stale
+      # packages/database/dist/*.d.ts, which is this whole problem reopening one level
+      # upstream, where `--force` cannot see it.
       - name: Typecheck
         run: pnpm typecheck
 

@@ -46,23 +46,28 @@ export const DOMAIN_ERROR_RESPONSE: Readonly<Record<DomainErrorCode, DomainError
 };
 
 /**
- * The code to report for an `HttpException` the FRAMEWORK threw — an unmatched
- * route, a guard rejecting a request, a body over the configured limit — where
- * there is no `DomainError` to read a code from.
+ * The code to report for a rejection the FRAMEWORK made — an unmatched route, a
+ * guard, a body over the configured limit, a content type Fastify will not parse
+ * — where there is no `DomainError` to read a code from.
  *
- * Keyed by status, and every entry must name a code the table above pins to that
- * SAME status, so that choosing a code and choosing a status are one decision
- * rather than two that can drift. `error-mapping.test.ts` asserts exactly that,
- * because nothing in the type system does.
+ * The response keeps the framework's own status; this table decides only the
+ * code. Every row must therefore name a code `DOMAIN_ERROR_RESPONSE` pins to
+ * that SAME status, so that the pair on the wire cannot contradict the published
+ * contract table. `error-mapping.test.ts` asserts that, because nothing in the
+ * type system does — the key is a `number` and the value a `DomainErrorCode`,
+ * and TypeScript will happily pair 404 with a code mapped to 400.
  *
- * A 4xx status absent from this table falls back to `VALIDATION_FAILED`, which
- * means the response goes out at 400 rather than at the framework's status: a
- * 415 is reported as "your request was rejected" instead of the more precise
- * "unsupported media type". That imprecision is deliberate and is the cheaper
- * side of the trade — the alternative is shipping a code at a status the
- * published contract table pins elsewhere, which is what this whole arrangement
- * exists to prevent. Add a row here when a status starts mattering enough to be
- * distinguished, and give it a code whose mapped status agrees.
+ * A 4xx absent from this table gets {@link FRAMEWORK_FALLBACK_CODE} at its own
+ * status, so `VALIDATION_FAILED` is the one code that may appear at any 4xx. See
+ * `frameworkErrorResponse` for why that is the honest reading and what the
+ * alternative measured.
+ *
+ * Two independent tests pin this table, on purpose: one asserts the exact set of
+ * rows longhand, and one drives each row over HTTP from a hardcoded list.
+ * Deleting a row is otherwise invisible — MEASURED, removing `413` left unit and
+ * integration green while a 2 MB body silently moved from `413 FILE_TOO_LARGE`
+ * to `400 VALIDATION_FAILED` — because a test that iterates the table cannot see
+ * a row that is not there.
  *
  * 5xx is deliberately absent: it never reaches this table. See the filter.
  */
@@ -75,5 +80,10 @@ export const FRAMEWORK_ERROR_CODE: Readonly<Record<number, DomainErrorCode>> = {
   429: 'RATE_LIMITED',
 };
 
-/** Used when {@link FRAMEWORK_ERROR_CODE} has no row for a 4xx status. */
+/**
+ * Used when {@link FRAMEWORK_ERROR_CODE} has no row for a 4xx status. It travels
+ * at that status, NOT at the 400 the map pins it to — the framework rejected the
+ * request before the domain saw it, so the status is the fact and the code is
+ * only a label.
+ */
 export const FRAMEWORK_FALLBACK_CODE = 'VALIDATION_FAILED' satisfies DomainErrorCode;

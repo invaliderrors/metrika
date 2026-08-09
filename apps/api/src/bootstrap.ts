@@ -3,9 +3,29 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module.js';
 import { DomainExceptionFilter } from './shared/errors/domain-exception.filter.js';
+import { handleFrameworkError } from './shared/errors/framework-error.handler.js';
 import { RequestContextMiddleware } from './shared/request-context/request-context.middleware.js';
 
 export const API_PREFIX = 'api/v1';
+
+/**
+ * Fastify's `frameworkErrors` hook type, taken from the FastifyAdapter's own
+ * constructor rather than by importing `FastifyServerOptions` from `fastify`.
+ *
+ * Not a flourish: there are TWO Fastify copies in this tree — `apps/api` depends
+ * on 5.6.1 and `@nestjs/platform-fastify@11.1.28` resolves 5.10.0 — so the
+ * identically-named types come from different packages and are not assignable to
+ * one another (TS2322 naming both `.pnpm/fastify@5.6.1/...` and
+ * `.pnpm/fastify@5.10.0/...`). Deriving the type from the adapter is what makes
+ * this correct WHICHEVER copy `apps/api` is pinned to. Deduplicating the two is
+ * the real fix and is a dependency decision, not this file's.
+ */
+type FrameworkErrorsHook = NonNullable<
+  Extract<
+    NonNullable<ConstructorParameters<typeof FastifyAdapter>[0]>,
+    { frameworkErrors?: unknown }
+  >['frameworkErrors']
+>;
 
 /**
  * One bootstrap, used by main.ts and by every integration test. Tests that
@@ -13,7 +33,31 @@ export const API_PREFIX = 'api/v1';
  * one, and wiring mistakes are the defect class this app is most exposed to.
  */
 export async function createApiApp(): Promise<NestFastifyApplication> {
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
+  // `frameworkErrors` catches what find-my-way raises BEFORE Nest's pipeline
+  // exists — a malformed percent-escape in the path, say. Those responses
+  // bypass both the exception filter and the request-context middleware, and
+  // MEASURED they went out in Fastify's own shape with no request id anywhere.
+  // See handleFrameworkError.
+  //
+  // `handleFrameworkError` cannot be made assignable to Fastify's declared hook
+  // type, and the assertion below is the whole of the workaround. MEASURED, all
+  // of these are TS2322: annotating the handler with `FastifyRequest`/
+  // `FastifyReply` (the hook's request is `FastifyRequest<RequestGeneric, …>`
+  // while the alias defaults to `RouteGenericInterface`), narrowing the
+  // parameters structurally, and making the handler generic over them. The
+  // irreducible part is `FastifyReply['send']`, typed `(...args: SendArgs<ReplyType>)`
+  // — a rest tuple that stays opaque until the hook's type parameters are
+  // instantiated, so nothing concrete satisfies it. An inline arrow gets TS7006
+  // instead, because `FastifyAdapter`'s constructor parameter is a UNION of
+  // option shapes and suppresses contextual typing.
+  //
+  // What the assertion claims is proved at runtime, not believed:
+  // test/framework-error.integration.test.ts drives a malformed URL through
+  // THIS bootstrap and asserts the envelope, the status, the absence of Fastify
+  // internals and the request id on both the body and the header.
+  const frameworkErrors = handleFrameworkError as FrameworkErrorsHook;
+  const adapter = new FastifyAdapter({ frameworkErrors });
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter);
   app.setGlobalPrefix(API_PREFIX, { exclude: ['health/live', 'health/ready', 'health/deep'] });
   app.useGlobalFilters(new DomainExceptionFilter());
 
