@@ -48,9 +48,9 @@ describe('tenant isolation, with the application check bypassed', () => {
     // against every other file sharing the container — a row from an
     // unrelated file belongs to a different, also-random organization id
     // and never matches this session's policy predicate, regardless of
-    // execution order. `.sort()` for the same reason every other multi-row
-    // assertion in this file sorts: safe today at one row, and stays safe
-    // if a future test in this describe block adds a second ORG_A row.
+    // execution order. `.sort()` is a no-op today (this org has exactly one
+    // row), kept so this stays safe if a future test in this describe block
+    // adds a second ORG_A row without anyone remembering to add it then.
     const labels = await withDatabase(async (db) =>
       withOrganizationContext(db, ORG_A, async (tx) =>
         (await tx.rlsProbe.findMany()).map((r) => r.label).sort(),
@@ -122,11 +122,10 @@ describe('tenant isolation, with the application check bypassed', () => {
 // exempt')` block (what the original task brief for this file asked for),
 // then a `describe('the table owner is a local superuser, not merely
 // RLS-exempt')` block in its place. Both are gone now — deleted, not
-// reframed — after a coordinator review (task-8-report.md, "Fix round 1")
-// found the second one passed for the wrong reason (it went red only
-// *collaterally*, when an attribute mutation happened to also break the
-// insert-rejection assertion above, never for the FORCE- or
-// superuser-related reason it claimed to test) and would go red the day
+// reframed — because the second one passed for the wrong reason: it went
+// red only *collaterally*, when an attribute mutation happened to also
+// break the insert-rejection assertion above, never for the FORCE- or
+// superuser-related reason it claimed to test. It would also go red the day
 // this harness's owner role stops being a bootstrap superuser — which would
 // be an improvement, and a test that punishes an improvement is pressure to
 // revert it, not a safeguard.
@@ -154,9 +153,9 @@ describe('tenant isolation, with the application check bypassed', () => {
 // packages/database/prisma/migrations/20260809024512_init/migration.sql.
 //
 // None of this leaves FORCE or WITH CHECK actually unverified against the
-// live, applied database, though — see the two describe blocks below, which
-// replace the deleted owner-connection tests with a strictly better proof:
-// reading Postgres's own catalog as `metrika_app`, which requires no
+// live, applied database, though — see the describe block immediately below,
+// which replaces the deleted owner-connection tests with a strictly better
+// proof: reading Postgres's own catalog as `metrika_app`, which requires no
 // privileged connection and, unlike a behavioural probe, cannot be fooled by
 // which role happens to be asking.
 describe('the applied database actually enforces FORCE and WITH CHECK — not just the migration source', () => {
@@ -187,19 +186,33 @@ describe('the applied database actually enforces FORCE and WITH CHECK — not ju
     // never touches the committed migration file. `pg_policies.with_check`
     // is NULL when a policy has no explicit WITH CHECK — even though reads
     // and writes still behave identically, because Postgres reuses `qual`
-    // (the USING expression) as the effective check in that case (see the
-    // Step 5 mutation evidence in task-8-report.md: a USING-only policy
-    // still rejects the cross-org insert, for exactly this reason). This
-    // assertion pins the *applied, catalog-visible* shape, not just the
-    // observed behaviour, so a future migration that silently drops the
-    // explicit WITH CHECK is caught even though nothing about tenant
-    // isolation would visibly break yet.
-    const [row] = await withDatabase(
+    // (the USING expression) as the effective check in that case (a
+    // USING-only policy still rejects the cross-org insert above, for
+    // exactly this reason — see the "cannot insert..." test, which stays
+    // green either way). This assertion pins the *applied, catalog-visible*
+    // shape, not just the observed behaviour, so a future migration that
+    // silently drops the explicit WITH CHECK is caught even though nothing
+    // about tenant isolation would visibly break yet.
+    //
+    // Filtered by `policyname`, not just `tablename`, and the row count is
+    // asserted BEFORE destructuring. Without this, a dropped policy makes
+    // `pg_policies` return zero rows: `const [row] = []` gives `row =
+    // undefined`, and `expect(undefined).not.toBeNull()` /
+    // `expect(undefined).toBe(undefined)` both pass — the exact vacuity
+    // shape this suite exists to catch, reproduced by an earlier version of
+    // this very assertion. (A second, differently-named policy on the same
+    // table would have the same problem via `[0]` on an unordered
+    // multi-row result; the `policyname` filter rules that out too, since
+    // at most one row can ever match it.)
+    const rows = await withDatabase(
       async (db) =>
         db.$queryRaw<{ qual: string; with_check: string | null }[]>`
-        SELECT qual, with_check FROM pg_policies WHERE tablename = 'RlsProbe'
+        SELECT qual, with_check FROM pg_policies
+        WHERE tablename = 'RlsProbe' AND policyname = 'RlsProbe_tenant_isolation'
       `,
     );
+    expect(rows).toHaveLength(1);
+    const [row] = rows;
     expect(row?.with_check).not.toBeNull();
     expect(row?.with_check).toBe(row?.qual);
   });
@@ -213,17 +226,20 @@ describe('the application role cannot read _prisma_migrations', () => {
     // would pass for the wrong reason too (a table that doesn't exist yet,
     // a typo'd name), so this asserts Prisma's own error code (`P2010`,
     // "raw query failed") AND the wrapped Postgres SQLSTATE (`42501`,
-    // insufficient_privilege) it carries in `meta.code` — the actual "rejection
-    // with the correct error code" CLAUDE.md asks a security-control fixture
-    // for. Verified directly against a live container before writing this
-    // assertion: `PrismaClientKnownRequestError { code: 'P2010', meta: {
-    // code: '42501', message: 'ERROR: permission denied for table
-    // _prisma_migrations' } }`.
+    // insufficient_privilege) it carries in `meta.code`. `42501` alone is not
+    // quite specific enough — Postgres raises the same SQLSTATE for
+    // `permission denied for schema public`, which is what a revoked
+    // `GRANT USAGE ON SCHEMA public` would produce instead of this
+    // migration's table-level REVOKE — so `meta.message` is pinned too,
+    // naming the table by name. Verified directly against a live container
+    // before writing this assertion: `PrismaClientKnownRequestError { code:
+    // 'P2010', meta: { code: '42501', message: 'ERROR: permission denied
+    // for table _prisma_migrations' } }`.
     await expect(
       withDatabase(async (db) => db.$queryRaw`SELECT 1 FROM "_prisma_migrations"`),
     ).rejects.toMatchObject({
       code: 'P2010',
-      meta: { code: '42501' },
+      meta: { code: '42501', message: 'ERROR: permission denied for table _prisma_migrations' },
     });
   });
 });
