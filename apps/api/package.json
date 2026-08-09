@@ -1,0 +1,32 @@
+{
+  "name": "@metrika/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "start": "node --env-file=../../.env dist/main.js",
+    "dev": "concurrently --kill-others --names tsc,api \"tsc -b tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --env-file=../../.env dist/main.js\"",
+    "test:unit": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@metrika/contracts": "workspace:*",
+    "@nestjs/common": "11.1.28",
+    "@nestjs/core": "11.1.28",
+    "@nestjs/platform-fastify": "11.1.28",
+    "fastify": "5.6.1",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@metrika/eslint-config": "workspace:*",
+    "@metrika/typescript-config": "workspace:*",
+    "@types/node": "24.13.3",
+    "eslint": "10.8.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}
