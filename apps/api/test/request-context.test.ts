@@ -1,7 +1,10 @@
+import 'reflect-metadata';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { Socket } from 'node:net';
 import { describe, expect, it } from 'vitest';
+import type { MiddlewareConsumer } from '@nestjs/common';
 import {
+  NO_REQUEST_ID,
   getRequestContext,
   getRequestId,
   normaliseRequestId,
@@ -11,6 +14,8 @@ import {
   REQUEST_ID_HEADER,
   RequestContextMiddleware,
 } from '../src/shared/request-context/request-context.middleware.js';
+import { RequestContextModule } from '../src/shared/request-context/request-context.module.js';
+import { AppModule } from '../src/app.module.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -42,6 +47,27 @@ describe('normaliseRequestId', () => {
   it('mints a different id on each call', () => {
     expect(normaliseRequestId(undefined)).not.toBe(normaliseRequestId(undefined));
   });
+
+  it('refuses to hand back the no-context sentinel, which is inside the character class', () => {
+    // Task 11 puts this value in every error body. If a client can obtain it,
+    // `requestId: "unknown"` stops meaning "no context was established" and
+    // starts also meaning "a client asked for that string" — two conditions
+    // that need very different responses from whoever reads the log.
+    expect(normaliseRequestId(NO_REQUEST_ID)).toMatch(UUID);
+    expect(normaliseRequestId('unknown')).toMatch(UUID);
+  });
+
+  it('refuses case variants of the sentinel — a log search for it is not case-sensitive', () => {
+    expect(normaliseRequestId('UNKNOWN')).toMatch(UUID);
+    expect(normaliseRequestId('Unknown')).toMatch(UUID);
+  });
+
+  it('still accepts an id that merely contains the sentinel', () => {
+    // The refusal is of the whole value, not a substring ban: narrowing the
+    // acceptable set further than the ambiguity requires would reject
+    // legitimate client ids for no gain.
+    expect(normaliseRequestId('unknown-device-42')).toBe('unknown-device-42');
+  });
 });
 
 describe('request context storage', () => {
@@ -56,7 +82,12 @@ describe('request context storage', () => {
   });
 
   it('reports "unknown" outside a scope rather than throwing — an error path must never fail on logging', () => {
-    expect(getRequestId()).toBe('unknown');
+    // The literal, pinned once. NO_REQUEST_ID is a published value: Task 11 puts
+    // it in error bodies and support conversations read it, so changing it is a
+    // contract change and has to fail here rather than pass silently because
+    // every assertion derives from the constant.
+    expect(NO_REQUEST_ID).toBe('unknown');
+    expect(getRequestId()).toBe(NO_REQUEST_ID);
   });
 
   it('does not leak out of the scope', () => {
@@ -180,5 +211,48 @@ describe('RequestContextMiddleware', () => {
     await Promise.all([drive('slow-request', 20), drive('fast-request', 0)]);
 
     expect(seen).toEqual(['fast-request', 'slow-request']);
+  });
+});
+
+describe('registration', () => {
+  it('keeps RequestContextModule out of AppModule — importing it double-registers the middleware', () => {
+    // The composed app registers the middleware once, globally, in bootstrap.ts,
+    // because it sets a global prefix and MiddlewareConsumer cannot escape one
+    // on platform-fastify. Importing the module as well is silent: MEASURED, the
+    // middleware then runs TWICE per request under /api/v1 — the outer run mints
+    // an id and the inner run replaces it — and lint, tsc and the whole
+    // integration suite stay green. Plan 0C's access log would be the first
+    // thing to notice, by recording a different id than the error body carried.
+    const imports: unknown = Reflect.getMetadata('imports', AppModule);
+    expect(Array.isArray(imports)).toBe(true);
+    expect(imports).not.toContain(RequestContextModule);
+  });
+
+  it('mounts the module middleware on the braced wildcard, the only form that also matches "/"', () => {
+    // A change-detector on purpose, in the style of the API_PREFIX pin in
+    // boot.integration.test.ts. Two of the three plausible spellings are wrong
+    // in ways that raise no error: '*splat' silently never matches the bare '/',
+    // and '*' works only via an undocumented compatibility shim in the Fastify
+    // adapter that suppresses its own deprecation warning.
+    const applied: unknown[] = [];
+    const routes: unknown[] = [];
+    const proxy = {
+      forRoutes: (...value: unknown[]): unknown => {
+        routes.push(...value);
+        return proxy;
+      },
+      exclude: (): unknown => proxy,
+    };
+    const consumer = {
+      apply: (...middleware: unknown[]): unknown => {
+        applied.push(...middleware);
+        return proxy;
+      },
+    };
+
+    new RequestContextModule().configure(consumer as unknown as MiddlewareConsumer);
+
+    expect(applied).toEqual([RequestContextMiddleware]);
+    expect(routes).toEqual(['{*splat}']);
   });
 });

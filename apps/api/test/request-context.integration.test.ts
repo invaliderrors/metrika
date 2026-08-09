@@ -1,5 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { bootApiForTest, stopDatabase } from './support.js';
+import { RequestContextMiddleware } from '../src/shared/request-context/request-context.middleware.js';
+import { API_PREFIX } from '../src/bootstrap.js';
 
 let baseUrl: string;
 let close: (() => Promise<void>) | undefined;
@@ -60,5 +62,40 @@ describe('X-Request-Id', () => {
 
     const root = await fetch(`${baseUrl}/`);
     expect(root.headers.get('x-request-id')).toMatch(UUID);
+  });
+
+  it('replaces the no-context sentinel a client asks for', async () => {
+    // Over HTTP as well as at the unit boundary: this is the value Task 11 puts
+    // in error bodies, and a client that could set it would make its own
+    // requests indistinguishable from ones with no context at all.
+    const response = await fetch(`${baseUrl}/health/live`, {
+      headers: { 'x-request-id': 'unknown' },
+    });
+    expect(response.headers.get('x-request-id')).toMatch(UUID);
+  });
+
+  it('runs the middleware exactly once per request', async () => {
+    // The guard against registering BOTH ways. Counted on a path under the
+    // global prefix, because that is the only place a second, module-based
+    // registration would also match — on /health/live it would be mounted at
+    // /api/v1/health/live and never fire, so counting there proves nothing.
+    //
+    // The spy is installed on the prototype BEFORE the app boots, because
+    // bootstrap.ts resolves `requestContext.use` at bind time. It also drives
+    // the class rather than the app: a Nest application object is a Proxy whose
+    // get trap routes calls through ExceptionsZone, so stubbing anything on the
+    // app would measure the proxy.
+    const spy = vi.spyOn(RequestContextMiddleware.prototype, 'use');
+    const booted = await bootApiForTest();
+    try {
+      spy.mockClear();
+      const response = await fetch(`${booted.baseUrl}/${API_PREFIX}/does-not-exist`);
+      expect(response.status).toBe(404);
+      expect(response.headers.get('x-request-id')).toMatch(UUID);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      await booted.close();
+      spy.mockRestore();
+    }
   });
 });

@@ -5,10 +5,16 @@ import { normaliseRequestId, runWithRequestContext } from './request-context.js'
 export const REQUEST_ID_HEADER = 'x-request-id';
 
 /**
- * Registered globally from bootstrap.ts via `app.use()`, not through a module's
- * `MiddlewareConsumer` — see the measured explanation there. It keeps the
- * `NestMiddleware` shape so it can move back to a consumer unchanged if the
- * adapter's prefix handling is ever fixed.
+ * Registered exactly ONE of two ways, never both:
+ *
+ * - the composed app — `bootstrap.ts`, via `app.use()`, because it sets a global
+ *   prefix and `MiddlewareConsumer` cannot escape one on platform-fastify;
+ * - a prefix-free standalone module tree — `RequestContextModule`, via
+ *   `MiddlewareConsumer`, which is what test module trees use.
+ *
+ * `@Injectable()` is load-bearing for the second: Nest resolves the class
+ * through the injector when `consumer.apply()` names it. `bootstrap.ts`
+ * constructs it by hand, which is why the decorator can look decorative there.
  *
  * If anything is ever added here that needs the request path, read
  * `request.originalUrl`, not `request.url`. Nest's Fastify adapter runs
