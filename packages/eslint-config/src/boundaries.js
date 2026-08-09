@@ -35,17 +35,13 @@ export const contractsBoundary = [
           ],
         },
       ],
-      // `no-restricted-imports` only inspects static `import`/`export ... from`
-      // declarations — it has no visibility into a dynamic `import()` call,
-      // whose target is an arbitrary expression, not an import specifier. A
-      // `return import('node:crypto')` inside packages/contracts/src lints
-      // clean under the rule above alone. Catch it as a syntax pattern
-      // instead: an ImportExpression whose argument is a string literal that
-      // is not exactly "zod" and does not start with "./" or "../" — the
-      // same two exceptions as the static-import rule above, checked the
-      // same way. A non-literal argument (e.g. `import(someModuleName)`) is
-      // not matched here: its target cannot be checked statically at all,
-      // and no code in this repo needs one, static or dynamic.
+      // `no-restricted-imports` only inspects static import declarations. A
+      // dynamic `import()` needs a syntax rule, and it needs TWO selectors:
+      // the literal case, and everything else. The previous single selector
+      // was narrowed to `[source.type='Literal']`, so `import(`node:crypto`)`
+      // with backticks — a TemplateLiteral, not a Literal — lint clean.
+      // `tsc` backstops Node built-ins with TS2307, but not an
+      // already-installed, typed package reached through a template literal.
       'no-restricted-syntax': [
         'error',
         {
@@ -54,7 +50,131 @@ export const contractsBoundary = [
           message:
             'packages/contracts may import only "zod" and relative modules — see docs/ARCHITECTURE.md §7 (dynamic import())',
         },
+        {
+          selector: "ImportExpression:not([source.type='Literal'])",
+          message:
+            'packages/contracts may import only "zod" and relative modules, and a dynamic import() here must use a plain string literal so the boundary can be checked statically — see docs/ARCHITECTURE.md §7',
+        },
+      ],
+      // packages/contracts/tsconfig.json includes test/** and vitest.config.ts,
+      // which pull @types/node's ambient declarations into the same program as
+      // src/**. Only `tsc -b tsconfig.build.json` rejects a Node global in
+      // src/, so the editor and the type-aware lint program both see it as
+      // valid and CI is the first thing to complain. Catch it here, where it is
+      // reported at the keystroke. Companion to the import rule above: that one
+      // blocks `node:*` specifiers, this one blocks the ambients that need no
+      // import at all.
+      'no-restricted-globals': [
+        'error',
+        {
+          name: '__dirname',
+          message: 'packages/contracts must not use Node globals — see docs/ARCHITECTURE.md §7',
+        },
+        {
+          name: '__filename',
+          message: 'packages/contracts must not use Node globals — see docs/ARCHITECTURE.md §7',
+        },
+        {
+          name: 'Buffer',
+          message: 'packages/contracts must not use Node globals — use Uint8Array',
+        },
+        {
+          name: 'process',
+          message: 'packages/contracts must not use Node globals — see docs/ARCHITECTURE.md §7',
+        },
+        {
+          name: 'require',
+          message: 'packages/contracts is ESM-only — see docs/ARCHITECTURE.md §7',
+        },
+        { name: 'module', message: 'packages/contracts is ESM-only — see docs/ARCHITECTURE.md §7' },
+        {
+          name: 'global',
+          message: 'packages/contracts must not use Node globals — use globalThis',
+        },
       ],
     },
   },
 ];
+
+/**
+ * ADR-0005: `@prisma/client` may only be imported from
+ * apps/api/src/infrastructure/persistence/**. Nothing else in the codebase
+ * knows Prisma exists — that is the boundary that keeps the domain from being
+ * shaped by the ORM. `@metrika/database` is restricted the same way: it
+ * re-exports Prisma types, so letting it through would be the same leak
+ * wearing a different name.
+ *
+ * `ignores` is relative to the consuming package's eslint.config.js, which is
+ * why this is scoped for apps/api's layout. A second consumer with a different
+ * layout composes its own `ignores` rather than widening this one.
+ *
+ * Exported as its own named config, NOT as element [0] of a combined array.
+ * `packages/database` needs the raw-SQL half without the import half, and a
+ * consumer that reached for it with `prismaBoundary.slice(1)` would silently
+ * swap the two halves the day these objects are reordered — either forbidding
+ * the persistence package from importing Prisma, or dropping the
+ * `$queryRawUnsafe` ban from the one package most exposed to it. Neither
+ * failure produces an error; both produce a green build with a missing control.
+ */
+export const prismaImportBoundary = [
+  {
+    files: ['**/*.ts'],
+    ignores: ['src/infrastructure/persistence/**/*.ts'],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@prisma/client',
+              message:
+                'Prisma access goes through apps/api/src/infrastructure/persistence — see ADR-0005',
+            },
+            {
+              name: '@metrika/database',
+              message:
+                'Prisma access goes through apps/api/src/infrastructure/persistence — see ADR-0005',
+            },
+          ],
+          patterns: [
+            {
+              group: ['@prisma/client/*', '@metrika/database/*'],
+              message:
+                'Prisma access goes through apps/api/src/infrastructure/persistence — see ADR-0005',
+            },
+          ],
+        },
+      ],
+    },
+  },
+];
+
+/**
+ * Not scoped by `ignores`: the raw-unsafe methods are banned inside persistence
+ * too. They interpolate their argument straight into SQL, and config injection
+ * into a query is a real attack surface here. The tagged template forms
+ * ($queryRaw / $executeRaw) parameterise; these do not.
+ */
+export const rawSqlBan = [
+  {
+    files: ['**/*.ts'],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.property.name='$queryRawUnsafe']",
+          message: 'Use the tagged-template $queryRaw — $queryRawUnsafe does not parameterise',
+        },
+        {
+          selector: "CallExpression[callee.property.name='$executeRawUnsafe']",
+          message: 'Use the tagged-template $executeRaw — $executeRawUnsafe does not parameterise',
+        },
+      ],
+    },
+  },
+];
+
+/** Both halves, the composition `apps/api` uses. */
+export const prismaBoundary = [...prismaImportBoundary, ...rawSqlBan];

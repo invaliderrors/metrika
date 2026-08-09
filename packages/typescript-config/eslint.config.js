@@ -19,6 +19,20 @@ export default tseslint.config(
     rules: {
       'no-console': 'error',
       eqeqeq: ['error', 'always', { null: 'ignore' }],
+      // Re-declared rather than inherited: this config cannot import
+      // @metrika/eslint-config's `base` without creating a package cycle (see
+      // the comment above), and `process.env` is a repo-wide invariant, not an
+      // eslint-config-package concern. The four type-aware rules `base`
+      // carries genuinely cannot come along — they need a type-aware program
+      // this config deliberately does not build — and that gap is accepted.
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'process',
+          property: 'env',
+          message: 'Read configuration from config/env.ts only',
+        },
+      ],
     },
   },
   prettier,
