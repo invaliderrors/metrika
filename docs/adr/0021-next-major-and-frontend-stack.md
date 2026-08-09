@@ -54,11 +54,18 @@ rather than something `eslint-config-next` brings transitively.
 | `tailwind-merge`            | 3.6.0   | `3.6.0`   | yes (dep)                          |
 | `@playwright/test`          | 1.62.1  | `1.62.1`  | yes (devDep)                       |
 
-The three ESLint plugins are **not** direct installs. `eslint-config-next@16.3.0`
+The three ESLint plugins are **not** direct installs, and this is a fact about
+module resolution rather than a stylistic preference. `eslint-config-next@16.3.0`
 declares them itself (`eslint-plugin-react@^7.37.0`,
-`eslint-plugin-react-hooks@^7.0.0`, `eslint-plugin-jsx-a11y@^6.10.0`) and wires
-them into its flat config with settings the plugins need. Declaring them again
-in `apps/web` risks a second copy at a different version linting nothing.
+`eslint-plugin-react-hooks@^7.0.0`, `eslint-plugin-jsx-a11y@^6.10.0`) and loads
+them with `require("eslint-plugin-react")` **from its own package directory**.
+Under pnpm's isolated `node_modules` that resolves to the copy inside
+`eslint-config-next`'s own dependency tree. A second declaration in
+`apps/web/package.json` therefore installs a _different physical copy that the
+config never loads_: a version in the manifest, reviewed and pinned and
+upgraded, linting nothing. The versions are pinned above so they are on record
+and so `pnpm peers check` output is interpretable — not so anyone installs them.
+
 `@types/node` is listed because the spike proved it is not optional — see
 "What did not work".
 
@@ -67,12 +74,16 @@ resolves to the `8.66.0` already pinned across this workspace. No duplicate.
 
 ### Peer ranges, checked before installing
 
-| Package                      | Declared peers                                                                                                             | React 19.2.8 | ESLint 10.8.0 | TS 6.0.3     |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------ | ------------- | ------------ |
-| `next@16.3.0`                | `react`/`react-dom`: `"^18.2.0 \|\| 19.0.0-rc-de68d2f4-20241204 \|\| ^19.0.0"`; `@playwright/test`: `"^1.51.1"` (optional) | **in range** | n/a           | n/a          |
-| `next-intl@4.13.5`           | `next`: `"^12.0.0 \|\| ^13.0.0 \|\| ^14.0.0 \|\| ^15.0.0 \|\| ^16.0.0"`; `react`: `"… \|\| ^19.0.0"`                       | **in range** | n/a           | n/a          |
-| `eslint-config-next@16.3.0`  | `eslint`: `">=9.0.0"`; `typescript`: `">=3.3.1"`                                                                           | n/a          | **in range**  | **in range** |
-| `@tailwindcss/postcss@4.3.3` | _(none declared)_                                                                                                          | n/a          | n/a           | n/a          |
+| Package                      | All declared peers                                                                                                                                                                                                    | React 19.2.8 | ESLint 10.8.0 | TS 6.0.3     |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------------- | ------------ |
+| `next@16.3.0`                | required — `react`/`react-dom`: `"^18.2.0 \|\| 19.0.0-rc-de68d2f4-20241204 \|\| ^19.0.0"`. Optional — `sass "^1.3.0"`, `@playwright/test "^1.51.1"`, `@opentelemetry/api "^1.1.0"`, `babel-plugin-react-compiler "*"` | **in range** | n/a           | n/a          |
+| `next-intl@4.13.5`           | `next`: `"^12.0.0 \|\| ^13.0.0 \|\| ^14.0.0 \|\| ^15.0.0 \|\| ^16.0.0"`; `react`: `"… \|\| ^19.0.0"`                                                                                                                  | **in range** | n/a           | n/a          |
+| `eslint-config-next@16.3.0`  | `eslint`: `">=9.0.0"`; `typescript`: `">=3.3.1"`                                                                                                                                                                      | n/a          | **in range**  | **in range** |
+| `@tailwindcss/postcss@4.3.3` | _(none declared)_                                                                                                                                                                                                     | n/a          | n/a           | n/a          |
+
+`@playwright/test@1.62.1` satisfies `next`'s optional `^1.51.1`; the other three
+optional peers are for features this project does not use and were left
+uninstalled.
 
 Its own dependency tree is where the exclusions are. `pnpm peers check` after a
 clean install reports exactly three, all against ESLint:
@@ -92,10 +103,13 @@ against source written to violate one of its rules, because a stale peer range
 and a real incompatibility look identical until you measure:
 
 - `eslint-plugin-jsx-a11y@6.10.2` — **works.** Emits `jsx-a11y/alt-text` on an
-  `<img>` with no `alt`. Stale metadata; last publish 2024-10-26.
-- `eslint-plugin-import@2.32.0` — **works.** Emits
-  `import/no-anonymous-default-export`, and `import/no-unresolved` resolves
-  correctly through `eslint-import-resolver-typescript`.
+  `<img>` with no `alt`. Stale metadata; last publish 2024-10-26, 21.5 months.
+- `eslint-plugin-import@2.32.0` — **works.** `eslint-config-next` enables
+  exactly one rule from it, `import/no-anonymous-default-export`, and that rule
+  fires. `import/no-unresolved` was additionally enabled **by hand** in a probe
+  config, to prove `eslint-import-resolver-typescript` resolves despite
+  `unrs-resolver`'s build script being denied; it is not on in the shipped
+  config.
 - `eslint-plugin-react@7.37.5` — **crashes, conditionally.** See below.
 
 ### Gate results, from a cold install
@@ -143,13 +157,34 @@ Plan 0B-2 Tasks 2–6 rather than suggestions:
    writes `AGENTS.md` and `CLAUDE.md` into the app directory on every start.
 3. **The flat config appends `{ settings: { react: { version: '19.2.8' } } }`
    after `eslint-config-next`'s configs**, overriding its `'detect'`. Without it
-   ESLint exits 2 and lints nothing.
+   ESLint exits 2 and lints nothing. **Task 2 additionally ships a fixture
+   asserting that `react/jsx-key` reports on a `.map()` returning JSX without a
+   `key`** — the named rule, reporting, not "the config loads" and not the exit
+   code. Asserting the config loads is precisely the assertion that would have
+   passed all the way through Plan 0A's silent loss of type-aware linting. This
+   override has no other guard: obligations 1, 2 and 4 fail loudly on a cold CI
+   run, but a regression here surfaces as `ESLint exited 2`, which one `|| true`
+   in a script swallows — or, if a future `eslint-plugin-react` stops throwing
+   and starts no-op'ing, as exit 0 with the rules inert. A control without a
+   fixture asserting it fires is an intention.
 4. **`pnpm-workspace.yaml` gains `allowBuilds` entries for `@parcel/watcher`,
    `@swc/core` and `unrs-resolver`.** All three measured safe to set `false`:
    with every build script denied, `pnpm install`, `next build`, `next dev` and
-   `import/no-unresolved` all work. An absent entry — not a `false` one — is
-   what `ERR_PNPM_IGNORED_BUILDS` fails on, exactly as recorded for
-   `@scarf/scarf`.
+   a hand-enabled `import/no-unresolved` all work. An absent entry — not a
+   `false` one — is what `ERR_PNPM_IGNORED_BUILDS` fails on, exactly as recorded
+   for `@scarf/scarf`.
+
+**Three of those four are not a cost of choosing 16.** `@types/node` is
+declared by any TypeScript application, Next 15 included — 16's only difference
+is that it self-installs it mid-build instead of erroring. The `allowBuilds`
+entries are existing repository policy (`@scarf/scarf`), and two of the three
+packages come from `next` under either major. The
+`settings.react.version` override is **explicitly not avoided by the fallback**:
+`eslint-config-next@15.5.23` depends on the same `eslint-plugin-react@^7.37.0`
+and sets the same `'detect'`. Exactly one line — `agentRules: false` — is a
+genuinely 16-specific cost, and the fallback's own cost is larger (see below).
+The count of workarounds is not an argument against this decision, and should
+not be read as one.
 
 `eslint-config-next` exposes **no `./flat` subpath**. Its `exports` map is `.`,
 `./core-web-vitals`, `./typescript`, `./parser`. The flat-config entry points to
@@ -165,32 +200,53 @@ the table moves, because `next-intl@4.13.5` peer-accepts `^15.0.0`,
 `next@15.5.23`'s peer range too. 15 is still maintained: `15.5.23` was published
 2026-08-06, three days before this ADR, under the `backport` dist-tag.
 
-The measurement that would justify taking it is a **cold** `pnpm build` in
-`apps/web` failing on Next 16 with `@types/node` declared and `.next` removed —
-that is, the failure below reproducing after its known cause is fixed. A warm
-rebuild passing is not evidence either way; the spike's first failure passed on
-every warm rebuild.
+The condition covers all four integrations, so each gets its own trigger
+measurement. Any one of these, reproduced, justifies the fallback:
 
-The fallback costs linting. `eslint-config-next@15.5.23` ships **no `exports`
-field** (legacy `.eslintrc`, requiring `@rushstack/eslint-patch` for flat
-config) and depends on `eslint-plugin-react-hooks@^5.0.0`, whose peer range
-`"… || ^9.0.0"` stops at ESLint 9 — and unlike the three benign stale ranges
-above, that one is untested here. Taking the fallback means either losing the
-`react-hooks` rules or installing `eslint-plugin-react-hooks@7.1.1` directly to
-override the transitive v5. Record that cost if it is taken.
+| Integration      | Trigger measurement                                                                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Next + React** | A **cold** `pnpm build` in `apps/web` failing with `@types/node` declared and `.next` removed — the `workStore` failure below reproducing after its known cause is fixed.                   |
+| **Tailwind**     | The emitted `.next/**/*.css` containing no rule _body_ for a class used in the source (`.p-8{padding:…}`). `next build` exiting 0 is not evidence; an unprocessed `className` survives.     |
+| **`next-intl`**  | A prerendered page containing the message _key_ (`spike.greeting`) instead of its value, or `<html>` missing the `lang` `getLocale()` should have supplied.                                 |
+| **ESLint**       | `react/jsx-key` failing to report on the obligation-3 fixture, with `settings.react.version` correctly pinned. Note this trigger fires the fallback but is **not cured** by it — see below. |
+
+A warm rebuild passing is not evidence either way for any of them; the spike's
+first failure passed on every warm rebuild.
+
+**The fallback costs more than the decision it would reverse, and it does not
+cure the ESLint trigger.** `eslint-config-next@15.5.23` ships **no `exports`
+field** at all — it is a legacy `.eslintrc` config needing
+`@rushstack/eslint-patch` to work as flat config — and it depends on
+`eslint-plugin-react-hooks@^5.0.0`, whose peer range `"… || ^9.0.0"` stops at
+ESLint 9. `^5` is the one plugin line here with a **real** ESLint 10 exclusion
+that has not been measured; `7.1.1`, which 16 pulls, declares `^10.0.0`
+explicitly. And because 15 carries the same `eslint-plugin-react@^7.37.0` and
+the same `'detect'`, it inherits the crash and obligation 3 verbatim. So the
+trade is: one config line (`agentRules: false`) against a legacy-config shim,
+plus an untested ESLint-10 exclusion on the only plugin that currently has a
+clean peer range, plus the same React-version override anyway. Taking the
+fallback means either losing the `react-hooks` rules or installing
+`eslint-plugin-react-hooks@7.1.1` directly to override the transitive v5 — which
+runs straight into the resolution problem described above, since
+`eslint-config-next@15` `require`s its own copy. Record that cost if it is
+taken.
 
 ## Alternatives
 
-- **Stay on Next 15**, as `ARCHITECTURE.md` said. Rejected: 16 passed every
-  gate, its `eslint-config-next` is flat-config-native and pulls the only
-  `react-hooks` line that supports ESLint 10, and starting a greenfield app one
-  major behind buys a migration in Phase 1 for nothing.
+- **Stay on Next 15**, as `ARCHITECTURE.md` said. Rejected on measurement, not
+  on novelty: 16 passed every gate, its `eslint-config-next` is
+  flat-config-native where 15's is a legacy `.eslintrc` needing a patch shim, it
+  pulls the only `react-hooks` line that supports ESLint 10, and it inherits the
+  `eslint-plugin-react` crash no more than 15 does. Choosing 15 would cost more
+  configuration than choosing 16, not less — and it would still buy a migration
+  in Phase 1.
 - **Install `eslint-plugin-react` / `-react-hooks` / `-jsx-a11y` directly**, as
-  Plan 0B-2's interface list assumed. Rejected: `eslint-config-next@16.3.0`
-  already declares all three at compatible ranges and configures them. A second
-  declaration is a second version to keep in step, and pnpm's isolated
-  `node_modules` would let the config resolve its copy while `apps/web` resolves
-  another — a config that lints with plugins nobody reviewed.
+  Plan 0B-2's interface list assumed. Rejected, and not as a judgement call:
+  `eslint-config-next` loads them with `require("eslint-plugin-react")` from its
+  own package directory, so under pnpm's isolated `node_modules` a direct
+  declaration in `apps/web` installs a copy the config **never loads**. The
+  manifest would carry a pinned, reviewed version that lints nothing, and every
+  future upgrade of it would be a no-op nobody could tell from a working one.
 - **Hand-roll the flat config from `@next/eslint-plugin-next` alone**, avoiding
   the three out-of-range peers entirely. Measured working (it declares no peers
   and emits `@next/next/no-img-element` under ESLint 10), and it is the escape
@@ -243,9 +299,27 @@ in — the one of the three that was real. It is **not** a Next 16 problem:
 sets the same `'detect'`, so the fallback does not avoid it. Confirmed by
 isolation: with `version: 'detect'` the plugin crashes; with a literal version
 it emits `react/jsx-key` correctly; with the setting absent it warns and still
-works. Hence obligation 3. When `eslint-plugin-react` ships an ESLint 10
-release, the override can go — it has had no publish since 2025-04-03, sixteen
-months, which is ts-rest's number and worth watching.
+works. Hence obligation 3.
+
+The override was then checked for the failure mode that matters more than the
+crash — that it stops the throw while leaving the rules inert. It does not:
+under the pinned version **all 15 reportable `react/*` rules
+`eslint-config-next` enables produce findings**, `react/jsx-uses-vars` is live
+(so JSX-only identifiers are not misreported as unused), and the five
+`react-hooks` v7 rules and `jsx-a11y/alt-text` report alongside them. The plugin
+was also audited for other calls into APIs ESLint 10 removed: every other legacy
+use is guarded by a feature check, with two exceptions —
+`react/jsx-filename-extension` and `react/forward-ref-uses-ref` call them
+unguarded. Neither rule is enabled by `eslint-config-next`, so both are latent
+rather than active; **anyone widening the `react/*` rule set past what
+`eslint-config-next` turns on must enable those two individually and check they
+do not throw.**
+
+When `eslint-plugin-react` ships an ESLint 10 release, the override can go — it
+has had no publish since 2025-04-03, sixteen months, which is ts-rest's number.
+"Worth watching" in a document nobody re-reads is not watching, so this is
+tracked as **R20** in [RISK_REGISTER.md](../RISK_REGISTER.md), which has a
+review cadence.
 
 **`pnpm install` exited 1 on first contact.** `[ERR_PNPM_IGNORED_BUILDS]` for
 `@parcel/watcher@2.6.0` and `@swc/core@1.15.47`, and `unrs-resolver@1.12.2` once
@@ -270,7 +344,7 @@ makes the rewrite a no-op, verified by diffing the file across a build. A
 `tsconfig.json` that changes during CI is a dirty tree.
 
 **Benign, but recorded.** `eslint-plugin-jsx-a11y@6.10.2` (unmet peer, last
-publish 2024-10-26 — twenty-two months) and `eslint-plugin-import@2.32.0`
+publish 2024-10-26 — 21.5 months) and `eslint-plugin-import@2.32.0`
 (unmet peer) both work under ESLint 10; they are recorded because the next
 person to run `pnpm peers check` will see three warnings and needs to know which
 one was real. ESLint 10 also lints only `.js`/`.mjs`/`.cjs` unless a config
@@ -282,13 +356,15 @@ reports `File ignored because no matching configuration was supplied` and exits
 ### What is now true
 
 **Accepted:** `apps/web` carries four pieces of configuration that exist only to
-work around upstream bugs, three of which have no test that would notice their
-removal — obligations 1, 2 and 4 fail loudly on a cold CI run, but obligation 3
-(`settings.react.version`) fails as `ESLint exited 2`, which a `|| true`
-anywhere in a script would swallow. `apps/web` also pins a React version in two
-places: `package.json` and the ESLint settings. They must move together.
-Turbopack is Next 16's default builder and the spike never exercised Webpack;
-any later `next.config.ts` option assuming Webpack is unverified.
+work around upstream bugs — though only one of the four, `agentRules: false`, is
+a cost of choosing 16 over 15. Obligations 1, 2 and 4 fail loudly on a cold CI
+run; obligation 3 would not, which is why it alone carries a required fixture.
+`apps/web` pins a React version in two places — `package.json` and the ESLint
+settings — and they must move together; the obligation-3 fixture is what makes
+a drift between them visible. `eslint-plugin-react`'s health is now a tracked
+risk (R20) rather than a paragraph in an ADR. Turbopack is Next 16's default
+builder and the spike never exercised Webpack; any later `next.config.ts` option
+assuming Webpack is unverified.
 
 **Gained:** every version Tasks 2–6 install was measured against this
 repository's actual ESLint 10.8.0 and TypeScript 6.0.3 rather than against the
