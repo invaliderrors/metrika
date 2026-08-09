@@ -683,10 +683,14 @@ describe('the client half of the env module', () => {
 - [ ] **Step 3: Run both and watch them fail**
 
 ```bash
-pnpm --filter @metrika/web test:unit; echo "EXIT=$?"
+pnpm --filter @metrika/web --fail-if-no-match test:unit; echo "EXIT=$?"
 ```
 
 Expected: **non-zero** — the package does not exist yet.
+
+`--fail-if-no-match` is not optional here. Without it pnpm prints
+`No projects matched the filters` and exits **0**, so the "watch it fail" step
+would pass while proving nothing — measured.
 
 - [ ] **Step 4: Write `src/config/env.ts`**
 
