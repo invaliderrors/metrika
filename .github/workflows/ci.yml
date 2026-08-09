@@ -31,6 +31,25 @@ jobs:
       - name: Lint
         run: pnpm lint -- --max-warnings=0
 
+      # `typecheck` is `tsc -b --force` in every package, and the `--force` is
+      # load-bearing. No tsconfig in this repo declares project `references`, so a
+      # workspace dependency's emitted `.d.ts` is not among a consumer project's own
+      # input file names — which means `tsc -b`'s up-to-date check cannot see it change,
+      # and the consumer is skipped as up to date against a stale build-info.
+      # MEASURED: with a type-only widening in packages/contracts, `pnpm verify` reported
+      # every task successful while `tsc -b --force` failed with TS2741.
+      #
+      # Two things keep that from biting CI today, and BOTH are load-bearing:
+      #
+      #   1. the `--force` above, and
+      #   2. the fact that nothing here caches `.turbo` or any `*.tsbuildinfo`.
+      #
+      # A `.turbo` cache step is the obvious speed-up for this workflow. DO NOT ADD ONE
+      # without first landing project `references` (the real fix): restoring build-info
+      # into a fresh checkout is what turns this job from "catches a cross-package type
+      # break" into "silently reports it green". Turbo's `outputs` is not a substitute —
+      # MEASURED, turbo does not clean declared outputs before a cache-miss run, so a
+      # stale `*.tsbuildinfo` survives and `tsc -b` skips exactly as before.
       - name: Typecheck
         run: pnpm typecheck
 
