@@ -1,0 +1,7 @@
+{
+  "extends": "../next.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": ".tmp-next-fixtures.tsbuildinfo"
+  },
+  "include": ["next-fixtures/**/*.ts"]
+}

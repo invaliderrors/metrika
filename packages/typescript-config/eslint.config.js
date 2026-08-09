@@ -24,5 +24,13 @@ export default tseslint.config(
   prettier,
   // test/fixtures/**: deliberately invalid, one strict-flag violation each —
   // linting them would just report the violation they exist to demonstrate.
-  { ignores: ['test/fixtures/**'] },
+  {
+    ignores: [
+      'test/fixtures/**',
+      'test/web-fixtures/**',
+      'test/nest-fixtures/**',
+      'test/next-fixtures/**',
+      'test/.tmp-nest-out/**',
+    ],
+  },
 );
