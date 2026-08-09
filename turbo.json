@@ -1,9 +1,27 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
-    "typecheck": { "dependsOn": ["^typecheck"], "outputs": ["*.tsbuildinfo", "dist/**"] },
-    "lint": { "dependsOn": ["^typecheck"] },
-    "test:unit": { "dependsOn": ["^typecheck"], "outputs": ["coverage/**"] },
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] }
+    "db:generate": { "cache": false },
+    "build": {
+      "dependsOn": ["^build", "db:generate"],
+      "outputs": ["dist/**", "tsconfig.build.tsbuildinfo"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "db:generate"],
+      "outputs": []
+    },
+    "lint": {
+      "dependsOn": ["^build", "db:generate"],
+      "outputs": []
+    },
+    "test:unit": {
+      "dependsOn": ["^build", "build"],
+      "outputs": ["coverage/**"]
+    },
+    "test:integration": {
+      "dependsOn": ["^build", "build"],
+      "cache": false
+    },
+    "dev": { "cache": false, "persistent": true }
   }
 }

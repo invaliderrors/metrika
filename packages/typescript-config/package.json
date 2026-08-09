@@ -6,7 +6,10 @@
   "files": [
     "base.json",
     "node.json",
-    "react-library.json"
+    "web-library.json",
+    "react-library.json",
+    "next.json",
+    "nest.json"
   ],
   "scripts": {
     "lint": "eslint .",

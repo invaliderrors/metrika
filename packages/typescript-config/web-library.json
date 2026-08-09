@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./base.json",
+  "compilerOptions": {
+    // WebWorker, not DOM: a package built on this config must stay safe to
+    // bundle for the browser (see docs/ARCHITECTURE.md §7), so it gets only
+    // the narrow worker-scope globals a browser-safe library actually needs —
+    // TextEncoder and crypto.subtle, for example — rather than DOM's much
+    // larger surface (Window, document, HTMLElement, ...), which a package
+    // this config is agnostic about has no business depending on.
+    "lib": ["ES2023", "WebWorker"]
+  }
+}

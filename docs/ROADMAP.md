@@ -111,12 +111,17 @@ more code depends on the surface it protects.
 
 **Blocks `apps/api` — resolve first**
 
-1. **`@metrika/contracts` exports raw TypeScript and no package has a `build`
-   script.** `exports` is `./src/index.ts`, with no `main` and no `types`,
-   though `turbo.json` declares a `build` task. NestJS compiling to
-   `dist/main.js` will resolve the package to a `.ts` file and fail at runtime.
-   `tsconfig.build.json` already emits a flat `dist/`; the remaining work is the
-   `build` script and the conditional `exports` map.
+1. ~~**`@metrika/contracts` exports raw TypeScript and no package has a `build`
+   script.**~~ **Closed by Plan 0B-1 Task 1.** `exports` was `./src/index.ts`,
+   with no `main` and no `types`, though `turbo.json` declared a `build` task.
+   NestJS compiling to `dist/main.js` would have resolved the package to a
+   `.ts` file and failed at runtime. `packages/contracts` now has a `build`
+   script (`tsc -b tsconfig.build.json`) and a conditional `exports` map
+   pointing at `dist/`, proven by a real `node` subprocess resolving the
+   package by bare specifier in `test/package-exports.test.ts`. This reverses
+   part of the source-only decision in ADR-0001; see
+   [ADR-0020](./adr/0020-internal-package-build-output.md) for why the
+   original decision was right for its assumptions and what changed.
 2. **No decorator support.** `packages/typescript-config` has no
    `experimentalDecorators`, no `emitDecoratorMetadata`, and no `nest.json` or
    `next.json` (both named in row 0.2). Compounding it, `base.json` sets
@@ -130,12 +135,15 @@ more code depends on the surface it protects.
 
 **Test and gate gaps**
 
-4. **ID distinctness covers 11 of 55 pairs.** `test/ids.test-d.ts` asserts a
-   declaration-order ring, so an _adjacent_ brand collision fails but a
-   non-adjacent one (e.g. `UserId = brandedUuid('QuoteId')`) still passes the
-   whole suite. The file's own comment overstates what the ring catches — fix
-   the comment along with the coverage. A full 55-pair matrix, or one
-   union-cardinality assertion, closes it.
+4. ~~**ID distinctness covers 11 of 55 pairs.**~~ **Closed by Plan 0B-1 Task 1.** `test/ids.test-d.ts` asserted a declaration-order ring, so an
+   _adjacent_ brand collision failed but a non-adjacent one (e.g. `UserId =
+brandedUuid('QuoteId')`) still passed the whole suite. It now asserts a
+   `NoCollision<K>` check per ID against the union of the other ten, covering
+   the full 55-pair matrix in both assignability directions — mutation-tested
+   against a non-adjacent collision, an adjacent collision, a second
+   independent non-adjacent collision, and a total brand loss (one ID's
+   schema stops calling `.brand()`), all four confirmed to fail the specific
+   assertion(s) they should and nothing else.
 5. **The dynamic-import boundary rule misses template literals.** The selector
    is narrowed to `ImportExpression[source.type='Literal']`, so
    ``import(`node:crypto`)`` with backticks lints clean. Backstopped for

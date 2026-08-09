@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // The OWNER url, deliberately. This is the only url the Prisma CLI uses:
+  // migrate, generate and studio all need DDL rights. The running API never
+  // reads this — it passes DATABASE_URL (the metrika_app role) to
+  // createPrismaClient() programmatically. See ADR-0005 and the Global
+  // Constraints of this plan.
+  url      = env("DATABASE_ADMIN_URL")
+}
+
+/// Round-trip target for GET /health/deep. It exists so the deep probe can
+/// prove a real query reached Postgres and came back, rather than proving a
+/// TCP connection opened. Not tenant-scoped, so no RLS policy.
+model HealthCheck {
+  id        String   @id @default(uuid()) @db.Uuid
+  checkedAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+/// The permanent regression fixture for the two client extensions and for RLS.
+///
+/// It is retained on purpose rather than deleted once Phase 1 introduces real
+/// tenant tables. Cost: one empty table. Benefit: the RLS and soft-delete
+/// suites keep working between phases without depending on whichever domain
+/// model happens to exist, and a migration that silently drops FORCE ROW LEVEL
+/// SECURITY fails a test instead of shipping.
+model RlsProbe {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  label          String
+  deletedAt      DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+}

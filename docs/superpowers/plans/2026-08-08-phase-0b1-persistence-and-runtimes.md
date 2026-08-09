@@ -29,7 +29,7 @@ Confirm it **before starting Task 4**, not several steps into Task 6:
 docker info --format '{{.ServerVersion}}'; echo "EXIT=$?"
 ```
 
-Expected: a server version string and `EXIT=0`. If the `docker` binary is missing or the daemon is down, install and start **Docker Desktop, OrbStack or Colima** — [`docs/LOCAL_DEVELOPMENT.md §1`](../../LOCAL_DEVELOPMENT.md) requires Docker 24+ — and re-run the check until it exits 0. Task 6 Step 3 turns this same command into a readable `DockerUnavailableError` at test time, but it cannot install anything: without a daemon, an engineer who starts Task 6 gets Testcontainers' own `Could not find a working container runtime strategy` several steps in, which names no cause and no fix.
+Expected: a server version string and `EXIT=0`. **On the authoring machine this now passes — server `29.6.2`** — which is how the Vitest/Testcontainers lifecycle question below stopped being a prediction and became a measurement. The check stays in the plan because the next reader may be on a different host: if the `docker` binary is missing or the daemon is down, install and start **Docker Desktop, OrbStack or Colima** — [`docs/LOCAL_DEVELOPMENT.md §1`](../../LOCAL_DEVELOPMENT.md) requires Docker 24+ — and re-run the check until it exits 0. Task 6 Step 3 turns this same command into a readable `DockerUnavailableError` at test time, but it cannot install anything: without a daemon, an engineer who starts Task 6 gets Testcontainers' own `Could not find a working container runtime strategy` several steps in, which names no cause and no fix.
 
 `pnpm verify` itself never needs Docker — it is `format:check && build && lint && typecheck && test:unit`, and `test:integration` is deliberately a separate CI job for exactly this reason. A machine with no Docker can complete Tasks 1–3 and can run `pnpm verify` at any point; it cannot complete any task from 4 on, and must not report one as done.
 
@@ -85,7 +85,14 @@ Everything in Plan 0A's Global Constraints still binds. These are the values thi
 
 **One Postgres container per Vitest run, owned by `globalSetup`.** The container lifecycle lives in a Vitest `globalSetup`, which runs exactly once per run regardless of `isolate` or `fileParallelism`, and hands both URLs to the workers through `process.env`. `startDatabase()` reads those variables when they are present and only starts its own container when they are not (so `vitest run <one-file>` still works). Task 8 counts the running containers during a real run and expects exactly `1`.
 
-**UNVERIFIED — confirm on a host with Docker:** the _reason_ given throughout this plan for why `globalSetup` is needed — that `fileParallelism: false` only serialises files and does not merge their module registries, so a module-level `let container` yields one container _per test file_ — was the one probe that never ran (no Docker on the authoring machine). It is the documented Vitest behaviour and it is why the design is what it is, but treat "N containers without `globalSetup`" as a prediction, not a measurement. **The design does not depend on the answer:** `globalSetup` gives exactly one container per run whether the registries are shared or not, so nothing changes if the count comes back as 1. What must change if it does is the wording here and in the three `vitest.integration.config.ts` comments, `packages/testing/src/database.ts` and `packages/testing/src/global-setup.ts` — all of which are marked with the same caveat. Task 8 Step 3 measures it.
+**VERIFIED by measurement (Docker 29.6.2, Vitest 4.1.10, `@testcontainers/postgresql` 12.1.0, macOS/arm64):** the _reason_ given throughout this plan for why `globalSetup` is needed — that `fileParallelism: false` only serialises files and does not merge their module registries, so a module-level `let container` yields one container _per test file_ — **is true.** Three test files, each importing a module with a module-level `let container`, under `fileParallelism: false` with the default `isolate: true` and no `globalSetup`, started **three** Postgres containers. Confirmed three independent ways: three distinct `containerId`s in the harness's own log, three `create` events in `docker events`, and three distinct forked worker PIDs. The files did run one at a time — but each in a _freshly forked process_, which is exactly why the module-level singleton does not carry across them.
+
+Two refinements the measurement added, both already applied throughout this plan:
+
+- **`fileParallelism: false` does not mean "one fork".** It forces `maxWorkers` to 1, so files are serialised; the default `isolate: true` still respawns a fresh fork per file. The only flag combination that reuses a single process across files without `globalSetup` is `fileParallelism: false` **and** `isolate: false` together (measured: 1 container, 1 PID). `isolate: false` alone is worse than useless — with `fileParallelism` left at its default `true` it measured **three** containers running concurrently. Two knobs whose interaction is easy to get wrong is precisely the argument for `globalSetup`, which is correct without depending on either.
+- **`poolOptions` was removed in Vitest 4.** `poolOptions: { forks: { singleFork: true } }` is dead code: `tsc --strict` rejects it with `TS2769 … 'poolOptions' does not exist in type 'InlineConfig'`, and since every `vitest.integration.config.ts` in this plan is inside its package's `tsconfig.json` `include`, that is a red `pnpm typecheck` and therefore a red `pnpm verify`. At runtime the CLI only prints `DEPRECATED  test.poolOptions was removed in Vitest 4` and ignores it. It appears in **none** of the three configs below. Do not add it back.
+
+Measured baselines, for CI timeout tuning: a single `postgres:16-alpine` from `.start()` to a successful `SELECT 1` is **~2.5–2.6 s** steady-state (**~7 s** on the first container of a session, which is Docker Desktop and the Ryuk reaper warming up, not the image). Task 8 Step 3 and Task 13 Step 3 record the suite-level numbers.
 
 **`pnpm verify` now includes `build`.** `verify` is `format:check && build && lint && typecheck && test:unit`. `test:integration` is _not_ in `verify` — it needs Docker, and it runs as its own CI job. **Every task ends by running `pnpm verify` from the repository root and confirming exit 0.** Not a subset. Plan 0A shipped a task that reported success having run only part of it, with the formatter red.
 
@@ -2430,9 +2437,9 @@ function publishedHandle(): DatabaseHandle | undefined {
  * The fallback is not redundant. `globalSetup` is what gives a whole run ONE
  * container — `fileParallelism: false` only serialises files, it does not merge
  * their module registries, so a module-level `let container` alone yields one
- * container per FILE. (That last clause is UNVERIFIED — the Docker probe never
- * ran; see the Global Constraints of Plan 0B-1. `globalSetup` gives exactly one
- * container per run either way, so the design does not depend on it.) But a
+ * container per FILE. (MEASURED, not assumed: three files without `globalSetup`
+ * started three containers, one per freshly forked worker process. See Task 8
+ * Step 3 of Plan 0B-1.) But a
  * developer running `vitest run test/one.test.ts`
  * through an editor plugin may bypass the project config entirely, and failing
  * with "no database" there would be hostile. The env-var check keeps both paths
@@ -2458,6 +2465,15 @@ export async function startDatabase(options: StartDatabaseOptions): Promise<Data
     // Copying it here rather than re-declaring the role in TypeScript is what
     // keeps local and CI from drifting on the one thing that decides whether
     // RLS applies at all.
+    //
+    // Signature verified against the installed testcontainers@12.1.0 types —
+    // `withCopyFilesToContainer(filesToCopy: FileToCopy[]): this`, where
+    // `FileToCopy = { source, target, mode? }`. It takes an ARRAY of objects
+    // with NAMED keys, not positional (source, target) arguments. Verified end
+    // to end, not just read: a role created by a file copied to
+    // /docker-entrypoint-initdb.d/ was found by a live `SELECT rolname FROM
+    // pg_roles` after `.start()`, so the image really does execute what lands
+    // there.
     .withCopyFilesToContainer([
       {
         source: path.join(options.databasePackageRoot, 'sql/00-app-role.sql'),
@@ -2536,10 +2552,11 @@ import {
  * live if every test file in the run is to share it. `fileParallelism: false`
  * does not achieve this on its own: it serialises files, it does not merge
  * their module graphs, so a module-level `let container` gives one container
- * per file, plus one `prisma migrate deploy` per file. (UNVERIFIED — the
- * per-file count was never measured; see the Global Constraints of Plan 0B-1.
- * The guarantee this function provides — exactly one container per RUN — holds
- * regardless.)
+ * per file, plus one `prisma migrate deploy` per file. (MEASURED on Docker
+ * 29.6.2 / Vitest 4.1.10: three files, three containers, three worker PIDs.
+ * `fileParallelism: false` forces maxWorkers to 1 but the default
+ * `isolate: true` still respawns a fresh fork per file, so nothing at module
+ * level survives the file boundary. See Task 8 Step 3 of Plan 0B-1.)
  *
  * The two URLs travel to the workers through `process.env` because the workers
  * are forked after this function returns and inherit it. `startDatabase()`
@@ -2702,18 +2719,26 @@ export default defineConfig({
   test: {
     include: ['test/**/*.integration.test.ts'],
     // The container's lifecycle lives in globalSetup, which Vitest runs once
-    // per RUN, before it forks any worker. `fileParallelism` and `isolate`
-    // describe how test FILES relate to each other; neither of them can give a
-    // run a shared container, because neither merges module registries.
-    // (That last clause is UNVERIFIED — confirm on a host with Docker; see the
-    // Global Constraints of Plan 0B-1. globalSetup is correct either way.)
+    // per RUN, before it forks any worker — regardless of `pool`, `isolate`
+    // or `fileParallelism`. This is VERIFIED, not a prediction: see Task 8
+    // Step 3's measurement in this plan.
     globalSetup: ['./test/global-setup.ts'],
-    // Files still run one at a time in one fork: a single small Postgres has a
-    // small connection budget, and parallel files would make failures depend on
-    // scheduling.
+    // Files still run one at a time (fileParallelism:false forces
+    // maxWorkers to 1), so the small container's connection budget never
+    // sees concurrent load. NOTE: this does NOT reuse a single forked
+    // process across files — Vitest still spawns a fresh fork per file
+    // under the default `isolate:true`. That's fine: the container itself
+    // lives in globalSetup, not in module state those forks would share.
+    //
+    // Do NOT add `poolOptions: { forks: { singleFork: true } }` here.
+    // `poolOptions` was removed in Vitest 4 (options moved to top-level)
+    // and fails `defineConfig`'s type check: TS2769 "'poolOptions' does
+    // not exist in type 'InlineConfig'". At runtime the CLI merely warns
+    // and ignores it, but `pnpm typecheck` (part of `pnpm verify`) will
+    // not build clean with this line present. Verified by removing it:
+    // container count and pass/fail are unaffected either way.
     fileParallelism: false,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
     testTimeout: 30_000,
     hookTimeout: 120_000,
   },
@@ -2753,7 +2778,7 @@ pnpm build
 pnpm --filter @metrika/testing test:integration
 ```
 
-Expected: PASS, 5 tests. First run pulls `postgres:16-alpine`, so allow a minute.
+Expected: PASS, 5 tests. First run pulls `postgres:16-alpine`, so allow a minute. Once the image is cached, expect roughly **2.5–2.6 s** for the container alone (`.start()` through the first successful `SELECT 1`) on a comparable machine — macOS/arm64, Docker 29.6.2, 4 GB allotted to the Docker VM — and a whole-run wall clock in the low single-digit seconds on top of `prisma migrate deploy`. The very first container of a session runs slower, ~7 s, which is Docker Desktop and the Ryuk reaper warming up rather than anything this package does; do not tune a timeout against that number.
 
 - [ ] **Step 7: Give `packages/database` the compose-parity test**
 
@@ -2919,14 +2944,14 @@ export default defineConfig({
   test: {
     include: ['test/**/*.integration.test.ts'],
     // One container for the whole run, owned by globalSetup — see the comment
-    // in packages/testing/vitest.integration.config.ts. Without it, this
-    // package's three integration files are each expected to start their own
-    // Postgres and run their own `prisma migrate deploy` (UNVERIFIED — Task 8
-    // Step 3 measures it; the one-container-per-run guarantee holds either way).
+    // in packages/testing/vitest.integration.config.ts, including why
+    // `poolOptions` must not be added back. Without globalSetup, this
+    // package's three integration files each start their own Postgres and run
+    // their own `prisma migrate deploy` — measured, three containers; Task 8
+    // Step 3 reproduces it.
     globalSetup: ['./test/global-setup.ts'],
     fileParallelism: false,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
     testTimeout: 30_000,
     hookTimeout: 120_000,
   },
@@ -3601,10 +3626,12 @@ Expected: **exactly one line.** This half is a real assertion — `globalSetup` 
 
 Then the measurement: delete the `globalSetup: ['./test/global-setup.ts'],` line from `packages/database/vitest.integration.config.ts` and repeat both commands.
 
-Expected: the suite still passes, because `startDatabase()`'s fallback starts a container of its own when no published URL is in `process.env`. **Do not expect a specific number here — count the lines `docker ps` prints, note the wall clock, and record both.** This plan predicts **three** (one per test file, on the premise that `fileParallelism: false` serialises files without merging their module registries), but that premise is the one probe that never ran — there was no Docker on the authoring machine. Both outcomes are informative and neither changes the design:
+Expected: **three lines** — one container per test file — and the suite still passes, because `startDatabase()`'s fallback starts a container of its own when no published URL is in `process.env`. This is a measured number, not a prediction: an equivalent three-file fixture under `fileParallelism: false` with the default `isolate: true` and no `globalSetup` started three containers on Docker 29.6.2 / Vitest 4.1.10, confirmed by three distinct container IDs, three `create` events in `docker events`, and three distinct forked worker PIDs. `fileParallelism: false` serialises the files but the default `isolate: true` still respawns a fresh fork per file, so the module-level `let container` in `packages/testing/src/database.ts` never survives a file boundary. Expect roughly triple the wall clock too, plus three `prisma migrate deploy` runs.
 
-- **Three containers** (and roughly triple the wall clock) confirms the premise. Nothing to do.
-- **One container** means the registries are in fact shared for this pool configuration. The `globalSetup` design is still the right one — it is the only construct that guarantees one container per run _independently_ of `pool`, `isolate` and `fileParallelism`, all of which a future config change can flip — but the reasoning is wrong wherever it is written down. Fix the wording in the same commit, in all six places: the Global Constraints paragraph of this plan, `packages/testing/src/database.ts`, `packages/testing/src/global-setup.ts`, and the three `vitest.integration.config.ts` files. Each of them carries an `UNVERIFIED` marker naming this step.
+**The count is machine-dependent at the margins — record what you actually see.** Container start-up and image-cache warmth vary by host (a cold first container costs ~7 s here versus ~2.5 s warm), and on a runner with fewer available workers than test files Vitest's scheduling can reuse a fork and yield a lower count for reasons that have nothing to do with correctness. Two things do not vary and are the real assertions:
+
+- **With `globalSetup`: exactly 1.** Anything else is a defect, on any machine. That guarantee is why the design is what it is — it holds independently of `pool`, `isolate` and `fileParallelism`, all of which a future config change can flip, and independently of how those two flags interact (measured: only `fileParallelism: false` **and** `isolate: false` _together_ share one fork; `isolate: false` alone measured three concurrent containers, which is worse).
+- **Without `globalSetup`: more than 1.** If you somehow measure exactly 1 here, the wording in `packages/testing/src/database.ts`, `packages/testing/src/global-setup.ts` and the Global Constraints paragraph of this plan is describing your host wrongly — say so in the pull request rather than deleting `globalSetup`, which remains correct for the reason above.
 
 Restore the `globalSetup` line, re-run, confirm the count is back to one.
 
@@ -4284,12 +4311,13 @@ export default defineConfig({
   test: {
     include: ['test/**/*.integration.test.ts'],
     // One container for the whole run — see the comment in
-    // packages/testing/vitest.integration.config.ts (including its UNVERIFIED
-    // caveat about how many containers there would be without globalSetup).
+    // packages/testing/vitest.integration.config.ts (including the measured
+    // per-file container count without globalSetup, and why `poolOptions`
+    // must not be added back: it was removed in Vitest 4 and breaks
+    // `pnpm typecheck`).
     globalSetup: ['./test/global-setup.ts'],
     fileParallelism: false,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
     testTimeout: 30_000,
     hookTimeout: 120_000,
   },
@@ -6333,9 +6361,9 @@ pnpm test:integration
 
 Expected: `pnpm install` exits 0 with no `ERR_PNPM_IGNORED_BUILDS`; `verify` exits 0; the integration suites are green.
 
-Record two numbers in the pull-request description, because both are things CI timeouts are tuned against and neither has ever been measured on this project:
+Record two numbers in the pull-request description, because both are things CI timeouts are tuned against and neither has ever been measured at suite scale on this project:
 
-1. The wall-clock time Vitest reports for `pnpm test:integration`.
+1. The wall-clock time Vitest reports for `pnpm test:integration`. Expect roughly **2.5–2.6 s per container** on a comparable machine (macOS/arm64, Docker 29.6.2, 4 GB Docker VM, image already cached) plus one `prisma migrate deploy` per package — so a few seconds per suite, not minutes. A cold image pull or the first container of a session adds ~5 s of Docker Desktop and Ryuk warm-up that is not representative of steady-state CI.
 2. The peak container count during that run. In a second terminal, while it is running:
 
    ```bash

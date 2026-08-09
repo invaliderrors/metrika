@@ -1,16 +1,17 @@
 {
-  "extends": "@metrika/typescript-config/base.json",
+  "extends": "@metrika/typescript-config/web-library.json",
   "compilerOptions": {
-    // Mirrors tsconfig.json's lib choice — see the comment there.
-    "lib": ["ES2023", "WebWorker"],
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // Named explicitly so turbo.json's `build.outputs` entry
+    // ("tsconfig.build.tsbuildinfo") is a contract rather than a coincidence.
+    // The default name is derived from the config filename, which is the same
+    // string today — but a rename would silently drop the cached output and,
+    // worse, let a `*.tsbuildinfo` glob creep back in.
+    "tsBuildInfoFile": "tsconfig.build.tsbuildinfo"
   },
-  // src only, deliberately: this is what "pnpm typecheck" actually emits
-  // to dist/. Compiling test/** here too (as tsconfig.json still does, for
-  // linting) would put dist/test/* into the package's build output, and a
-  // rootDir wide enough to cover both src/ and test/ pushes the entry point
-  // to dist/src/index.js instead of dist/index.js — a trap for whatever
-  // later compiles against this package's dist output.
+  // src only, deliberately: compiling test/** here would put dist/test/* into
+  // the package's build output, and a rootDir wide enough to cover both pushes
+  // the entry point to dist/src/index.js instead of dist/index.js.
   "include": ["src/**/*.ts"]
 }
