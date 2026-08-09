@@ -9,10 +9,12 @@
     "lint": "eslint .",
     "start": "node --env-file=../../.env dist/main.js",
     "dev": "concurrently --kill-others --names tsc,api \"tsc -b tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --env-file=../../.env dist/main.js\"",
-    "test:unit": "vitest run --config vitest.config.ts"
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@metrika/contracts": "workspace:*",
+    "@metrika/database": "workspace:*",
     "@nestjs/common": "11.1.28",
     "@nestjs/core": "11.1.28",
     "@nestjs/platform-fastify": "11.1.28",
@@ -23,6 +25,7 @@
   },
   "devDependencies": {
     "@metrika/eslint-config": "workspace:*",
+    "@metrika/testing": "workspace:*",
     "@metrika/typescript-config": "workspace:*",
     "@types/node": "24.13.3",
     "eslint": "10.8.0",
