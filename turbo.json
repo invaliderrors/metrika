@@ -4,7 +4,22 @@
     "db:generate": { "cache": false },
     "build": {
       "dependsOn": ["^build", "db:generate"],
-      "outputs": ["dist/**", "tsconfig.build.tsbuildinfo"]
+      "outputs": [
+        "dist/**",
+        "tsconfig.build.tsbuildinfo",
+        // apps/web is the first package whose build output is not `dist/`.
+        // Adding it is not tidiness: MEASURED, with `.next` undeclared,
+        // `rm -rf apps/web/.next && pnpm build` reports
+        // "cache hit, replaying logs", exits 0, and leaves NO `.next` — turbo
+        // restores only what a task declares. `next start` and Playwright then
+        // fail against a build that a green `pnpm build` said had succeeded.
+        //
+        // `.next/cache` is excluded: it is Next's own incremental cache, it is
+        // the bulk of the directory, and it is an input to the next build
+        // rather than a product of this one.
+        ".next/**",
+        "!.next/cache/**"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^build", "db:generate"],
