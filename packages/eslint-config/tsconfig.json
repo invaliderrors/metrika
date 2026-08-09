@@ -28,6 +28,8 @@
     "src/**/*.js",
     "test/eslint.react.config.js",
     "test/eslint.next.config.js",
+    "test/eslint.next-typechecked.config.js",
+    "test/eslint.typechecked-next.config.js",
     "test/rules.test.ts",
     "test/react.test.ts"
   ]

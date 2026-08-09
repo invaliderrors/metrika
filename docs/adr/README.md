@@ -27,3 +27,8 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 | [0019](./0019-nestjs-zod-contracts.md)          | Zod as the single source of truth, delivered via `nestjs-zod`                            | Accepted, supersedes ADR-0009         |
 | [0020](./0020-internal-package-build-output.md) | Internal packages `apps/api` depends on emit compiled `dist/`, not source-only `exports` | Accepted, supersedes part of ADR-0001 |
 | [0021](./0021-next-major-and-frontend-stack.md) | Next.js 16 and the pinned frontend stack, gated on a measured spike                      | Accepted                              |
+| [0023](./0023-eslint-plugin-resolution.md)      | An ESLint plugin is declared where it is imported, and nowhere else                      | Accepted, scopes part of ADR-0021     |
+
+**0022 is not missing.** It is `0022-orcaslicer.md`, written on the parallel
+`docs/orcaslicer` branch and not yet merged. The row appears when that branch
+does.

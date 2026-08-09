@@ -26,7 +26,9 @@ allowBuilds:
   # ERR_PNPM_IGNORED_BUILDS complains about, and would leave the next person to
   # re-decide this from scratch.
   '@scarf/scarf': false
-  # DENIED. Reached via eslint-plugin-import-x → eslint-config-next (ADR-0021).
+  # DENIED. Reached via eslint-import-resolver-typescript@3.10.1 →
+  # eslint-config-next@16.3.0 (ADR-0021), and again through
+  # eslint-module-utils → eslint-plugin-import → the same resolver.
   # Its build script downloads/links a prebuilt native resolver binary. ADR-0021's
   # spike measured the denial safe: with the script denied, `pnpm install`,
   # `next build`, `next dev` and a hand-enabled `import/no-unresolved` all work,
