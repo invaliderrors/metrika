@@ -10,7 +10,7 @@
     "preinstall": "node scripts/check-node-version.mjs",
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "turbo run lint",
+    "lint": "turbo run lint -- --max-warnings=0",
     "lint:fix": "turbo run lint -- --fix",
     "typecheck": "turbo run typecheck",
     "test:unit": "turbo run test:unit",

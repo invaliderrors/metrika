@@ -31,7 +31,14 @@
     },
     "test:unit": {
       "dependsOn": ["^build", "build"],
-      "outputs": ["coverage/**"]
+      // No `outputs` here. `packages/contracts` is the ONLY package whose
+      // test:unit emits anything (`vitest run --coverage`); the other five run
+      // bare `vitest run`. Declaring `coverage/**` for every package made turbo
+      // print `WARNING no output files found for task <pkg>#test:unit` on five
+      // of six on every single `pnpm verify` — measured — and a warning that is
+      // always present is a warning nobody reads. The declaration now lives in
+      // packages/contracts/turbo.json, where the output actually exists.
+      "outputs": []
     },
     "test:integration": {
       "dependsOn": ["^build", "build"],
