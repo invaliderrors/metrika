@@ -96,6 +96,21 @@ describe('DomainExceptionFilter logging', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it('refuses to describe an HttpException that is not a 4xx', () => {
+    // The missing lower bound, on the filter side. MEASURED: with only
+    // `< 500`, `new HttpException('x', 302)` from any library produced a full
+    // error envelope AT 302 — a status no client treats as an error, so the
+    // body was unreachable by every client branch that exists.
+    const spy = spyOnErrorLog();
+    const { host, captured } = fakeHost();
+
+    new DomainExceptionFilter().catch(new HttpException('a redirect, thrown', 302), host);
+
+    expect(captured.status).toBe(500);
+    expect(JSON.stringify(captured.payload)).toContain('INTERNAL_ERROR');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it('does not log a framework 4xx — a client error is not an incident either', () => {
     const spy = spyOnErrorLog();
     const { host } = fakeHost();

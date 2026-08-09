@@ -54,9 +54,25 @@ describe('router-level failures', () => {
 
   it('leaks no Fastify internals through it', async () => {
     const raw = await (await fetch(`${baseUrl}/${API_PREFIX}/${BAD_URL}`)).text();
+
+    // Fastify's own response shape.
     expect(raw).not.toContain('FST_ERR');
     expect(raw).not.toContain('statusCode');
     expect(raw).not.toContain('"error":"Bad Request"');
+
+    // And the stack, which the three assertions above CANNOT see — measured:
+    // forwarding `error.stack` from the 4xx branch left this whole suite green
+    // while the wire carried absolute filesystem paths, pinned dependency
+    // versions (`.pnpm/fastify@5.10.0/…`, `find-my-way@9.7.0/…`) and Node
+    // internals down to `HTTPParser.parserOnHeadersComplete`. `@fastify/error`
+    // sets `name = 'FastifyError'` and keeps `FST_ERR_BAD_URL` only on `.code`,
+    // so the token those assertions look for never appears in the thing they
+    // are meant to detect. These four are the same guard
+    // error-filter.integration.test.ts already had on the filter path.
+    expect(raw).not.toContain('stack');
+    expect(raw).not.toContain('.js:');
+    expect(raw).not.toContain('node_modules');
+    expect(raw).not.toContain('\n    at ');
   });
 
   it('carries a request id in the body AND on the header', async () => {

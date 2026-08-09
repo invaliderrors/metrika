@@ -170,6 +170,14 @@ This table is the whole closed union, and `apps/api`'s `DOMAIN_ERROR_RESPONSE` i
 filter reports for a framework 404, so that an unmatched route does not have to ship
 under a code this table pins at 400.
 
+**A framework rejection keeps the framework's status and takes only its code from us**, so
+`VALIDATION_FAILED` is the one code that may appear at any 4xx. This is not a theoretical
+path: Fastify raises `FST_ERR_BAD_URL` (400) for a malformed percent-escape and
+`FST_ERR_MAX_PARAM_LENGTH` (414) on any route carrying a `:param`, both before a single
+line of application code runs, and both before Nest's pipeline exists at all — they are
+answered by the `frameworkErrors` handler rather than the exception filter. Reading the
+status from the table instead would have shipped Fastify's own 415 and 414 as 400.
+
 **An `HttpException` with a 5xx status is never described to the client.** It is reported
 as `INTERNAL_ERROR` at 500 and logged. `HttpException` is the class every Nest library
 throws — `@nestjs/terminus` signals an unhealthy check with `ServiceUnavailableException`

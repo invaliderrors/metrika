@@ -68,6 +68,21 @@ export function domainErrorResponse(
 }
 
 /**
+ * Whether a status is one the framework may describe to the client in its own
+ * words — 4xx, and only 4xx.
+ *
+ * BOTH bounds matter, and the lower one was missing. MEASURED with only
+ * `status < 500`: an `HttpException` or `FastifyError` carrying 200 or 302 — any
+ * library can throw one — produced a full error envelope AT 200 or 302, a
+ * response no client branches on as an error. It also let a `statusCode` below
+ * 100 reach `reply.statusCode`, which throws `FST_ERR_BAD_STATUS_CODE` out of a
+ * hook that must not throw.
+ */
+export function isFrameworkRejection(status: number): boolean {
+  return status >= 400 && status < 500;
+}
+
+/**
  * A rejection THE FRAMEWORK decided — an unmatched route, a guard, a body over
  * the limit, a content type Fastify will not parse. Here the STATUS is the fact
  * and we choose only a code to describe it.

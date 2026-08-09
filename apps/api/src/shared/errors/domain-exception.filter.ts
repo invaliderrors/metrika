@@ -11,6 +11,7 @@ import {
   domainErrorResponse,
   frameworkErrorResponse,
   internalErrorResponse,
+  isFrameworkRejection,
   type ErrorResponse,
 } from './error-response.js';
 import { getRequestId } from '../request-context/request-context.js';
@@ -66,7 +67,10 @@ export class DomainExceptionFilter implements ExceptionFilter {
     // detail. A 5xx from any library is a condition WE failed at, so it falls
     // through to the generic branch below and is logged rather than described to
     // the client.
-    if (exception instanceof HttpException && exception.getStatus() < 500) {
+    // Both bounds, not just `< 500`: MEASURED, with only an upper bound a
+    // `new HttpException('x', 302)` from any library produced a full error
+    // envelope at 302 — a status no client branches on as an error.
+    if (exception instanceof HttpException && isFrameworkRejection(exception.getStatus())) {
       send(reply, frameworkErrorResponse(exception.getStatus(), exception.message, requestId));
       return;
     }
