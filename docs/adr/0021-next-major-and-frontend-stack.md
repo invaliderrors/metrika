@@ -1,6 +1,6 @@
 # ADR-0021 — Next.js 16 and the pinned frontend stack
 
-**Status:** Accepted · **Date:** 2026-08-09
+**Status:** Accepted · **Date:** 2026-08-09 · **Scoped by** [ADR-0023](./0023-eslint-plugin-resolution.md) (plugin declaration) and [ADR-0024](./0024-types-node-pin.md) (the `@types/node` pin — this ADR's `26.2.0` is superseded by `24.13.3`)
 
 > **On the number.** Plan 0B-2 Task 1 asked for this to be ADR-0020. That number
 > was taken by [ADR-0020](./0020-internal-package-build-output.md) (merged in
