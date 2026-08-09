@@ -88,10 +88,13 @@ Three obligations travel with the decision:
    nothing outside `apps/api` needs them.
 3. **Fixtures, not assertions.** A controller whose return omits a required
    field or supplies the wrong base type must fail `tsc`, and the emitted
-   document's schemas must be non-empty. Both are asserted in
-   `apps/api/test/openapi.integration.test.ts`, because "the schema is empty
-   but nothing errored" is the exact failure mode that made ts-rest look like it
-   worked.
+   document's schemas must be non-empty. Both must be asserted in
+   `apps/api/test/openapi.integration.test.ts`, which the task that adds
+   document emission creates — because "the schema is empty but nothing errored"
+   is the exact failure mode that made ts-rest look like it worked. Until that
+   file exists this obligation is stated and unmet, which is the honest reading:
+   this ADR lands with the validation half (obligation 1) fixtured and the
+   emission half not yet written.
 
 ## Alternatives
 

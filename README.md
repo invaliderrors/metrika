@@ -50,7 +50,7 @@ Orchestrated by **Temporal Cloud**. Storage in **S3**. Data in **PostgreSQL** wi
 
 ## Stack
 
-Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zustand · NestJS · Fastify · Prisma · PostgreSQL · Redis · Temporal · Python · Trimesh · Manifold3D · PrusaSlicer · Zod · ts-rest · AWS ECS Fargate · Terraform · OpenTelemetry · Vitest · Playwright · pnpm · Turborepo · uv
+Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zustand · NestJS · Fastify · Prisma · PostgreSQL · Redis · Temporal · Python · Trimesh · Manifold3D · PrusaSlicer · Zod · nestjs-zod · AWS ECS Fargate · Terraform · OpenTelemetry · Vitest · Playwright · pnpm · Turborepo · uv
 
 ## Quick start
 

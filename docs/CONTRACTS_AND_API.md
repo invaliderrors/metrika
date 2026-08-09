@@ -14,9 +14,9 @@ Metrika defines a concept once, in Zod, in `packages/contracts`, and derives the
 graph LR
     Z["Zod schema<br/>packages/contracts"]
     Z -->|z.infer| T[TypeScript types]
-    Z -->|@ts-rest/nest| V[Runtime request/response validation]
-    Z -->|@ts-rest/open-api| O[OpenAPI 3.1]
-    Z -->|@ts-rest/react-query| C[Typed client + hooks]
+    Z -->|nestjs-zod| V[Runtime request/response validation]
+    Z -->|nestjs-zod + @nestjs/swagger| O[OpenAPI 3.1]
+    Z -->|orval, from the emitted document| C[Typed client + hooks]
     Z -->|zod-to-json-schema → datamodel-codegen| P[pydantic models — Python workers]
     Z -->|z.infer| E[Event payload types]
 ```
@@ -25,51 +25,62 @@ There is no hand-written DTO, no hand-written frontend interface, no hand-writte
 
 ---
 
-## 2. ts-rest — the decision and its escape hatch
+## 2. `nestjs-zod` — the decision and its escape hatch
+
+ADR-0009 chose ts-rest, gated on a Phase 0 spike. The spike ran and ts-rest
+failed it — `@ts-rest/core` hard-pinned to Zod 3 internals, no publish of any
+kind in fourteen months, and `@ts-rest/open-api` emitting silently empty schemas
+against Zod 4. The documented fallback was taken. See
+[ADR-0019](./adr/0019-nestjs-zod-contracts.md), which supersedes ADR-0009 and
+records the measurements.
+
+A schema in `packages/contracts` becomes a DTO in `apps/api`, and the controller
+is type-checked against it:
 
 ```ts
-// packages/contracts/src/api/quotes.contract.ts
-import { initContract } from '@ts-rest/core';
+// apps/api/src/modules/quotes/quotes.dto.ts
+import { metrikaDto } from '../../shared/http/zod-dto.js';
+import { CreateQuoteRequest, QuoteResponse } from '@metrika/contracts';
 
-const c = initContract();
-
-export const quotesContract = c.router({
-  create: {
-    method: 'POST',
-    path: '/quotes',
-    body: CreateQuoteRequest,
-    responses: { 202: QuoteResponse, 400: ApiErrorResponse, 409: ApiErrorResponse },
-    summary: 'Create a quote for a configured model version',
-  },
-  get: {
-    method: 'GET',
-    path: '/quotes/:quoteId',
-    pathParams: z.object({ quoteId: QuoteId }),
-    responses: { 200: QuoteResponse, 404: ApiErrorResponse },
-  },
-  accept: {
-    method: 'POST',
-    path: '/quotes/:quoteId/accept',
-    pathParams: z.object({ quoteId: QuoteId }),
-    body: AcceptQuoteRequest,
-    responses: { 200: OrderResponse, 409: ApiErrorResponse, 410: ApiErrorResponse },
-  },
-  list: {
-    method: 'GET',
-    path: '/quotes',
-    query: CursorPaginationQuery.merge(QuoteFilterQuery),
-    responses: { 200: paginated(QuoteSummary) },
-  },
-}, { pathPrefix: '/api/v1' });
+export class CreateQuoteRequestDto extends metrikaDto(CreateQuoteRequest) {}
+export class QuoteResponseDto extends metrikaDto(QuoteResponse) {}
 ```
 
-The NestJS controller is type-checked against this contract — a response missing a field does not compile. The client is generated from the same object. OpenAPI is emitted from it.
+```ts
+// apps/api/src/modules/quotes/quotes.controller.ts
+@Post()
+@ZodResponse({ status: 202, type: QuoteResponseDto })
+async create(@Body() body: CreateQuoteRequestDto): Promise<QuoteResponseDto> { … }
+```
 
-**The risk, stated plainly:** ts-rest has a smaller community than `@nestjs/swagger`, and it constrains the API shape to what its router can express. If it were abandoned, we would have a problem.
+`packages/contracts` stays pure Zod — `createZodDto()` drags in a framework, and
+the boundary rule there permits only `zod`. The DTO wrappers therefore live in
+`apps/api`, next to the controllers that use them, and nothing outside `apps/api`
+needs them because the client is generated from the emitted OpenAPI document
+rather than from the wrapper objects.
 
-**Why the risk is acceptable:** the source of truth is Zod, not ts-rest. The contract objects are thin structural wrappers around schemas that would survive unchanged. Migrating off means hand-writing controllers and generating a client from the emitted OpenAPI — roughly a week, not a rewrite.
+**Two registrations, or response validation is off.** `metrikaDto()` passes
+`{ codec: true }`, which is what makes `@ZodResponse` check the handler's return
+against the schema's _output_ type — `.brand()` is output-only in Zod, so
+without it a plain unbranded string satisfies a branded-ID response field and
+ships. `@ZodResponse` then only ATTACHES metadata; the global
+`{ provide: APP_INTERCEPTOR, useClass: ZodSerializerInterceptor }` provider in
+`AppModule` is what reads it and parses the response at request time. Either one
+alone is silent. A lint rule makes `metrikaDto()` the only sanctioned
+`createZodDto` call site, and `apps/api/test/health.integration.test.ts` plus
+`apps/api/test/response-validation.test.ts` fail if either registration is
+removed.
 
-**Phase 0 spike gate.** Before committing, verify: current ts-rest works with the chosen Zod major version, with Nest on the Fastify adapter, and emits valid OpenAPI 3.1. **Documented fallback:** `nestjs-zod` for validation and OpenAPI generation, plus `orval` to generate the client from the emitted spec. Same Zod schemas, more codegen, less elegance. See [ADR-0009](./adr/0009-ts-rest-contracts.md).
+**The risk, stated plainly:** `@nestjs/swagger` drags `class-transformer` and
+`class-validator` in as peers even though `nestjs-zod` replaces them for
+validation, and neither library's default OpenAPI path emits a 3.1-versioned
+document — the version is overridden by hand, in exactly one function that every
+emitter calls.
+
+**Why the risk is acceptable:** the source of truth is Zod, not `nestjs-zod`.
+The DTO classes are one-line structural wrappers around schemas that would
+survive unchanged. That is the same bounded migration cost ADR-0009 predicted,
+and paying it once is the evidence that it stays bounded.
 
 ---
 
@@ -238,7 +249,12 @@ This is deliberately a build-time artefact rather than a runtime dependency — 
 
 ## 6. OpenAPI
 
-Generated from the contract, served at `/api/v1/openapi.json`, with Scalar as the documentation UI.
+Generated from the Zod DTOs by `@nestjs/swagger` + `nestjs-zod`, served at
+`/api/v1/openapi.json`, with Scalar as the documentation UI. No generator in
+this space emits a 3.1-versioned document by default, so the version is
+overridden explicitly — in exactly one `buildOpenApiDocument`, so a second
+emitter added later cannot silently claim 3.0 while containing 3.1-only
+constructs. See [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
 
 CI diffs the generated spec against the committed baseline. A breaking change — a removed field, a narrowed type, a new required request property — fails the build unless the pull request carries an `api-breaking-change` label and updates the baseline. This is the mechanism that makes "do not break the client" a rule rather than an aspiration.
 

@@ -107,7 +107,7 @@ export async function withTemporal<T>(fn: (env: TestWorkflowEnvironment) => Prom
 
 Containers start once per suite; each test runs inside a transaction that is rolled back, giving isolation without container churn.
 
-Covered: repositories against real Postgres (including RLS behaviour), API modules end to end through the ts-rest handler, the S3 adapter against MinIO, Temporal activities against the time-skipping test environment, migration up/down smoke tests, and the outbox poller's at-least-once delivery under concurrent writers.
+Covered: repositories against real Postgres (including RLS behaviour), API modules end to end through the real Nest bootstrap, the S3 adapter against MinIO, Temporal activities against the time-skipping test environment, migration up/down smoke tests, and the outbox poller's at-least-once delivery under concurrent writers.
 
 ### RLS tests are their own category
 
