@@ -9,6 +9,13 @@ import { z } from 'zod';
  */
 export const DomainErrorCode = z.enum([
   'VALIDATION_FAILED',
+  // Request-level, not domain-level: no such route, or a resource the router
+  // itself cannot name. The three resource-specific NOT_FOUNDs below answer
+  // "this quote/model/order does not exist"; none of them can honestly answer
+  // "this endpoint does not exist", and the API's exception filter needs a code
+  // whose mapped status is 404 so that a framework 404 does not have to ship
+  // under a code the contract table pins at 400.
+  'ROUTE_NOT_FOUND',
   'UNAUTHENTICATED',
   'INSUFFICIENT_PERMISSIONS',
   'MODEL_NOT_FOUND',

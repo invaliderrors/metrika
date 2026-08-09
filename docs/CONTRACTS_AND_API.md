@@ -150,19 +150,31 @@ export const ApiErrorResponse = z.object({
 });
 ```
 
-| Code                                                                                         | HTTP |
-| -------------------------------------------------------------------------------------------- | ---- |
-| `VALIDATION_FAILED`, `INVALID_PRINT_CONFIGURATION`, `UNSUPPORTED_FILE_FORMAT`                | 400  |
-| `UNAUTHENTICATED`                                                                            | 401  |
-| `INSUFFICIENT_PERMISSIONS`                                                                   | 403  |
-| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND`, `ORDER_NOT_FOUND`                                      | 404  |
-| `INVALID_STATE_TRANSITION`, `QUOTE_SUPERSEDED`, `IDEMPOTENCY_KEY_REUSED`                     | 409  |
-| `QUOTE_EXPIRED`                                                                              | 410  |
-| `FILE_TOO_LARGE`, `MODEL_TOO_COMPLEX`                                                        | 413  |
-| `UNITS_NOT_CONFIRMED`, `MODEL_NOT_READY`, `DOES_NOT_FIT_BUILD_VOLUME`, `MODEL_NOT_PRINTABLE` | 422  |
-| `RATE_LIMITED`, `QUOTA_EXCEEDED`                                                             | 429  |
-| `GEOMETRY_ANALYSIS_FAILED`, `SLICING_FAILED`, `PAYMENT_VERIFICATION_FAILED`                  | 502  |
-| `INTERNAL_ERROR`                                                                             | 500  |
+| Code                                                                                                                    | HTTP |
+| ----------------------------------------------------------------------------------------------------------------------- | ---- |
+| `VALIDATION_FAILED`, `INVALID_PRINT_CONFIGURATION`, `UNSUPPORTED_FILE_FORMAT`, `CHECKSUM_MISMATCH`, `MALICIOUS_ARCHIVE` | 400  |
+| `UNAUTHENTICATED`                                                                                                       | 401  |
+| `INSUFFICIENT_PERMISSIONS`                                                                                              | 403  |
+| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND`, `ORDER_NOT_FOUND`, `ROUTE_NOT_FOUND`                                              | 404  |
+| `INVALID_STATE_TRANSITION`, `QUOTE_SUPERSEDED`, `IDEMPOTENCY_KEY_REUSED`                                                | 409  |
+| `QUOTE_EXPIRED`                                                                                                         | 410  |
+| `FILE_TOO_LARGE`, `MODEL_TOO_COMPLEX`                                                                                   | 413  |
+| `UNITS_NOT_CONFIRMED`, `MODEL_NOT_READY`, `DOES_NOT_FIT_BUILD_VOLUME`, `MODEL_NOT_PRINTABLE`, `IMPLAUSIBLE_SCALE`       | 422  |
+| `RATE_LIMITED`, `QUOTA_EXCEEDED`                                                                                        | 429  |
+| `GEOMETRY_ANALYSIS_FAILED`, `SLICING_FAILED`, `PAYMENT_VERIFICATION_FAILED`                                             | 502  |
+| `INTERNAL_ERROR`                                                                                                        | 500  |
+
+This table is the whole closed union, and `apps/api`'s `DOMAIN_ERROR_RESPONSE` is a
+`Record` over it, so a code added to `DomainErrorCode` without a row here fails `tsc`.
+`ROUTE_NOT_FOUND` is the one code no domain operation throws: it is what the exception
+filter reports for a framework 404, so that an unmatched route does not have to ship
+under a code this table pins at 400.
+
+**An `HttpException` with a 5xx status is never described to the client.** It is reported
+as `INTERNAL_ERROR` at 500 and logged. `HttpException` is the class every Nest library
+throws — `@nestjs/terminus` signals an unhealthy check with `ServiceUnavailableException`
+carrying per-indicator detail — and its `message` is written for an operator, not for a
+customer.
 
 **A known domain failure never returns 500.** A generic 500 for a condition the domain understands is a bug — it tells the client nothing and hides a real state from monitoring.
 
