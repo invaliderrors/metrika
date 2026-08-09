@@ -17,3 +17,12 @@ allowBuilds:
   cpu-features: true
   protobufjs: true
   ssh2: true
+  # DENIED, deliberately. Reached via swagger-ui-dist → @nestjs/swagger
+  # (ADR-0019). Its install script is analytics: it posts package, version and
+  # platform to scarf.sh on every install, including CI. Nothing in this repo
+  # serves swagger-ui — the OpenAPI document is emitted to a file — so the
+  # package is inert either way and the only thing its build script would do is
+  # phone home. `false` rather than deletion: an absent entry is what
+  # ERR_PNPM_IGNORED_BUILDS complains about, and would leave the next person to
+  # re-decide this from scratch.
+  '@scarf/scarf': false
