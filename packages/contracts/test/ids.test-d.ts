@@ -24,7 +24,34 @@ import type {
  * `AssignableMember<U, T>` distributes over the union `U` and yields `true`
  * if ANY single member is assignable to `T`, `never` otherwise. Asserting the
  * result is `never` therefore fails on one collision anywhere in the matrix,
- * not just on a neighbouring one.
+ * not just on a neighbouring one. Each of the 11 `NoCollision<K>` checks
+ * compares one ID against the union of the other 10 in a single distributed
+ * conditional; 11 checks × 10 others each covers all 55 unordered pairs, in
+ * both assignability directions.
+ *
+ * Mutation-tested against four cases — each edit made to src/ids.ts, `pnpm
+ * --filter @metrika/contracts typecheck` and `test:unit` re-run to confirm
+ * `TS2344: Type 'false' does not satisfy the constraint 'true'.` on the
+ * affected `_XIsUnique` alias(es), then reverted:
+ *   - non-adjacent collision: `UserId := brandedUuid('QuoteId')` → fails
+ *     `_UserIdIsUnique` and `_QuoteIdIsUnique`
+ *   - a second, unrelated non-adjacent collision:
+ *     `OrganizationId := brandedUuid('MaterialId')` → fails
+ *     `_OrganizationIdIsUnique` and `_MaterialIdIsUnique`
+ *   - adjacent collision (the one case the old ring also caught):
+ *     `PrintJobId := brandedUuid('SliceJobId')` → fails
+ *     `_SliceJobIdIsUnique` and `_PrintJobIdIsUnique`
+ *   - total brand loss (schema stops calling `.brand()` entirely):
+ *     `SliceJobId := z.string()` → fails `_SliceJobIdIsUnique` alone, because
+ *     every remaining branded ID structurally extends bare `string`
+ *
+ * Read `vitest run --coverage` output carefully: a failure here surfaces as
+ * `Test Files: N failed` and a `FAIL … TypeCheckError` block, and as a
+ * non-zero exit code from both `pnpm typecheck` and `pnpm test:unit` — NOT
+ * as a change to the "Tests passed" or "Type Errors" summary lines further
+ * down. Those two lines are separate Vitest counters (runtime test results;
+ * a distinct diagnostics tally) that stay unchanged even when every
+ * assertion in this file fails, and reading only them looks like a pass.
  *
  * These are raw type-level assertions rather than `expectTypeOf`, because a
  * `type X = Expect<...>` is checked by BOTH `pnpm typecheck` (tsconfig.json
