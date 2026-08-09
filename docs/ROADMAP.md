@@ -80,8 +80,8 @@
 | 0.15 | **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in an ADR. **Outcome: ts-rest failed; `nestjs-zod` adopted in ADR-0019** | throwaway branch                                                              |
 | 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                                                              | root, `docs/`                                                                 |
 
-Progress: 0.1–0.5, 0.12 complete for what Plan 0A scoped. Remaining: 0.6–0.11,
-0.13–0.16. Caveats on the ✅ rows: several describe end-state work that lands
+Progress: 0.1–0.5, 0.12 complete for what Plan 0A scoped; 0.15 decided (see the
+outcome noted on its row). Remaining: 0.6–0.11, 0.13, 0.14, 0.16. Caveats on the ✅ rows: several describe end-state work that lands
 incrementally as the runtimes that need it are built. 0.1's `test:integration`
 turbo task and remote caching don't exist yet — `turbo.json` defines only
 `typecheck`, `lint`, `test:unit` and `build`, and `pnpm verify` logs "Remote

@@ -251,10 +251,11 @@ This is deliberately a build-time artefact rather than a runtime dependency — 
 
 Generated from the Zod DTOs by `@nestjs/swagger` + `nestjs-zod`, served at
 `/api/v1/openapi.json`, with Scalar as the documentation UI. No generator in
-this space emits a 3.1-versioned document by default, so the version is
+this space emits a 3.1-versioned document by default, so the version must be
 overridden explicitly — in exactly one `buildOpenApiDocument`, so a second
 emitter added later cannot silently claim 3.0 while containing 3.1-only
-constructs. See [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
+constructs. See [ADR-0019](./adr/0019-nestjs-zod-contracts.md). The emitter
+itself does not exist yet; it lands with the OpenAPI emission task.
 
 CI diffs the generated spec against the committed baseline. A breaking change — a removed field, a narrowed type, a new required request property — fails the build unless the pull request carries an `api-breaking-change` label and updates the baseline. This is the mechanism that makes "do not break the client" a rule rather than an aspiration.
 
@@ -265,7 +266,7 @@ CI diffs the generated spec against the committed baseline. A breaking change �
 `/api/v1` is in the path from day one. Since the only consumer is our own frontend, deployed together, v1 will live a long time. The policy for when a v2 becomes necessary:
 
 - **Additive changes** (new optional fields, new endpoints, new enum values on responses) ship in v1.
-- **Breaking changes** require v2 for the affected routes only — `packages/contracts` can export `v1` and `v2` routers side by side, and Nest mounts both.
+- **Breaking changes** require v2 for the affected routes only. Under [ADR-0019](./adr/0019-nestjs-zod-contracts.md) that means a second controller and DTO set in `apps/api` mounted alongside the first — **not** two routers exported from `packages/contracts`, which imports nothing but `zod` and can hold neither `initContract().router()` nor `createZodDto()`. `packages/contracts` holds the schemas both versions parse against; the routes live in the app.
 - A deprecated version is supported for 6 months after its successor ships, with `Deprecation` and `Sunset` headers.
 
 New enum values are a subtle breaking change for a strict client, so response enums are typed as unions with a documented "unknown value" handling rule in the client — it surfaces unknown values rather than throwing.

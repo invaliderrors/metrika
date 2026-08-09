@@ -24,6 +24,18 @@ import { AppModule } from '../src/app.module.js';
  * at 100%. Two innocuous commits, project-wide response validation off, nothing
  * red. This assertion breaks that chain at the module, and the `latencyMs`
  * assertion in the health suite breaks it at the controller.
+ *
+ * What it does NOT cover, deliberately: this reads decorator metadata and never
+ * boots Nest, so it cannot prove the interceptor RUNS. Nothing here pins
+ * AppModule as the root passed to NestFactory.create — swap the root module and
+ * this stays green. Runtime proof is the health suite's job.
+ *
+ * It also pins the SHAPE of the registration, not the fact of validation being
+ * on: an equivalent `useFactory` binding of the same interceptor, or
+ * registration from a submodule (Nest hoists any APP_INTERCEPTOR regardless of
+ * declaring module), fails here while validation is genuinely on. MEASURED.
+ * That is a false positive in the safe direction — but if you arrive here after
+ * such a refactor, update the assertion; you have not found a real bug.
  */
 describe('AppModule providers', () => {
   it('registers ZodSerializerInterceptor globally — @ZodResponse validates nothing without it', () => {

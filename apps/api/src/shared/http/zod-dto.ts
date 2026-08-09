@@ -17,9 +17,12 @@ import type { ZodType } from 'zod';
  * `{ provide: APP_INTERCEPTOR, useClass: ZodSerializerInterceptor }` provider in
  * src/app.module.ts, which is what reads that metadata and parses the response
  * at request time. Delete that provider and every route in this app answers 200
- * with whatever the handler returned. Both halves, or neither works — the only
- * thing that notices is the readiness fixture in
- * test/health.integration.test.ts.
+ * with whatever the handler returned. Both halves, or neither works. Two tests
+ * notice: test/response-validation.test.ts asserts the provider is registered
+ * on AppModule, and the readiness fixture in test/health.integration.test.ts
+ * asserts at request time that latencyMs is actually stripped. The first alone
+ * would pass if the interceptor stopped working; the second alone was
+ * defeatable by tidying the handler to stop over-returning the field.
  *
  * The return type is written out rather than inferred. `apps/api`'s build
  * inherits `composite`/`declaration: true`, so TypeScript has to NAME
