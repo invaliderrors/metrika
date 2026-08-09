@@ -5,8 +5,9 @@
 > **On the number.** Plan 0B-2 Task 1 asked for this to be ADR-0020. That number
 > was taken by [ADR-0020](./0020-internal-package-build-output.md) (merged in
 > `b1b565b`) between the plan being written and the spike being run, and ADRs are
-> immutable. This is 0021. Wherever Plan 0B-2 says "ADR-0020's table", read
-> "ADR-0021's table".
+> immutable, so this is 0021. Plan 0B-2's references were corrected in `36193a1`;
+> the note stays because a reader coming from an older copy of the plan will
+> otherwise open ADR-0020 and find a document about package build outputs.
 
 ## Context
 
