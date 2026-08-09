@@ -48,14 +48,27 @@ export function createPrismaClient(config: DatabaseConfig): PrismaClient {
  * `set_config(name, value, is_local => true)` rather than `SET LOCAL`: they are
  * equivalent, but `SET LOCAL` cannot take a bind parameter, so using it would
  * mean interpolating `organizationId` into SQL text.
+ *
+ * This is an interactive transaction, which holds one pooled connection for
+ * `fn`'s entire duration and fails with `P2028` if it runs past Prisma's
+ * default `timeout` (5s) or waits past `maxWait` (2s) for a connection. `fn`
+ * is meant for request-scoped repository work, not a slow background job —
+ * a caller doing genuinely long-running work (geometry analysis, slicing)
+ * belongs in a worker activity outside any interactive transaction entirely,
+ * per the "no geometry work inside an HTTP request" rule. The explicit
+ * `timeout` below only raises the ceiling for ordinary request-scoped work;
+ * it does not make this the right tool for long operations.
  */
 export async function withOrganizationContext<T>(
   client: PrismaClient,
   organizationId: string,
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
-  return client.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_org_id', ${organizationId}, true)`;
-    return fn(tx);
-  });
+  return client.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_org_id', ${organizationId}, true)`;
+      return fn(tx);
+    },
+    { timeout: 10_000 },
+  );
 }
