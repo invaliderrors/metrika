@@ -7,6 +7,46 @@ const ROOT = new URL('..', import.meta.url).pathname;
 const STATIC_DIR = join(ROOT, '.next', 'static');
 
 /**
+ * The balanced `{ … }` block that follows `marker`, or `null` if the marker is
+ * absent.
+ *
+ * Brace counting rather than a regex, because the regions this test reads —
+ * `@layer theme` and the `prefers-color-scheme` media query — both CONTAIN a
+ * nested `@supports` block holding a second copy of every declaration (the
+ * lab() fallback Lightning CSS emits under an oklch() source). An earlier
+ * version matched `[^@]*` after the marker, which happened to work only because
+ * Turbopack emits the plain declarations before the nested `@supports`. That is
+ * an ordering coincidence, not a guarantee: reorder them upstream and the
+ * assertion goes red on a stylesheet that is perfectly correct.
+ *
+ * Assumes no `{` or `}` inside a string or comment within the block. True of
+ * these two regions, which hold only custom-property declarations.
+ */
+function balancedBlockAfter(css: string, marker: string): string | null {
+  const markerAt = css.indexOf(marker);
+  if (markerAt === -1) return null;
+  const open = css.indexOf('{', markerAt);
+  if (open === -1) return null;
+
+  let depth = 0;
+  for (let i = open; i < css.length; i += 1) {
+    if (css[i] === '{') depth += 1;
+    else if (css[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return css.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/** Every value declared for `property` anywhere in `block`, in source order. */
+function declaredValues(block: string, property: string): string[] {
+  return [...block.matchAll(new RegExp(`${property}\\s*:\\s*([^;}]+)`, 'g'))].map((m) =>
+    (m[1] ?? '').trim(),
+  );
+}
+
+/**
  * THE SLOWEST TEST IN THIS PACKAGE, deliberately. It runs a real production
  * `next build` because nothing cheaper distinguishes "Tailwind processed these
  * sources" from "Tailwind never ran". The thing under test is the PostCSS
@@ -52,6 +92,7 @@ describe('the Tailwind pipeline', () => {
     // A rule body, not a class name: `.p-8{...}` proves the compiler ran,
     // whereas the string `p-8` also appears in an unprocessed className.
     expect(all).toMatch(/\.p-8\s*\{[^}]*padding/);
+
     // The custom token resolves, so the theme block is being read.
     //
     // A DECLARATION (`--color-brand:`), not a substring. MEASURED by mutation:
@@ -62,29 +103,51 @@ describe('the Tailwind pipeline', () => {
     // the `var(--color-brand)` references in the utilities.
     expect(all).toMatch(/--color-brand\s*:/);
 
-    // NEGATIVE CONTROL. Both assertions above would also pass against a stock
+    // NEGATIVE CONTROL. Every assertion above would also pass against a stock
     // Tailwind stylesheet that had never been scanned against this app —
-    // `.p-8` and `--color-brand` are in every sheet Tailwind could emit.
-    // `italic` is an equally ordinary utility that nothing under `src/` uses, so
+    // `.p-8` and `--color-brand` are in every sheet Tailwind could emit. The
+    // sentinel below is an ordinary utility that nothing under `src/` uses, so
     // its ABSENCE is what proves the sheet was derived from these files.
     //
-    // This control only means anything because `globals.css` scopes Tailwind's
-    // source detection to `src/` with `source('../')`. MEASURED with the default
-    // unscoped `@import 'tailwindcss'`: Tailwind scans the whole package, THIS
-    // FILE included, and the words `p-8` and `italic` in the assertions above
-    // are themselves enough to make both utilities appear in the output — the
-    // `.p-8` assertion passed with `page.tsx` carrying no className at all. A
-    // test that is an input to the thing it tests asserts nothing. If you ever
-    // legitimately use `italic`, swap in another unused class; do not delete it.
-    expect(all).not.toMatch(/\.italic\s*\{/);
+    // The sentinel is an ARBITRARY-VALUE utility on purpose. It was `italic`,
+    // which is also an ordinary English word: any prose comment under `src/`
+    // mentioning it would have failed the build for no reason. That is not
+    // hypothetical — `.block` ships in the production sheet solely because
+    // `src/config/process-env.d.ts` uses the word, and `.outline` ships because
+    // it is a cva variant key in `button.tsx`. `p-[13px]`, with the brackets,
+    // cannot occur in prose. Note what that makes the control mean precisely:
+    // the sheet is derived from the TEXT of `src/`, not from what the app
+    // renders. If you ever need this exact padding, change the sentinel; do not
+    // delete the assertion.
+    //
+    // The emitted selector escapes the brackets — `.p-\[13px\]` — hence the
+    // double backslashes.
+    expect(all).not.toMatch(/\.p-\\\[13px\\\]/);
 
-    // The dark scheme survives as a CONDITIONAL rule. MEASURED on
-    // tailwindcss@4.3.3, a `@theme` block nested inside
-    // `@media (prefers-color-scheme: dark)` is hoisted out of the media query,
+    // ── The two schemes are genuinely two schemes ──────────────────────────
+    //
+    // MEASURED on tailwindcss@4.3.3, a `@theme` block nested inside
+    // `@media (prefers-color-scheme: dark)` is hoisted OUT of the media query,
     // so the dark values land unconditionally on `:root` and the light theme
-    // silently ceases to exist — with `next build` exiting 0. In that broken
-    // form the emitted sheet contains no `prefers-color-scheme` rule at all,
-    // which is what this catches. See the comment in `globals.css`.
-    expect(all).toMatch(/prefers-color-scheme\s*:\s*dark\)[^@]*--color-surface\s*:/);
+    // silently ceases to exist — with `next build` exiting 0.
+    //
+    // Asserting only that a dark rule exists is not enough, and this is
+    // measured too: set the light `--color-surface` in `@theme` to the dark
+    // value by hand and every "a dark rule exists" assertion stays green while
+    // the app ships permanently dark, which is the very bug this guards. So the
+    // assertion is that the two blocks declare DIFFERENT values.
+    //
+    // Compared as sets rather than first-match, so it cannot be broken by the
+    // order Lightning CSS emits a declaration and its `@supports` fallback in.
+    const themeBlock = balancedBlockAfter(all, '@layer theme');
+    const darkBlock = balancedBlockAfter(all, 'prefers-color-scheme');
+    expect(themeBlock, 'no @layer theme block in the emitted stylesheet').not.toBeNull();
+    expect(darkBlock, 'no prefers-color-scheme rule in the emitted stylesheet').not.toBeNull();
+
+    const light = declaredValues(themeBlock ?? '', '--color-surface');
+    const dark = declaredValues(darkBlock ?? '', '--color-surface');
+    expect(light.length).toBeGreaterThan(0);
+    expect(dark.length).toBeGreaterThan(0);
+    expect(light.filter((value) => dark.includes(value))).toEqual([]);
   });
 }, 180_000);
