@@ -218,11 +218,23 @@ describe('registration', () => {
   it('keeps RequestContextModule out of AppModule — importing it double-registers the middleware', () => {
     // The composed app registers the middleware once, globally, in bootstrap.ts,
     // because it sets a global prefix and MiddlewareConsumer cannot escape one
-    // on platform-fastify. Importing the module as well is silent: MEASURED, the
-    // middleware then runs TWICE per request under /api/v1 — the outer run mints
-    // an id and the inner run replaces it — and lint, tsc and the whole
-    // integration suite stay green. Plan 0C's access log would be the first
-    // thing to notice, by recording a different id than the error body carried.
+    // on platform-fastify. Importing the module as well is silent on the wire:
+    // MEASURED, the middleware then runs TWICE per request under /api/v1 — the
+    // outer run mints an id and the inner run replaces it — with every header
+    // still correct. Plan 0C's access log would be the first thing to notice, by
+    // recording a different id than the error body carried.
+    //
+    // This assertion reads AppModule's `imports` METADATA, so it is the guard
+    // for the spellings that appear there. MEASURED: a direct import and a
+    // `[...BASE, RequestContextModule]` spread both exit 1 here; a dynamic
+    // `RequestContextModule.forRoot()` and a transitive import through another
+    // module both stay green, because neither puts this class in the array.
+    //
+    // The general guard is `runs the middleware exactly once per request` in
+    // request-context.integration.test.ts, which counts actual invocations and
+    // therefore sees all four. Keep both: this one names the mistake and points
+    // at the fix, that one is the one that cannot be spelled around. Since Task
+    // 13 wired the test:integration job, both run in CI.
     const imports: unknown = Reflect.getMetadata('imports', AppModule);
     expect(Array.isArray(imports)).toBe(true);
     expect(imports).not.toContain(RequestContextModule);

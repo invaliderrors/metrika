@@ -13,13 +13,24 @@ import { RequestContextMiddleware } from './request-context.middleware.js';
  * registers the same middleware globally with `app.use()` for that reason, and
  * MEASURED, importing this module as well runs the middleware TWICE per request
  * under `/api/v1`: the outer `app.use()` run mints an id and the inner run
- * immediately replaces it, with integration, lint and tsc all green. Nothing
- * would surface it until Plan 0C's access log recorded a different id than the
+ * immediately replaces it. Nothing on the wire changes, so the first thing to
+ * surface it would be Plan 0C's access log recording a different id than the
  * error body carried.
  *
- * `test/request-context.test.ts` asserts `AppModule.imports` does not contain
- * this module, which is the guard that keeps the above from happening by
- * accident.
+ * TWO guards, covering different spellings — neither is redundant:
+ *
+ * - `test/request-context.test.ts` asserts `AppModule.imports` does not contain
+ *   this module. MEASURED: that catches a direct import and a
+ *   `[...BASE, RequestContextModule]` spread, and MISSES a dynamic
+ *   `RequestContextModule.forRoot()` and a transitive import through another
+ *   module — both of which leave `imports` without this class in it.
+ * - `test/request-context.integration.test.ts` asserts the middleware runs
+ *   exactly once per request under the prefix. That is the general guard: it
+ *   sees every spelling, including the two the unit test cannot.
+ *
+ * This is no longer a local-only control. Task 13 added the `test:integration`
+ * job, so a direct import now exits 1 in CI on both counts rather than on
+ * neither.
  */
 @Module({})
 export class RequestContextModule implements NestModule {
