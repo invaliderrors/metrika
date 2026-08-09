@@ -105,6 +105,34 @@ describe('DomainExceptionFilter logging', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it('produces one identical envelope whatever was thrown', () => {
+    // Six shapes that reach the generic branch by different routes. The response
+    // must not vary with them at all — a body that differs by thrown shape is an
+    // oracle, and the differences are exactly the internals worth hiding. Kept
+    // as a set rather than six cases so that a new branch which "helpfully"
+    // describes one of them fails here.
+    spyOnErrorLog();
+    const thrown: readonly unknown[] = [
+      'a bare string',
+      { password: 'hunter2' },
+      null,
+      new Error('plain', { cause: new Error('the cause') }),
+      new AggregateError([new Error('one'), new Error('two')], 'aggregate'),
+      Object.assign(new Error('with a code'), { code: 'ECONNREFUSED' }),
+    ];
+
+    const bodies = thrown.map((value) => {
+      const { host, captured } = fakeHost();
+      new DomainExceptionFilter().catch(value, host);
+      return JSON.stringify({ status: captured.status, payload: captured.payload });
+    });
+
+    expect(new Set(bodies).size).toBe(1);
+    expect(bodies[0]).not.toContain('hunter2');
+    expect(bodies[0]).not.toContain('ECONNREFUSED');
+    expect(bodies[0]).toContain('INTERNAL_ERROR');
+  });
+
   it('logs a 5xx HttpException, because that one IS ours', () => {
     const spy = spyOnErrorLog();
     const { host, captured } = fakeHost();
