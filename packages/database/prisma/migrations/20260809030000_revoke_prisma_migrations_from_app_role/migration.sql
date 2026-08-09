@@ -1,0 +1,21 @@
+-- sql/00-app-role.sql's `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ...
+-- ON TABLES TO metrika_app` applies to every table the owner role (metrika)
+-- creates afterwards, with no way to exclude one table from SQL at the point
+-- that statement runs. Prisma's own `_prisma_migrations` tracking table is
+-- created by that same owner role, before any migration file executes, so it
+-- inherited SELECT/INSERT/UPDATE/DELETE for metrika_app exactly like a real
+-- domain table would. That means the application role — the one an
+-- accepted-quote-reconstruction bug or a compromised API process would be
+-- running as — could rewrite its own migration history, undermining the
+-- reproducibility guarantee this whole schema exists to protect.
+--
+-- This cannot be fixed in sql/00-app-role.sql itself: that file runs at
+-- container init, via docker-entrypoint-initdb.d, strictly before
+-- `prisma migrate deploy` ever runs, so `_prisma_migrations` does not exist
+-- yet when it executes — a REVOKE there would fail with
+-- "relation \"_prisma_migrations\" does not exist". It has to run as a
+-- migration: by the time the migrate engine applies ANY migration.sql
+-- (including the very first one), it has already created
+-- `_prisma_migrations` for its own bookkeeping, so the table is guaranteed to
+-- exist here.
+REVOKE ALL PRIVILEGES ON TABLE "_prisma_migrations" FROM metrika_app;
