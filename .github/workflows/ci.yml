@@ -110,11 +110,19 @@ jobs:
       # node_modules/ are excluded for the same reason (generated/vendored code, not
       # something this check should be reviewing) even though nothing in them currently
       # trips it.
+      #
+      # `.next` is the same story and is NOT hypothetical: the "Build" step above
+      # runs `next build`, and MEASURED on next@16.3.0 the emitted Turbopack
+      # bundles under apps/web/.next carry ~55 unjustified `eslint-disable` and
+      # `@ts-expect-error` lines from Next's own sources, plus `@ts-ignore` for
+      # the step below. Without this exclusion both suppression gates fail on a
+      # clean tree from the moment apps/web exists.
       - name: Reject unjustified suppressions
         run: |
           if grep -rnE '(eslint-disable[^\n]*|@ts-expect-error)' \
                --include='*.ts' --include='*.tsx' --include='*.js' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
+               --exclude-dir=.next \
                packages apps 2>/dev/null | grep -v -- '--'; then
             echo "::error::Every eslint-disable / @ts-expect-error needs a '-- <justification>'"
             exit 1
@@ -130,6 +138,7 @@ jobs:
         run: |
           if grep -rn '@ts-ignore' --include='*.ts' --include='*.tsx' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
+               --exclude-dir=.next \
                packages apps 2>/dev/null | grep -q .; then
             echo "::error::@ts-ignore is banned — use @ts-expect-error with a justification"
             exit 1
