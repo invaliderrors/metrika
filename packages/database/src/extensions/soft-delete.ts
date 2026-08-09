@@ -83,7 +83,17 @@ export const softDeleteExtension = Prisma.defineExtension({
         const safeArgs: QueryArgs = isQueryArgs(args) ? args : {};
 
         const where = safeArgs.where ?? {};
-        if ('deletedAt' in where) {
+        // `'deletedAt' in where` is true for a key that is PRESENT with value
+        // `undefined` — and Prisma treats `undefined` as "no filter", so that
+        // spelling would step the guard aside while injecting nothing. That
+        // shape is reachable without any unsafe cast: this repo's own
+        // `exactOptionalPropertyTypes` partial-update idiom (see
+        // docs/TYPESCRIPT_AND_TOOLING.md) spreads an optional field declared
+        // `?: Date | undefined` straight into a `where`, and the spread
+        // carries the key even when its value is `undefined`. Checking the
+        // VALUE rather than key presence treats "present but undefined" the
+        // same as "absent" — both fall through to the injected filter below.
+        if (where['deletedAt'] !== undefined) {
           return query(safeArgs);
         }
 

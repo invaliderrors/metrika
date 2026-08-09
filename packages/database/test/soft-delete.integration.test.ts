@@ -57,14 +57,19 @@ describe('soft-delete extension', () => {
     expect(after).toBe(before);
   });
 
-  it('filters a findMany called with no arguments at all — the guard is fail-closed', async () => {
+  it('filters a findMany called with no arguments at all', async () => {
+    // No argument object whatsoever — the most common call in the codebase.
+    // This pins the observable behaviour rather than proving the
+    // `isQueryArgs` fallback branch specifically: Prisma normalises an
+    // absent `args` to `{}` before the extension ever sees it, so this
+    // exercises the same injection path as every other filtered test here.
+    // The fallback-to-`{}` branch itself has no known Prisma input that
+    // reaches it today; it stays as defence in depth for a future Prisma
+    // that stops normalising, not as something this test can red/green gate.
     await seed('dead-noargs', new Date());
 
     const labels = await withDatabase(async (db) =>
       withOrganizationContext(db, ORG, async (tx) =>
-        // No argument object whatsoever. If the extension treats an absent
-        // `args` as "nothing to filter" and passes it through, this is the
-        // call that leaks — and it is the most common call in the codebase.
         (await tx.rlsProbe.findMany()).map((r) => r.label),
       ),
     );
@@ -82,6 +87,39 @@ describe('soft-delete extension', () => {
     );
 
     expect(found?.id).toBe(id);
+  });
+
+  it('still filters when the where carries a physically-present deletedAt: undefined key', async () => {
+    // Reproduces a reachable footgun the type system does not block:
+    // `'deletedAt' in where` is true for a key that is PRESENT with value
+    // `undefined`, and Prisma treats `undefined` as "no filter" — so the
+    // naive `in` check would step aside and inject nothing.
+    //
+    // `buildWhere` takes `deletedAt` as an ordinary `Date | undefined`
+    // parameter — exactly the shape a caller has after destructuring an
+    // optional field, or after this repo's own conditional-spread partial-
+    // update idiom (docs/TYPESCRIPT_AND_TOOLING.md) is used to build a
+    // filter instead of a write payload — and returns a plain
+    // `Record<string, unknown>`, which is genuinely what the extension
+    // itself sees at runtime (`QueryArgs.where` in
+    // src/extensions/soft-delete.ts). No cast is needed to pass it to
+    // Prisma: `exactOptionalPropertyTypes` restricts the OPTIONAL (`?:`)
+    // shorthand, not a required property typed `T | undefined`, and
+    // `findFirst`'s `where` accepts this shape unmodified — proof the
+    // guard cannot lean on the type system to rule this input out.
+    function buildWhere(rowId: string, deletedAt: Date | undefined): Record<string, unknown> {
+      return { id: rowId, deletedAt };
+    }
+
+    const id = await seed('dead-spread-undefined', new Date());
+
+    const found = await withDatabase(async (db) =>
+      withOrganizationContext(db, ORG, async (tx) =>
+        tx.rlsProbe.findFirst({ where: buildWhere(id, undefined) }),
+      ),
+    );
+
+    expect(found).toBeNull();
   });
 
   it('shows soft-deleted rows inside withDeleted() — the explicit admin escape hatch', async () => {
