@@ -24,11 +24,19 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      # packages/database's `build` runs `prisma generate`, which resolves
-      # schema.prisma's `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is
-      # what `--env-file-if-exists` in the root db:* scripts is for — so the
-      # value comes from here. Nothing connects to it; `prisma generate` reads
-      # the URL only to validate the datasource block.
+      # packages/database's `build` runs `prisma generate`, and schema.prisma's
+      # datasource is `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is
+      # what `--env-file-if-exists` in the root db:* scripts is for — so if
+      # anything resolves that variable, the value has to come from here.
+      #
+      # MEASURED on Prisma 6.19.3, from a clean clone with the variable unset:
+      # `pnpm build` exits 0 and generates the client without complaint, so
+      # `generate` does NOT resolve the datasource url. This block is therefore
+      # not load-bearing today. It is set anyway, in all three jobs, because
+      # every other Prisma subcommand (`migrate`, `validate`, `studio`) does
+      # resolve it, the failure mode when one is added is an unhelpful
+      # `Environment variable not found: DATABASE_ADMIN_URL`, and a URL nothing
+      # connects to costs nothing. Do not read this as proof the build needs it.
       DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
     steps:
       - uses: actions/checkout@v4
@@ -136,11 +144,11 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     env:
-      # packages/database's `build` runs `prisma generate`, which resolves
-      # schema.prisma's `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is
-      # what `--env-file-if-exists` in the root db:* scripts is for — so the
-      # value comes from here. Nothing connects to it; the Testcontainers
-      # harness passes the real, container-derived URL explicitly.
+      # Same variable, same reasoning as the `verify` job above — read the note
+      # there before assuming this is what makes the build work. Note also that
+      # nothing in this job connects to it: the Testcontainers harness runs
+      # `prisma migrate deploy` with the real, container-derived URL, which it
+      # passes explicitly.
       DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
     steps:
       - uses: actions/checkout@v4
@@ -170,6 +178,7 @@ jobs:
   openapi:
     runs-on: ubuntu-latest
     env:
+      # Same variable, same reasoning as the `verify` job — see the note there.
       DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
     steps:
       - uses: actions/checkout@v4
