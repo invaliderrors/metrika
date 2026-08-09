@@ -10,3 +10,10 @@ allowBuilds:
   prisma: true
   '@prisma/client': true
   '@prisma/engines': true
+  # Transitive dependencies of testcontainers (packages/testing): ssh2 is used
+  # for its optional Docker-over-SSH support, cpu-features is ssh2's own
+  # native-binding dependency, and protobufjs is pulled in by dockerode's gRPC
+  # plumbing. None of the three are used by anything else in this repository.
+  cpu-features: true
+  protobufjs: true
+  ssh2: true

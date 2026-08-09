@@ -1,5 +1,5 @@
 {
-  "name": "@metrika/database",
+  "name": "@metrika/testing",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,30 +10,29 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./images": {
+      "types": "./dist/images.d.ts",
+      "default": "./dist/images.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
-    "dist",
-    "prisma",
-    "sql"
+    "dist"
   ],
   "scripts": {
-    "db:generate": "node --env-file-if-exists=../../.env ../../scripts/prisma.mjs generate",
-    "build": "pnpm db:generate && tsc -b tsconfig.build.json",
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -b",
     "lint": "eslint .",
-    "test:unit": "vitest run --config vitest.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "@metrika/contracts": "workspace:*",
-    "@prisma/client": "6.19.3"
+    "@testcontainers/postgresql": "12.1.0",
+    "testcontainers": "12.1.0"
   },
   "devDependencies": {
     "@metrika/eslint-config": "workspace:*",
-    "@metrika/testing": "workspace:*",
     "@metrika/typescript-config": "workspace:*",
     "eslint": "10.8.0",
-    "prisma": "6.19.3",
     "typescript": "6.0.3",
     "vitest": "4.1.10"
   }
