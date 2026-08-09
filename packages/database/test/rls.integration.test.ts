@@ -1,47 +1,40 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { startTestDatabase, stopDatabase, withDatabase } from './support.js';
-import { createPrismaClient, withOrganizationContext } from '../src/index.js';
-import type { MetrikaPrismaClient } from '../src/index.js';
+import { stopDatabase, withDatabase } from './support.js';
+import { withOrganizationContext } from '../src/index.js';
 
 const ORG_A = randomUUID();
 const ORG_B = randomUUID();
 
-let ownerClient: MetrikaPrismaClient;
-
 beforeAll(async () => {
-  const handle = await startTestDatabase();
-  // A second client on the OWNER role. See the "the table owner is a local
-  // superuser" describe block below for why this connection cannot be used
-  // to prove FORCE ROW LEVEL SECURITY the way the task brief originally
-  // asked for.
-  ownerClient = createPrismaClient({ databaseUrl: handle.adminUrl });
-
-  await withDatabase(async (db) => {
-    await withOrganizationContext(db, ORG_A, async (tx) => {
-      await tx.rlsProbe.create({ data: { organizationId: ORG_A, label: 'belongs-to-a' } });
+  try {
+    await withDatabase(async (db) => {
+      await withOrganizationContext(db, ORG_A, async (tx) => {
+        await tx.rlsProbe.create({ data: { organizationId: ORG_A, label: 'belongs-to-a' } });
+      });
+      await withOrganizationContext(db, ORG_B, async (tx) => {
+        await tx.rlsProbe.create({ data: { organizationId: ORG_B, label: 'belongs-to-b' } });
+      });
     });
-    await withOrganizationContext(db, ORG_B, async (tx) => {
-      await tx.rlsProbe.create({ data: { organizationId: ORG_B, label: 'belongs-to-b' } });
-    });
-  });
+  } catch (error) {
+    // Every test below depends on this seed succeeding. A dropped policy (or
+    // RLS disabled outright) can make the SEED itself fail closed, which
+    // then shows up as every test in this file skipping with a bare Prisma
+    // stack trace pointing at `beforeAll` — easy to misread as a flaky setup
+    // step. It is usually the opposite: the backstop failing before any
+    // assertion got to run. Re-thrown with context, not swallowed.
+    throw new Error(
+      'Seeding RlsProbe fixtures for the RLS suite failed. If this is why every test in ' +
+        'this file is failing, treat it as the backstop itself being broken (policy dropped, ' +
+        'RLS disabled, or app_current_org_id() missing) rather than a flaky test — see the ' +
+        'cause below.',
+      { cause: error },
+    );
+  }
 });
 
 afterAll(async () => {
-  await ownerClient.$disconnect();
   await stopDatabase();
-});
-
-describe('the application role cannot bypass RLS', () => {
-  it('is neither a superuser nor BYPASSRLS', async () => {
-    const [role] = await withDatabase(
-      async (db) =>
-        db.$queryRaw<{ rolsuper: boolean; rolbypassrls: boolean }[]>`
-        SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user
-      `,
-    );
-    expect(role).toEqual({ rolsuper: false, rolbypassrls: false });
-  });
 });
 
 describe('tenant isolation, with the application check bypassed', () => {
@@ -55,10 +48,12 @@ describe('tenant isolation, with the application check bypassed', () => {
     // against every other file sharing the container — a row from an
     // unrelated file belongs to a different, also-random organization id
     // and never matches this session's policy predicate, regardless of
-    // execution order.
+    // execution order. `.sort()` for the same reason every other multi-row
+    // assertion in this file sorts: safe today at one row, and stays safe
+    // if a future test in this describe block adds a second ORG_A row.
     const labels = await withDatabase(async (db) =>
       withOrganizationContext(db, ORG_A, async (tx) =>
-        (await tx.rlsProbe.findMany()).map((r) => r.label),
+        (await tx.rlsProbe.findMany()).map((r) => r.label).sort(),
       ),
     );
 
@@ -123,69 +118,112 @@ describe('tenant isolation, with the application check bypassed', () => {
   });
 });
 
-// The brief this file was written from (Plan 0B-1, Task 8) asked for a
-// `describe('the table owner is not exempt')` block asserting that
-// `ownerClient` — connected as the migration/DDL owner role `metrika` — is
-// filtered by RLS the same way `metrika_app` is. That assertion does not
-// hold in this harness and was proven wrong empirically rather than adjusted
-// until it passed (see task-8-report.md, "brief defect"):
+// A previous version of this file had a `describe('the table owner is not
+// exempt')` block (what the original task brief for this file asked for),
+// then a `describe('the table owner is a local superuser, not merely
+// RLS-exempt')` block in its place. Both are gone now — deleted, not
+// reframed — after a coordinator review (task-8-report.md, "Fix round 1")
+// found the second one passed for the wrong reason (it went red only
+// *collaterally*, when an attribute mutation happened to also break the
+// insert-rejection assertion above, never for the FORCE- or
+// superuser-related reason it claimed to test) and would go red the day
+// this harness's owner role stops being a bootstrap superuser — which would
+// be an improvement, and a test that punishes an improvement is pressure to
+// revert it, not a safeguard.
 //
-//   docker run postgres:16-alpine with POSTGRES_USER=metrika, then
-//   `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'metrika'`
-//   returns `t | t`. The `postgres` image's entrypoint runs `initdb` with
-//   `--username=$POSTGRES_USER`, which makes that role Postgres's bootstrap
-//   superuser. A superuser bypasses row security unconditionally — with or
-//   without FORCE, and regardless of what `app.current_org_id` is set to
-//   (confirmed directly: setting the session context to org B's id before
-//   querying as the owner still returned both organizations' rows). FORCE
-//   ROW LEVEL SECURITY only removes the plain *table-owner* exemption; it
-//   was never able to touch the *superuser* exemption, and in this
-//   container the owner is both.
+// The claim that used to justify the owner-based block anyway — that FORCE
+// is "simply untestable behaviourally against this local/CI container" — was
+// too broad and has been corrected. FORCE *is* observable in this exact
+// container; it is only unobservable through *this harness's own owner
+// connection*, because that connection is a bootstrap superuser and
+// superusers bypass RLS unconditionally, FORCE or not. Verified directly,
+// against a table owned by a plain NOSUPERUSER role created for the purpose
+// (not `metrika`, not `metrika_app`) inside a `postgres:16-alpine` container:
 //
-// This is exactly the caveat already recorded in
-// packages/database/prisma/migrations/20260809024512_init/migration.sql:
-// FORCE is correct and load-bearing in production, where Terraform (Plan 0D)
-// provisions a non-superuser owner — it is simply untestable behaviourally
-// against *this* local/CI container. The regression coverage for FORCE
-// itself already exists and does not need a live database: it is
-// packages/database/test/migration-sql.test.ts's
-// "FORCES row-level security for every table that ENABLEs it" (a static
-// check over the committed migration SQL, part of `test:unit`).
+//   non-superuser owner, ENABLE only (no FORCE): 2 rows visible  — exempt
+//   non-superuser owner, FORCE applied:          0 rows visible  — enforced
+//   metrika (this harness's actual owner), FORCE: 2 rows visible — bypass,
+//     unconditional, unaffected by FORCE, and unaffected by session context
+//     (confirmed separately: setting `app.current_org_id` before querying as
+//     `metrika` changes nothing)
 //
-// What IS true here, and worth pinning as a real test rather than leaving
-// as a comment: the owner connection's bypass is unconditional, so it can be
-// used to plant cross-tenant fixtures (as `beforeAll` above does via
-// `ownerClient` implicitly, through `adminUrl` — see support.ts) but must
-// never be mistaken for a filtered connection.
-describe('the table owner is a local superuser, not merely RLS-exempt', () => {
-  it('bypasses RLS unconditionally — FORCE does not apply to a superuser owner', async () => {
-    const [role] = await ownerClient.$queryRaw<{ rolsuper: boolean; rolbypassrls: boolean }[]>`
-      SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user
-    `;
-    expect(role?.rolsuper).toBe(true);
-
-    // Not scoped to `[ORG_A, ORG_B]` and not asserting emptiness of
-    // anything global: this asserts the owner sees BOTH of the two rows
-    // this file itself created, proving the bypass is real rather than
-    // relying on the owner's `findMany()` being merely non-empty.
-    const labels = (
-      await ownerClient.rlsProbe.findMany({
-        where: { organizationId: { in: [ORG_A, ORG_B] } },
-      })
-    )
-      .map((r) => r.label)
-      .sort();
-
-    expect(labels).toEqual(['belongs-to-a', 'belongs-to-b']);
+// So FORCE genuinely does something in this Postgres image; the local harness
+// just cannot exercise that specific fact through an owner connection, because
+// its owner is never the plain-non-superuser case the mechanism is for. That
+// caveat is also recorded where the SQL itself lives:
+// packages/database/prisma/migrations/20260809024512_init/migration.sql.
+//
+// None of this leaves FORCE or WITH CHECK actually unverified against the
+// live, applied database, though — see the two describe blocks below, which
+// replace the deleted owner-connection tests with a strictly better proof:
+// reading Postgres's own catalog as `metrika_app`, which requires no
+// privileged connection and, unlike a behavioural probe, cannot be fooled by
+// which role happens to be asking.
+describe('the applied database actually enforces FORCE and WITH CHECK — not just the migration source', () => {
+  it('has relforcerowsecurity set on RlsProbe, independent of any owner exemption', async () => {
+    // `pg_class` is a system catalog, readable by any role without a grant —
+    // this needs no owner or superuser connection, unlike a behavioural
+    // owner-exemption probe. `relforcerowsecurity` is exactly the bit
+    // `ALTER TABLE ... FORCE ROW LEVEL SECURITY` sets, and it reads back true
+    // or false regardless of who is asking, which is what makes this
+    // verification immune to the bootstrap-superuser problem documented
+    // above: metrika_app never needs to BE the owner to see whether the
+    // owner is forced.
+    const [row] = await withDatabase(
+      async (db) =>
+        db.$queryRaw<{ relrowsecurity: boolean; relforcerowsecurity: boolean }[]>`
+        SELECT relrowsecurity, relforcerowsecurity
+        FROM pg_class
+        WHERE oid = '"RlsProbe"'::regclass
+      `,
+    );
+    expect(row).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
   });
 
-  it('bypasses RLS even with an organization context set, because the bypass ignores the policy entirely', async () => {
-    const labels = await withOrganizationContext(ownerClient, ORG_B, async (tx) =>
-      (await tx.rlsProbe.findMany({ where: { organizationId: { in: [ORG_A, ORG_B] } } }))
-        .map((r) => r.label)
-        .sort(),
+  it('has a non-null WITH CHECK equal to USING on the applied policy — not just present in the migration source', async () => {
+    // migration-sql.test.ts's `WITH CHECK (...)` substring check proves the
+    // clause was once WRITTEN; it says nothing about what got APPLIED, and
+    // cannot see an out-of-band `ALTER POLICY`/`DROP POLICY` + recreate that
+    // never touches the committed migration file. `pg_policies.with_check`
+    // is NULL when a policy has no explicit WITH CHECK — even though reads
+    // and writes still behave identically, because Postgres reuses `qual`
+    // (the USING expression) as the effective check in that case (see the
+    // Step 5 mutation evidence in task-8-report.md: a USING-only policy
+    // still rejects the cross-org insert, for exactly this reason). This
+    // assertion pins the *applied, catalog-visible* shape, not just the
+    // observed behaviour, so a future migration that silently drops the
+    // explicit WITH CHECK is caught even though nothing about tenant
+    // isolation would visibly break yet.
+    const [row] = await withDatabase(
+      async (db) =>
+        db.$queryRaw<{ qual: string; with_check: string | null }[]>`
+        SELECT qual, with_check FROM pg_policies WHERE tablename = 'RlsProbe'
+      `,
     );
+    expect(row?.with_check).not.toBeNull();
+    expect(row?.with_check).toBe(row?.qual);
+  });
+});
 
-    expect(labels).toEqual(['belongs-to-a', 'belongs-to-b']);
+describe('the application role cannot read _prisma_migrations', () => {
+  it('is rejected with the Postgres permission-denied code, not merely an empty result', async () => {
+    // Guards migration `20260809030000_revoke_prisma_migrations_from_app_role`,
+    // which had no fixture anywhere before this test (Task 6's report
+    // explicitly deferred it to this task). `.rejects.toThrow(...)` alone
+    // would pass for the wrong reason too (a table that doesn't exist yet,
+    // a typo'd name), so this asserts Prisma's own error code (`P2010`,
+    // "raw query failed") AND the wrapped Postgres SQLSTATE (`42501`,
+    // insufficient_privilege) it carries in `meta.code` — the actual "rejection
+    // with the correct error code" CLAUDE.md asks a security-control fixture
+    // for. Verified directly against a live container before writing this
+    // assertion: `PrismaClientKnownRequestError { code: 'P2010', meta: {
+    // code: '42501', message: 'ERROR: permission denied for table
+    // _prisma_migrations' } }`.
+    await expect(
+      withDatabase(async (db) => db.$queryRaw`SELECT 1 FROM "_prisma_migrations"`),
+    ).rejects.toMatchObject({
+      code: 'P2010',
+      meta: { code: '42501' },
+    });
   });
 });
