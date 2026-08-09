@@ -6,5 +6,10 @@
   // tests through their own tsconfigs. They must stay out of this package-wide
   // program, or a normal typecheck run would fail on input that is supposed to
   // fail.
-  "include": ["test/flags.test.ts", "test/configs.test.ts", "test/lint-parity.test.ts"]
+  "include": [
+    "test/flags.test.ts",
+    "test/configs.test.ts",
+    "test/lint-parity.test.ts",
+    "test/dependency-pins.test.ts"
+  ]
 }
