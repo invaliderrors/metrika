@@ -155,6 +155,14 @@ export const prismaImportBoundary = [
  * too. They interpolate their argument straight into SQL, and config injection
  * into a query is a real attack surface here. The tagged template forms
  * ($queryRaw / $executeRaw) parameterise; these do not.
+ *
+ * Also owns `no-restricted-syntax`, the same rule key `contractsBoundary`
+ * owns above. Flat config replaces a rule's options per key rather than
+ * merging them, so composing `rawSqlBan` after `contractsBoundary` in the
+ * same consumer's config (unreachable today — nothing imports both) would
+ * silently drop whichever one applied first. If that composition is ever
+ * needed, it has to keep both rule-sets under one `no-restricted-syntax`
+ * entry rather than two config objects.
  */
 export const rawSqlBan = [
   {

@@ -22,9 +22,14 @@ export default tseslint.config(
       // Re-declared rather than inherited: this config cannot import
       // @metrika/eslint-config's `base` without creating a package cycle (see
       // the comment above), and `process.env` is a repo-wide invariant, not an
-      // eslint-config-package concern. The four type-aware rules `base`
-      // carries genuinely cannot come along — they need a type-aware program
-      // this config deliberately does not build — and that gap is accepted.
+      // eslint-config-package concern. `base` itself carries only this one
+      // rule beyond `no-console`/`eqeqeq`, both already declared above — what
+      // genuinely cannot come along is `typeChecked()`'s much larger
+      // type-aware rule set (all of `strictTypeChecked`, plus
+      // `consistent-type-imports`, `consistent-type-exports`,
+      // `promise-function-async`, `strict-boolean-expressions`, and more):
+      // those need a type-aware program this config deliberately does not
+      // build, and that gap is accepted.
       'no-restricted-properties': [
         'error',
         {
