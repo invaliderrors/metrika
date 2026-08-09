@@ -106,7 +106,7 @@ This system is being built by a single engineer working with AI coding agents, w
 | Database        | **PostgreSQL 16**                                                                           | Transactions, JSONB, RLS, partial/expression indexes, `numeric` — every feature this design leans on                      | —                                                                                                                                                                                            |
 | Orchestration   | **Temporal Cloud**                                                                          | Durable execution with real workflow versioning; workflow ID is a free idempotency key                                    | Learning curve; non-determinism bugs are confusing; a paid dependency                                                                                                                        |
 | Geometry        | **Python + Trimesh + NumPy + SciPy + Manifold3D**                                           | Trimesh is the only mature open mesh-analysis library; Manifold3D gives guaranteed-manifold boolean/repair                | Python memory behaviour under large meshes needs hard limits                                                                                                                                 |
-| Slicing         | **PrusaSlicer CLI, pinned by image digest**                                                 | Industrial-grade, well-understood G-code output, good CLI metrics                                                         | **AGPL — requires formal legal review before launch.** See [SLICING.md](./SLICING.md)                                                                                                        |
+| Slicing         | **OrcaSlicer CLI, pinned by image digest**                                                  | Profile coverage for the printers actually bought; structured per-slot metrics from `slice_info.config`                   | **AGPL — requires formal legal review before launch.** See [SLICING.md](./SLICING.md) and [ADR-0022](./adr/0022-orcaslicer.md)                                                               |
 | Object storage  | **Amazon S3**                                                                               | Presigned uploads, checksums, lifecycle, versioning, per-prefix IAM                                                       | —                                                                                                                                                                                            |
 | Cache/locks     | **Redis (ElastiCache)**                                                                     | Rate limiting, ephemeral locks, hot-read cache. **Never a source of truth**                                               | Another managed service to pay for; deferrable to Phase 2                                                                                                                                    |
 | Auth            | **Clerk (authentication only)**                                                             | Fast, good Next.js integration, covers Google/Microsoft/email + MFA. **Metrika owns organizations and roles.**            | Vendor cost; must resist its Organizations feature. See [ADR-0012](./adr/0012-authentication.md)                                                                                             |
@@ -148,7 +148,7 @@ graph TB
         API["NestJS API — apps/api<br/>Fastify · Prisma · sole DB writer"]
         subgraph Workers["ECS Fargate — isolated tasks"]
             GEO["Geometry Worker<br/>Python · Trimesh · Manifold3D"]
-            SLC["Slicer Worker<br/>Python · PrusaSlicer CLI (pinned)"]
+            SLC["Slicer Worker<br/>Python · OrcaSlicer CLI (pinned)"]
         end
         PG[("PostgreSQL — RDS<br/>RLS enabled")]
         RDS[("Redis — ElastiCache")]
@@ -318,7 +318,7 @@ metrika/
 │       ├── pyproject.toml
 │       ├── packages/metrika_core/          # shared: pydantic models, S3, telemetry, sandbox limits
 │       ├── geometry/                       # Trimesh/Manifold3D activities + Dockerfile
-│       └── slicer/                         # PrusaSlicer CLI wrapper + G-code parser + Dockerfile
+│       └── slicer/                         # OrcaSlicer CLI wrapper + metrics parser + Dockerfile
 │
 ├── packages/
 │   ├── contracts/                    # Zod: IDs, Money, units, API contracts, event schemas, enums
@@ -565,7 +565,7 @@ Two Python workers, one uv workspace, two container images, one shared library.
 |                  | Geometry worker                                      | Slicer worker                                      |
 | ---------------- | ---------------------------------------------------- | -------------------------------------------------- |
 | Task queue       | `geometry-small`, `geometry-large`                   | `slicing`                                          |
-| Image            | Trimesh, NumPy, SciPy, Manifold3D, `defusedxml`      | Pinned PrusaSlicer binary (image digest) + parser  |
+| Image            | Trimesh, NumPy, SciPy, Manifold3D, `defusedxml`      | Pinned OrcaSlicer binary (image digest) + parser   |
 | CPU / memory     | 1 vCPU / 2 GB (small), 2 vCPU / 8 GB (large)         | 2 vCPU / 4 GB                                      |
 | Network          | **No egress.** VPC endpoints to S3 and Temporal only | Same                                               |
 | Filesystem       | Read-only root, `tmpfs` scratch with size cap        | Same                                               |
@@ -598,10 +598,10 @@ Full detail in [3D_PIPELINE.md](./3D_PIPELINE.md). Architectural commitments:
 
 Full detail in [SLICING.md](./SLICING.md). Architectural commitments:
 
-- **`SlicerEngine` is a port**, defined in `apps/api/src/modules/slicing/application/ports`. Implementations: `PrusaSlicerEngine` (via the worker), `FakeSlicerEngine` (deterministic, used by E2E and local dev). Business code never references PrusaSlicer.
+- **`SlicerEngine` is a port**, defined in `apps/api/src/modules/slicing/application/ports`. Implementations: `OrcaSlicerEngine` (via the worker), `FakeSlicerEngine` (deterministic, used by E2E and local dev). Business code never references OrcaSlicer.
 - **Slicer version is pinned by image digest and recorded on every `SliceResult`.** A slicer upgrade is a new version identifier, which changes the cache key, which forces re-slicing — old quotes remain reproducible.
 - **Slicing is idempotent by content-addressed cache key**: SHA-256 over a canonical serialisation of `{ sliceInputMeshHash, transform, printProfileVersionHash, printerProfileVersionHash, materialProfileVersionHash, slicerEngine, slicerVersion, configurationOverridesHash }`. Unique constraint on `SliceJob.cacheKey` makes duplicate work impossible at the database level, not just in application code.
-- **AGPL is an open legal question, not a solved one.** PrusaSlicer is AGPL-3.0. We invoke an unmodified binary as a separate process, with no linking — but the network-service provision of AGPL is exactly the clause that deserves counsel's opinion, not an engineer's. This is recorded as a launch-blocking review item in [RISK_REGISTER.md](./RISK_REGISTER.md), and the `SlicerEngine` port exists partly so the answer can change without a rewrite.
+- **AGPL is an open legal question, not a solved one.** OrcaSlicer is AGPL-3.0, as is every credible open slicer — its lineage runs Slic3r → PrusaSlicer → Bambu Studio → OrcaSlicer, so the position is identical whichever is chosen. We invoke an unmodified binary as a separate process, with no linking — but the network-service provision of AGPL is exactly the clause that deserves counsel's opinion, not an engineer's. This is recorded as a launch-blocking review item in [RISK_REGISTER.md](./RISK_REGISTER.md), and the `SlicerEngine` port exists partly so the answer can change without a rewrite.
 
 ---
 
@@ -1033,11 +1033,11 @@ Conventional commits, squash merge, protected `main`, Changesets for package ver
 
 Three images, all multi-stage, non-root, pinned by digest, with health checks and no build tooling in the runtime layer. Full Dockerfiles in [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#1-docker).
 
-| Image              | Base                        | Notes                                                                      |
-| ------------------ | --------------------------- | -------------------------------------------------------------------------- |
-| `metrika-api`      | `node:24-bookworm-slim`     | Prisma engines copied explicitly; `dumb-init` as PID 1                     |
-| `metrika-geometry` | `python:3.12-slim-bookworm` | uv-installed deps in a virtualenv layer; read-only root; tmpfs scratch     |
-| `metrika-slicer`   | `python:3.12-slim-bookworm` | PrusaSlicer binary pinned by checksum; licence file preserved in the image |
+| Image              | Base                        | Notes                                                                                            |
+| ------------------ | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `metrika-api`      | `node:24-bookworm-slim`     | Prisma engines copied explicitly; `dumb-init` as PID 1                                           |
+| `metrika-geometry` | `python:3.12-slim-bookworm` | uv-installed deps in a virtualenv layer; read-only root; tmpfs scratch                           |
+| `metrika-slicer`   | `python:3.12-slim-bookworm` | OrcaSlicer binary extracted from a checksum-pinned AppImage; licence file preserved in the image |
 
 The production image tag tracks the toolchain major pinned in `.nvmrc` (24), and
 is pinned by digest in the Dockerfile that Plan 0D writes — the tag here names
@@ -1090,7 +1090,7 @@ in Plan 0B-3.
 
 Seeds are deterministic and fixed-UUID: two organizations, five users across every role, three printer profiles, four materials, one published pricing rule set, and a set of models in every processing state — including one stuck at `AWAITING_UNIT_CONFIRMATION`, because that path is easy to forget and hard to reach by hand.
 
-`FakeSlicerEngine` is the default locally, so a developer without a PrusaSlicer container still gets a working end-to-end quote flow. The real slicer runs behind a `METRIKA_SLICER=real` flag.
+`FakeSlicerEngine` is the default locally, so a developer without an OrcaSlicer container still gets a working end-to-end quote flow. The real slicer runs behind a `METRIKA_SLICER=real` flag.
 
 ---
 
@@ -1140,7 +1140,7 @@ In [RISK_REGISTER.md](./RISK_REGISTER.md), with probability, impact, mitigation 
 | ------------------------------------------------------------------------- | ------ | -------- | --------------------------------------------------------------------------------------------- |
 | Unit ambiguity produces a 1000× wrong quote                               | High   | Critical | Blocking confirmation state, plausibility bounds, prominent UI, contract test                 |
 | Print time/material estimates drift from reality, silently eroding margin | High   | High     | Actual-vs-estimate capture on every job from Phase 11; per-profile calibration; alerting      |
-| PrusaSlicer AGPL obligations                                              | Medium | High     | Separate process, unmodified binary, **formal legal review as a launch gate**, swappable port |
+| Slicer AGPL obligations                                                   | Medium | High     | Separate process, unmodified binary, **formal legal review as a launch gate**, swappable port |
 | Customer geometry leak                                                    | Low    | Critical | Layered: KMS, RLS, short-lived URLs, no originals on CDN, audit on every access               |
 
 ---
@@ -1195,7 +1195,7 @@ These are deliberately unresolved, with the resolution point named. Each is trac
 
 **What it costs.** Temporal is a real learning investment and a real bill. Strict TypeScript plus `exactOptionalPropertyTypes` plus branded IDs will slow the first month meaningfully. RLS adds a client extension that must be correct or nothing works. Two deploy surfaces (Vercel and AWS) is genuine operational overhead for one person. These are accepted, not hidden.
 
-**Where it will be wrong.** The most likely place this design breaks is the **estimation accuracy loop** — the assumption that PrusaSlicer's time and material estimates are close enough to reality to price against. They are close for simple parts and can be materially off for complex ones. The architecture's answer is to measure actuals from Phase 11 and calibrate per profile version, but until real jobs have run, the pricing engine is calibrated against a model, not against a factory. Treat the first fifty orders as a calibration exercise and expect to change the risk and complexity components of the rule set.
+**Where it will be wrong.** The most likely place this design breaks is the **estimation accuracy loop** — the assumption that the slicer's time and material estimates are close enough to reality to price against. They are close for simple parts and can be materially off for complex ones. The architecture's answer is to measure actuals from Phase 11 and calibrate per profile version, but until real jobs have run, the pricing engine is calibrated against a model, not against a factory. Treat the first fifty orders as a calibration exercise and expect to change the risk and complexity components of the rule set.
 
 The second-most-likely place is **heuristic quality**. "Is this printable" is a genuinely hard question, and the honest architectural answer here — separate exact from heuristic, label confidence, never present an estimate as a guarantee — protects the customer relationship but does not make the heuristics good. Expect to iterate on them for a long time.
 

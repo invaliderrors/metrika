@@ -41,7 +41,7 @@ That requirement is what drives immutable versioned configuration, content-addre
 ```
 apps/web        Next.js — customer platform + (admin) route group
 apps/api        NestJS + Fastify — modular monolith, sole writer to Postgres
-apps/workers    Python — geometry (Trimesh, Manifold3D) and slicing (PrusaSlicer). No database access.
+apps/workers    Python — geometry (Trimesh, Manifold3D) and slicing (OrcaSlicer). No database access.
 packages/       contracts · pricing-engine · api-client · database · ui · printer-sdk · configs · testing
 infra/          terraform · docker
 ```
@@ -54,7 +54,7 @@ Orchestrated by **Temporal Cloud**. Storage in **S3**. Data in **PostgreSQL** wi
 
 ## Stack
 
-Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zustand · NestJS · Fastify · Prisma · PostgreSQL · Redis · Temporal · Python · Trimesh · Manifold3D · PrusaSlicer · Zod · nestjs-zod · AWS ECS Fargate · Terraform · OpenTelemetry · Vitest · Playwright · pnpm · Turborepo · uv
+Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zustand · NestJS · Fastify · Prisma · PostgreSQL · Redis · Temporal · Python · Trimesh · Manifold3D · OrcaSlicer · Zod · nestjs-zod · AWS ECS Fargate · Terraform · OpenTelemetry · Vitest · Playwright · pnpm · Turborepo · uv
 
 ## Quick start
 
@@ -101,4 +101,4 @@ The full list, with rationale, is in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.
 
 Proprietary. All rights reserved.
 
-Third-party licences — in particular PrusaSlicer (AGPL-3.0) — are subject to formal legal review as a launch gate. See [docs/SLICING.md](./docs/SLICING.md#3-licensing--an-open-launch-blocking-question).
+Third-party licences — in particular OrcaSlicer (AGPL-3.0) — are subject to formal legal review as a launch gate. See [docs/SLICING.md](./docs/SLICING.md#3-licensing--an-open-launch-blocking-question).

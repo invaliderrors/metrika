@@ -6,13 +6,13 @@
 
 ## 1. The abstraction
 
-Slicing is an infrastructure concern behind a port. **No business code ever references PrusaSlicer.**
+Slicing is an infrastructure concern behind a port. **No business code ever references OrcaSlicer.**
 
 ```ts
 // apps/api/src/modules/slicing/application/ports/slicer-engine.port.ts
 
 export interface SlicerEngine {
-  readonly kind: SlicerEngineKind;               // 'PRUSA_SLICER' | 'CURA_ENGINE' | 'FAKE'
+  readonly kind: SlicerEngineKind;               // 'ORCA_SLICER' | 'CURA_ENGINE' | 'FAKE'
 
   getVersion(): Promise<SlicerVersion>;          // { engine, semver, imageDigest }
   getCapabilities(): Promise<SlicerCapabilities>;
@@ -43,33 +43,33 @@ export interface SliceOutput {
 
 Implementations:
 
-| Implementation      | Where                                                                 | Used by                                     |
-| ------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
-| `PrusaSlicerEngine` | dispatches a Temporal activity to the slicer worker                   | staging, production                         |
-| `FakeSlicerEngine`  | `packages/testing` — deterministic metrics from a hash of the request | E2E, local dev by default, CI               |
-| `CuraSlicerEngine`  | not built                                                             | contingency if PrusaSlicer becomes unusable |
+| Implementation     | Where                                                                 | Used by                                    |
+| ------------------ | --------------------------------------------------------------------- | ------------------------------------------ |
+| `OrcaSlicerEngine` | dispatches a Temporal activity to the slicer worker                   | staging, production                        |
+| `FakeSlicerEngine` | `packages/testing` — deterministic metrics from a hash of the request | E2E, local dev by default, CI              |
+| `CuraSlicerEngine` | not built                                                             | contingency if OrcaSlicer becomes unusable |
 
 `FakeSlicerEngine` is not a convenience; it is a load-bearing architectural payoff. It makes the Playwright golden-path test run in seconds instead of minutes, makes it deterministic, and lets a developer get a complete quote flow working locally without a 400 MB slicer container. Real slicer behaviour is covered by the regression suite, where it belongs.
 
 ---
 
-## 2. Why PrusaSlicer
+## 2. Why OrcaSlicer
 
-| Option              | For                                                                                                                                                          | Against                                                                                  | Verdict                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **PrusaSlicer CLI** | Mature, excellent FDM output, exposes filament volume/mass, print time and layer count directly from the CLI; huge profile ecosystem; well-understood G-code | **AGPL-3.0**; CLI surface changes between majors; heavyweight image                      | **Chosen**                                |
-| CuraEngine          | Also AGPL; lighter; embeddable                                                                                                                               | Its metrics are less directly exposed; profile model is more awkward to drive from a CLI | Contingency                               |
-| OrcaSlicer          | Better modern-printer profiles, actively developed                                                                                                           | AGPL as well; a PrusaSlicer fork, so the licensing question is identical                 | Re-evaluate at Phase 14 for Bambu support |
-| Write our own       | No licence question                                                                                                                                          | Years of work to reach industrial quality; would produce wrong estimates for a long time | Rejected                                  |
-| Commercial SDK      | Clear licensing                                                                                                                                              | Cost and lock-in at a stage where neither is affordable                                  | Rejected for now                          |
+| Option             | For                                                                                                                                                                                              | Against                                                                                                 | Verdict          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ---------------- |
+| **OrcaSlicer CLI** | Profile ecosystem tracks the printers actually being bought, Bambu included; metrics land as structured data in `Metadata/slice_info.config`, filament reported **per slot**; actively developed | **AGPL-3.0**; CLI surface changes between majors; AppImage extraction at image build; heavyweight image | **Chosen**       |
+| PrusaSlicer CLI    | Mature; its `--info` output is a genuinely independent second metrics source, which OrcaSlicer's is not                                                                                          | Thinner coverage of the modern printers this business buys                                              | Superseded       |
+| CuraEngine         | Also AGPL; lighter; embeddable                                                                                                                                                                   | Its metrics are less directly exposed; profile model is more awkward to drive from a CLI                | Contingency      |
+| Write our own      | No licence question                                                                                                                                                                              | Years of work to reach industrial quality; would produce wrong estimates for a long time                | Rejected         |
+| Commercial SDK     | Clear licensing                                                                                                                                                                                  | Cost and lock-in at a stage where neither is affordable                                                 | Rejected for now |
 
-Every credible open slicer is AGPL. That is the state of the ecosystem, and it means the licensing question must be answered rather than avoided.
+Every credible open slicer is AGPL. That is the state of the ecosystem, and it means the licensing question must be answered rather than avoided. OrcaSlicer's lineage is Slic3r → PrusaSlicer → Bambu Studio → OrcaSlicer, so switching between them changes nothing about the licence. See [ADR-0022](./adr/0022-orcaslicer.md), which supersedes [ADR-0008](./adr/0008-prusaslicer.md).
 
 ---
 
 ## 3. Licensing — an open, launch-blocking question
 
-**PrusaSlicer is licensed AGPL-3.0.**
+**OrcaSlicer is licensed AGPL-3.0.**
 
 What this architecture does, factually:
 
@@ -94,12 +94,12 @@ What this architecture does, factually:
 
 ```
 apps/workers/slicer/
-├── Dockerfile              # python:3.12-slim + PrusaSlicer pinned by checksum
+├── Dockerfile              # python:3.12-slim + OrcaSlicer AppImage, extracted, pinned by checksum
 ├── src/metrika_slicer/
 │   ├── activities.py       # Temporal activities
 │   ├── engine.py           # subprocess invocation, argv construction, timeout
-│   ├── profiles.py         # JSON profile payload → PrusaSlicer .ini
-│   ├── parser.py           # G-code + CLI output → SliceMetrics
+│   ├── profiles.py         # JSON profile payload → OrcaSlicer machine/process/filament JSON
+│   ├── parser.py           # slice_info.config + G-code comments → SliceMetrics
 │   └── sandbox.py          # rlimits, tmpfs scratch, cleanup
 └── tests/
     ├── test_parser.py      # against committed G-code fixtures
@@ -109,11 +109,16 @@ apps/workers/slicer/
 Execution, step by step:
 
 1. Download `SLICE_INPUT_3MF` from S3 to a `tmpfs` scratch directory with a size cap.
-2. Render the three profile payloads (printer, print, material) into a PrusaSlicer `.ini`. Overrides are applied here, from an **allowlist** — a customer-supplied key that is not on the list is `INVALID_PRINT_CONFIGURATION`, never passed through. Config injection into a CLI is a real attack surface.
+2. Render the three profile payloads (printer, print, material) into OrcaSlicer's machine, process and filament JSON. Overrides are applied here, from an **allowlist** — a customer-supplied key that is not on the list is `INVALID_PRINT_CONFIGURATION`, never passed through. Config injection into a CLI is a real attack surface, and it does not become less of one because the format is JSON rather than `.ini`.
 3. Apply scale and orientation as explicit transform arguments.
-4. Invoke the binary with `--export-gcode --info`, `RLIMIT_AS` and `RLIMIT_CPU` set, a wall-clock alarm, no network, and a non-root user.
+4. Invoke the binary with `--slice` and `--export-3mf`, profiles passed as `--load-settings "machine.json;process.json"` and `--load-filaments` (one file per slot, semicolon-separated), with `RLIMIT_AS` and `RLIMIT_CPU` set, a wall-clock alarm, no network, and a non-root user.
 5. Heartbeat to Temporal every 10 s so a hung slice is detected in seconds rather than at the schedule-to-close timeout.
-6. Parse the metrics: filament volume/mass, support volume/mass, estimated print time, layer count, first-layer footprint. **Parse from the `--info` output and the G-code comment block, cross-checking both.** PrusaSlicer's summary comments and its `--info` output can disagree in edge cases; a disagreement beyond tolerance is a `SLICING_FAILED`, not a silently-picked number.
+6. Parse the metrics: filament volume/mass, support volume/mass, estimated print time, layer count, first-layer footprint. **Parse from `Metadata/slice_info.config` inside the exported `.gcode.3mf` and from the G-code comment block, cross-checking both.** A disagreement beyond tolerance is a `SLICING_FAILED`, not a silently-picked number.
+
+   Note what this cross-check is and is not. Under PrusaSlicer the two sources — `--info` and the G-code comments — came from separate code paths, so they could disagree about a genuinely bad slice. OrcaSlicer's `--info` reports model information _without slicing_ and is not a metrics source at all; both replacement sources are produced by the same slice run. **The check therefore catches parser drift and format changes across upgrades — which is what it fires on in practice — but not a fault in the slicing itself, which would corrupt both consistently.** Recorded as weaker rather than quietly carried over; if Phase 6 finds a genuinely independent second source, take it.
+
+   `slice_info.config` reports filament usage in millimetres and grams **per slot**. Sum across slots for the single-material case rather than reading slot 0, or a multi-material print is priced as though it used one filament.
+
 7. Compress the G-code with zstd and upload to `gcode/{orgId}/{sliceJobId}/{cacheKey}.gcode.zst`.
 8. Return `SliceOutput` — metrics and S3 keys only. G-code never travels through Temporal.
 9. Scrub the scratch directory unconditionally, including on failure.

@@ -1,6 +1,6 @@
 # ADR-0008 — PrusaSlicer CLI behind a `SlicerEngine` port
 
-**Status:** Accepted, pending legal review · **Date:** 2026-08-07
+**Status:** Superseded by [ADR-0022](./0022-orcaslicer.md) · **Date:** 2026-08-07
 
 ## Context
 
