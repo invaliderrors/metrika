@@ -26,3 +26,13 @@ allowBuilds:
   # ERR_PNPM_IGNORED_BUILDS complains about, and would leave the next person to
   # re-decide this from scratch.
   '@scarf/scarf': false
+  # DENIED. Reached via eslint-plugin-import-x → eslint-config-next (ADR-0021).
+  # Its build script downloads/links a prebuilt native resolver binary. ADR-0021's
+  # spike measured the denial safe: with the script denied, `pnpm install`,
+  # `next build`, `next dev` and a hand-enabled `import/no-unresolved` all work,
+  # because the package falls back to its WASM/JS path. `false` rather than
+  # deletion, for the reason recorded above @scarf/scarf: an absent entry is what
+  # ERR_PNPM_IGNORED_BUILDS fails on. ADR-0021 obligation 4 names two more —
+  # `@parcel/watcher` and `@swc/core` — which arrive with `next` itself and so
+  # belong to the task that installs it, not this one.
+  unrs-resolver: false
