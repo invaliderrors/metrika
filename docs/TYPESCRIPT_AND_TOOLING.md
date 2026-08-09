@@ -306,23 +306,33 @@ Python: `ruff format` + `ruff check` with an equivalently strict rule set, and `
 
 ## 5. Package builds
 
-Internal packages are **source-only**:
+Internal packages are **source-only, unless `apps/api` depends on them at runtime** — see [ADR-0020](./adr/0020-internal-package-build-output.md), which supersedes the source-only paragraph of [ADR-0001](./adr/0001-monorepo-strategy.md). `apps/api` compiles to `dist/main.js` and runs it with a plain `node` process; a bare-specifier import into that compiled output cannot resolve `.ts` source, so a package it depends on at runtime is built and exposed through a conditional `exports` map instead:
 
 ```jsonc
 {
   "name": "@metrika/contracts",
-  "exports": { ".": "./src/index.ts", "./events": "./src/events/index.ts" },
-  "scripts": { "typecheck": "tsc -b" }
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b"
+  }
 }
 ```
 
-- `apps/web` consumes them via `transpilePackages` in `next.config.ts`.
-- `apps/api` compiles them through TypeScript project references (`tsc -b`), so production output includes them.
-- Vitest resolves them natively through the workspace.
+- `apps/api` resolves it exactly as it would resolve a published npm package — through `main`/`types`/`exports` pointing at compiled JavaScript — because that is the only resolution mode a bare-specifier import into already-compiled Node output supports.
+- `apps/web` still consumes it via `transpilePackages` in `next.config.ts`, and Vitest still resolves it natively through the workspace; neither runs compiled output through a bare `node` process, so neither needs `dist/` and neither loses its zero-build inner loop.
+- `typecheck` (`tsc -b` over `tsconfig.json`, never emits) and `build` (`tsc -b tsconfig.build.json`, emits to `dist/`) are separate scripts and separate Turbo tasks, so the emitting half is cached and ordered independently. `build`'s Turbo output names `tsconfig.build.tsbuildinfo` exactly, never a `*.tsbuildinfo` glob — a glob would let a `build` cache hit also restore a stale `typecheck` state file and cause `tsc -b` to skip checking silently.
+- Packages with no runtime consumer that executes compiled Node output — `packages/eslint-config`, `packages/typescript-config`, and any future package only `apps/web`/Vitest import — declare no `build` script and stay exactly as ADR-0001 originally described; Turbo skips the (nonexistent) task for them without erroring.
 
-This removes an entire build step from the inner loop — editing `packages/contracts` is immediately visible everywhere with no watch-mode build. Correctness is preserved by the separate, Turbo-cached `typecheck` task, which must pass in CI.
+This keeps the inner loop free of a build step everywhere it safely can: editing a source-only package is immediately visible with no watch-mode build. Where a build step is unavoidable, it is Turbo-cached, so an unchanged package costs nothing on a warm cache.
 
-`exports` deliberately lists only intended entry points. Deep imports into `src/internal/...` do not resolve, which enforces the public API at the module-resolution level rather than by convention.
+`exports` still deliberately lists only intended entry points — `"./dist/index.js"`, not a directory — which enforces the public API at the module-resolution level rather than by convention. `"./package.json"` is exported explicitly on every built package: once `"."` is declared, an `exports` map is a closed allow-list, and without this entry `require.resolve('@metrika/contracts/package.json')` — the normal way a test harness locates a workspace package's own directory for fixtures — fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
 
 ---
 

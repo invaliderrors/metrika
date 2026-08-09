@@ -19,7 +19,7 @@ import type {
  * The previous version of this file asserted a declaration-order ring
  * (UserId≠OrganizationId, OrganizationId≠ProjectId, …). A ring catches an
  * ADJACENT collision only: `export const UserId = brandedUuid('QuoteId')`
- * left every ring assertion true and all 172 tests green at 100% coverage.
+ * left every ring assertion true and all 205 tests green at 100% coverage.
  *
  * `AssignableMember<U, T>` distributes over the union `U` and yields `true`
  * if ANY single member is assignable to `T`, `never` otherwise. Asserting the

@@ -246,18 +246,18 @@ pnpm-workspace.yaml:  apps/*  packages/*        # apps/workers has a package.jso
 apps/workers/pyproject.toml: [tool.uv.workspace] members = ["packages/*", "geometry", "slicer"]
 ```
 
-**Internal packages are source-only.** Each exports `"./src/index.ts"` directly; Next transpiles them via `transpilePackages`, the API compiles them through TypeScript project references, and Vitest resolves them natively. This removes an entire build step from the inner loop. Correctness is preserved by a separate cached `typecheck` task (`tsc -b`) that must pass in CI. See [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#5-package-builds).
+**Internal packages are source-only, except the ones `apps/api` depends on at runtime.** `apps/web` still consumes packages via `transpilePackages`, and Vitest still resolves them natively — no build step in either inner loop. But `apps/api` compiles to `dist/main.js` and runs that with a plain `node` process, which cannot resolve a bare-specifier import into `.ts` source; a package it depends on at runtime therefore gets a `build` script (`tsc -b tsconfig.build.json`) emitting `dist/`, and a conditional `exports` map pointing at the compiled output instead of source. This reverses part of [ADR-0001](./adr/0001-monorepo-strategy.md) for exactly that subset of packages — see [ADR-0020](./adr/0020-internal-package-build-output.md) for why the original decision assumed a consumer that transpiles, and what changed. Correctness is preserved by a separate cached `typecheck` task (`tsc -b`, no emit) that must pass in CI. See [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#5-package-builds).
 
 **Turborepo pipeline** (`turbo.json`):
 
-| Task               | Depends on   | Cached | Notes                                             |
-| ------------------ | ------------ | ------ | ------------------------------------------------- |
-| `typecheck`        | `^typecheck` | yes    | `tsc -b`; topological                             |
-| `lint`             | `^typecheck` | yes    | type-aware rules need built types of dependencies |
-| `test:unit`        | `^typecheck` | yes    | no external services                              |
-| `test:integration` | `^build`     | no     | Testcontainers; not cached (container state)      |
-| `build`            | `^build`     | yes    | only apps and publishable packages                |
-| `db:generate`      | —            | yes    | Prisma client; input = `schema.prisma`            |
+| Task               | Depends on              | Cached | Notes                                                                                                         |
+| ------------------ | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
+| `build`            | `^build`, `db:generate` | yes    | packages with a compiled-Node runtime consumer (ADR-0020); Turbo skips it for packages with no `build` script |
+| `typecheck`        | `^build`, `db:generate` | yes    | `tsc -b`, no emit; topological                                                                                |
+| `lint`             | `^build`, `db:generate` | yes    | type-aware rules need built types of dependencies                                                             |
+| `test:unit`        | `^build`, own `build`   | yes    | own `build` too: some suites assert against `dist/` (e.g. package-exports.test.ts)                            |
+| `test:integration` | `^build`, own `build`   | no     | Testcontainers; not cached (container state)                                                                  |
+| `db:generate`      | —                       | no     | Prisma client; input = `schema.prisma`; not cached                                                            |
 
 Remote caching (Vercel Remote Cache) is enabled from Phase 0 — it is free for this scale and turns a 6-minute CI run into 40 seconds on unchanged packages.
 
