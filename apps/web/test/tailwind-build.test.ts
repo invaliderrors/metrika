@@ -53,7 +53,14 @@ describe('the Tailwind pipeline', () => {
     // whereas the string `p-8` also appears in an unprocessed className.
     expect(all).toMatch(/\.p-8\s*\{[^}]*padding/);
     // The custom token resolves, so the theme block is being read.
-    expect(all).toContain('--color-brand');
+    //
+    // A DECLARATION (`--color-brand:`), not a substring. MEASURED by mutation:
+    // `toContain('--color-brand')` is also satisfied by `--color-brand-foreground`,
+    // so deleting `--color-brand` from the `@theme` block outright left this
+    // green — the assertion could not fail for the reason it names. The trailing
+    // colon is what distinguishes the declaration from both the longer token and
+    // the `var(--color-brand)` references in the utilities.
+    expect(all).toMatch(/--color-brand\s*:/);
 
     // NEGATIVE CONTROL. Both assertions above would also pass against a stock
     // Tailwind stylesheet that had never been scanned against this app —
