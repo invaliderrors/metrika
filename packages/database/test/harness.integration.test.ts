@@ -13,8 +13,16 @@ describe('the shared test database', () => {
   });
 
   it('has applied the migrations, so the schema is queryable', async () => {
+    // Asserts the table is QUERYABLE, not that it is empty. A global
+    // emptiness claim here coupled this file to running before any other
+    // integration file that writes a HealthCheck row with no cleanup —
+    // true only by file-ordering luck, and Vitest's default sequencer does
+    // not preserve declaration order (see vitest.integration.config.ts
+    // history). Step 11's missing-migration mutation still fails the whole
+    // run in globalSetup before this assertion is reached, so no coverage
+    // is lost by not asserting emptiness.
     const rows = await withDatabase(async (db) => db.healthCheck.findMany());
-    expect(rows).toEqual([]);
+    expect(Array.isArray(rows)).toBe(true);
   });
 
   it('round-trips a write through the real database', async () => {
