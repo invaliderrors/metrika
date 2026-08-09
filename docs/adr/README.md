@@ -29,6 +29,7 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 | [0021](./0021-next-major-and-frontend-stack.md) | Next.js 16 and the pinned frontend stack, gated on a measured spike                      | Accepted                              |
 | [0023](./0023-eslint-plugin-resolution.md)      | An ESLint plugin is declared where it is imported, and nowhere else                      | Accepted, scopes part of ADR-0021     |
 | [0024](./0024-types-node-pin.md)                | `@types/node` tracks the Node major in `.nvmrc`, not the registry's latest               | Accepted, scopes part of ADR-0021     |
+| [0025](./0025-radix-umbrella.md)                | `radix-ui` umbrella over `@radix-ui/react-slot`, because the shadcn registry emits it    | Accepted                              |
 
 **0022 is not missing.** It is `0022-orcaslicer.md`, written on the parallel
 `docs/orcaslicer` branch and not yet merged. The row appears when that branch
