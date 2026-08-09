@@ -1,7 +1,9 @@
 import { Controller, Get, HttpCode, Res, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { ZodResponse } from 'nestjs-zod';
 import { EnvService } from '../../config/env.service.js';
+import { BEARER_SCHEME } from '../../openapi/build-document.js';
 import { DeepHealthGuard } from './deep-health.guard.js';
 import { HealthDeepDto, HealthLiveDto, HealthReadyDto } from './health.dto.js';
 import { HealthService } from './health.service.js';
@@ -19,6 +21,26 @@ import { HealthService } from './health.service.js';
  */
 const UNAVAILABLE = 503;
 const AVAILABLE = 200;
+const UNAUTHENTICATED = 401;
+
+/**
+ * `@ZodResponse` documents ONE status — the one it also enforces at runtime —
+ * so every other status a handler can really answer has to be declared beside
+ * it with `@ApiResponse` or it is absent from the emitted document.
+ *
+ * That absence is not cosmetic. `apps/api/openapi/openapi.json` is what
+ * `packages/api-client` is generated from, so a probe documented as 200-only
+ * produces a client whose types say the call either succeeds or throws — and
+ * the 503 that a real degraded deployment answers arrives as an unmodelled
+ * error. The status these routes exist to communicate would be the one status
+ * the contract omits. `test/openapi.integration.test.ts` asserts both are
+ * present.
+ *
+ * Both statuses carry the SAME schema, which is correct rather than lazy: the
+ * handler returns the same DTO either way and only the status line changes —
+ * that is the whole design (see `UNAVAILABLE`).
+ */
+const UNAVAILABLE_DESCRIPTION = 'At least one dependency is not usable. Do not route traffic here.';
 
 @Controller('health')
 export class HealthController {
@@ -33,7 +55,11 @@ export class HealthController {
    * degradation into an outage — see docs/OBSERVABILITY.md.
    */
   @Get('live')
-  @ZodResponse({ status: 200, type: HealthLiveDto })
+  @ZodResponse({
+    status: AVAILABLE,
+    description: 'The process is running. Says nothing about its dependencies.',
+    type: HealthLiveDto,
+  })
   live(): HealthLiveDto {
     return { status: 'ok', environment: this.config.values.NODE_ENV };
   }
@@ -63,7 +89,16 @@ export class HealthController {
    * documented success case and does not clobber a status set here.
    */
   @Get('ready')
-  @ZodResponse({ status: AVAILABLE, type: HealthReadyDto })
+  @ZodResponse({
+    status: AVAILABLE,
+    description: 'Every dependency answered. Safe to route traffic here.',
+    type: HealthReadyDto,
+  })
+  @ApiResponse({
+    status: UNAVAILABLE,
+    description: UNAVAILABLE_DESCRIPTION,
+    type: HealthReadyDto,
+  })
   async ready(@Res({ passthrough: true }) reply: FastifyReply): Promise<HealthReadyDto> {
     const results = await this.health.checkAll();
     const status = results.every((r) => r.status === 'ok') ? 'ok' : 'down';
@@ -74,7 +109,27 @@ export class HealthController {
   @Get('deep')
   @UseGuards(DeepHealthGuard)
   @HttpCode(AVAILABLE)
-  @ZodResponse({ status: AVAILABLE, type: HealthDeepDto })
+  @ApiBearerAuth(BEARER_SCHEME)
+  @ZodResponse({
+    status: AVAILABLE,
+    description: 'Every dependency answered, with per-dependency latency.',
+    type: HealthDeepDto,
+  })
+  @ApiResponse({
+    status: UNAVAILABLE,
+    description: UNAVAILABLE_DESCRIPTION,
+    type: HealthDeepDto,
+  })
+  // No `type` on the 401: the error envelope has no DTO yet. `ApiErrorResponse`
+  // is specified in docs/CONTRACTS_AND_API.md §3 but lives nowhere as a schema,
+  // and defining a second one here — in a feature module, next to a health probe
+  // — is how an envelope ends up with two definitions that drift. The status is
+  // declared so a client knows the route can reject; the body arrives with the
+  // shared error DTO, in the task that adds it.
+  @ApiResponse({
+    status: UNAUTHENTICATED,
+    description: 'Missing or invalid bearer token. Carries `WWW-Authenticate: Bearer`.',
+  })
   async deep(@Res({ passthrough: true }) reply: FastifyReply): Promise<HealthDeepDto> {
     const checks = await this.health.checkAll();
     const status = checks.every((c) => c.status === 'ok') ? 'ok' : 'down';

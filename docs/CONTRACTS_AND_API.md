@@ -254,8 +254,36 @@ Generated from the Zod DTOs by `@nestjs/swagger` + `nestjs-zod`, served at
 this space emits a 3.1-versioned document by default, so the version must be
 overridden explicitly — in exactly one `buildOpenApiDocument`, so a second
 emitter added later cannot silently claim 3.0 while containing 3.1-only
-constructs. See [ADR-0019](./adr/0019-nestjs-zod-contracts.md). The emitter
-itself does not exist yet; it lands with the OpenAPI emission task.
+constructs. See [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
+
+That function is `apps/api/src/openapi/build-document.ts`, and both consumers go
+through it: `bootstrap.ts` builds the document once at boot and serves it, and
+`apps/api/src/scripts/emit-openapi.ts` writes it to
+`apps/api/openapi/openapi.json`, which is committed.
+
+```bash
+pnpm --filter @metrika/api openapi:emit
+```
+
+The emit script runs against the module graph, never against a running system:
+it calls `NestFactory.create()` — which instantiates every provider, all
+`SwaggerModule.createDocument` reads — and deliberately never calls
+`app.init()`, whose lifecycle hooks include `PrismaService.onModuleInit`'s
+`$connect()`. So emission needs **no reachable database**. `DATABASE_URL` and
+`HEALTH_DEEP_TOKEN` still have to be present and well-formed, because
+`ConfigModule` validates the environment while the graph is built; they do not
+have to point at anything that exists.
+
+`@ZodResponse` documents the one status it also enforces, so every other status
+a route really answers is declared beside it with `@ApiResponse` — the probes'
+503 is in the document for that reason. A route documented as 200-only generates
+a client that models its real failure as an unmodelled error.
+
+`apps/api/openapi/` is in `.prettierignore`. The document is machine-generated
+with `JSON.stringify(doc, null, 2)` and diffed byte-for-byte; Prettier's
+`printWidth: 100` collapses short arrays that `JSON.stringify` expands, so
+leaving it formatted makes `format:check` and the diff gate disagree with the
+emitter permanently.
 
 CI diffs the generated spec against the committed baseline. A breaking change — a removed field, a narrowed type, a new required request property — fails the build unless the pull request carries an `api-breaking-change` label and updates the baseline. This is the mechanism that makes "do not break the client" a rule rather than an aspiration.
 

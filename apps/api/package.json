@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "start": "node --env-file=../../.env dist/main.js",
     "dev": "concurrently --kill-others --names tsc,api \"tsc -b tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --env-file=../../.env dist/main.js\"",
+    "openapi:emit": "node dist/scripts/emit-openapi.js",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
