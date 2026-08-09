@@ -36,6 +36,28 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...VALID, API_PORT: '70000' })).toThrow(/API_PORT/);
   });
 
+  it('rejects a NODE_ENV outside the enum — a typo must not silently become "development"', () => {
+    expect(() => parseEnv({ ...VALID, NODE_ENV: 'prod' })).toThrow(/NODE_ENV/);
+  });
+
+  it('rejects a LOG_LEVEL outside the enum', () => {
+    expect(() => parseEnv({ ...VALID, LOG_LEVEL: 'verbose' })).toThrow(/LOG_LEVEL/);
+  });
+
+  it('rejects a non-integer API_PORT', () => {
+    expect(() => parseEnv({ ...VALID, API_PORT: '3001.5' })).toThrow(/API_PORT/);
+  });
+
+  it('rejects a zero API_PORT', () => {
+    expect(() => parseEnv({ ...VALID, API_PORT: '0' })).toThrow(/API_PORT/);
+  });
+
+  it('rejects a DATABASE_URL where postgresql:// appears only mid-string, not at the start', () => {
+    expect(() =>
+      parseEnv({ ...VALID, DATABASE_URL: 'mysql://user@host/postgresql://evil' }),
+    ).toThrow(/DATABASE_URL/);
+  });
+
   it('lists every problem at once rather than the first', () => {
     const message = (() => {
       try {
