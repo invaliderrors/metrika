@@ -8,13 +8,16 @@
   },
   "scripts": {
     "preinstall": "node scripts/check-node-version.mjs",
+    "build": "turbo run build",
+    "dev": "turbo run dev",
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint -- --fix",
     "typecheck": "turbo run typecheck",
     "test:unit": "turbo run test:unit",
+    "test:integration": "turbo run test:integration",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit",
+    "verify": "pnpm format:check && pnpm build && pnpm lint && pnpm typecheck && pnpm test:unit",
     "ci": "pnpm verify"
   },
   "devDependencies": {
