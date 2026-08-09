@@ -1,5 +1,14 @@
 name: metrika
 
+# ROADMAP 0.10 also lists `temporal` and `temporal-ui` here. They are
+# deliberately deferred to Plan 0B-3, where they are first used and their
+# health checks can be verified against a real workflow rather than guessed —
+# not forgotten. `docs/LOCAL_DEVELOPMENT.md` is corrected to match in Task 13.
+#
+# Every published port below binds to 127.0.0.1 only, not 0.0.0.0: Docker's
+# publish path inserts iptables/pf rules that bypass the macOS application
+# firewall, so an unqualified `host:container` mapping exposes Postgres,
+# MinIO and Mailpit's UI to the whole LAN. Do not "simplify" this back.
 services:
   postgres:
     # KEEP IN SYNC with POSTGRES_IMAGE in packages/testing/src/images.ts.
@@ -10,26 +19,48 @@ services:
       POSTGRES_PASSWORD: metrika
       POSTGRES_DB: metrika_dev
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # One source of truth for the metrika_app role: the same file
-      # packages/testing applies to the Testcontainers instance. Files in this
-      # directory run once, at first initialisation of an empty data volume —
-      # `pnpm infra:reset` is what re-runs them.
-      - ../../packages/database/sql:/docker-entrypoint-initdb.d:ro
+      # packages/testing's withDatabase() (Task 6) applies to the
+      # Testcontainers instance. Mounted by filename, not by directory,
+      # because the harness copies named files rather than the whole
+      # directory — mounting the directory here would let a future
+      # packages/database/sql/01-*.sql apply locally while being silently
+      # skipped in tests, the exact divergence this file's own header says
+      # is eliminated. Adding a script means adding it in both places.
+      # Runs once, at first initialisation of an empty data volume —
+      # `pnpm infra:reset` is what re-runs it.
+      - ../../packages/database/sql/00-app-role.sql:/docker-entrypoint-initdb.d/00-app-role.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U metrika -d metrika_dev']
+      # -h 127.0.0.1 is load-bearing, not decorative: with no -h, pg_isready
+      # checks the unix socket at /var/run/postgresql, where the entrypoint's
+      # TEMPORARY server (listen_addresses='') answers while
+      # docker-entrypoint-initdb.d is still running. That reports healthy
+      # before Postgres accepts TCP connections, which is exactly the race
+      # --wait exists to remove. -U/-d are decorative — pg_isready accepts a
+      # nonexistent role/db and still reports ready — kept for readability.
+      # See Task 4 review round 1, Finding 1.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U metrika -d metrika_dev']
       interval: 2s
       timeout: 3s
       retries: 30
+      # Real budget ~2s x 30 = 60s (interval x retries; each pg_isready call
+      # is effectively instant). No start_period: init here is a single small
+      # role-bootstrap script, so paying the health-check cost from t=0 is
+      # cheaper than a fixed grace period. Revisit if init grows slow enough
+      # that the 60s budget gets tight (see MinIO's real budget below).
 
   redis:
     image: redis:7-alpine
     command: ['redis-server', '--save', '', '--appendonly', 'no']
     ports:
-      - '6379:6379'
+      - '127.0.0.1:6379:6379'
     healthcheck:
+      # Real budget ~= 2s x 30 = 60s: redis-cli ping is effectively instant,
+      # so interval x retries is not an underestimate here (contrast MinIO
+      # below). No start_period: redis has no init to wait out.
       test: ['CMD', 'redis-cli', 'ping']
       interval: 2s
       timeout: 3s
@@ -42,11 +73,17 @@ services:
       MINIO_ROOT_USER: metrika
       MINIO_ROOT_PASSWORD: metrika-local
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
     volumes:
       - minio-data:/data
     healthcheck:
+      # Real budget is NOT interval x retries = 90s: measured ~4 minutes.
+      # `mc ready local` costs ~4s per failing call, on top of the interval,
+      # while MinIO is still coming up — the real budget is
+      # retries x (interval + check duration), which is why this is more
+      # patient than it looks. No start_period, for the same reason as
+      # postgres: nothing here is slow enough yet to justify one.
       test: ['CMD', 'mc', 'ready', 'local']
       interval: 3s
       timeout: 5s
@@ -55,9 +92,11 @@ services:
   mailpit:
     image: axllent/mailpit:v1.30.7
     ports:
-      - '1025:1025'
-      - '8025:8025'
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
     healthcheck:
+      # Real budget ~= 3s x 30 = 90s: readyz is effectively instant once the
+      # process is up. No start_period: mailpit has no init to wait out.
       test: ['CMD', '/mailpit', 'readyz']
       interval: 3s
       timeout: 5s

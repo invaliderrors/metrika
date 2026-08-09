@@ -1,8 +1,10 @@
 # Local image pins
 
-`pnpm infra:up` must resolve the same bytes on every machine. These are the
-images resolved when `infra/docker/docker-compose.yml` was last updated, captured
-with `docker compose -f infra/docker/docker-compose.yml images`.
+Exact-tag pinning guarantees the _major_ version cannot move under us and
+gives every developer a comparable Image ID — it does not guarantee
+byte-identical images (see below). These are the images resolved when
+`infra/docker/docker-compose.yml` was last updated, captured with
+`docker compose -f infra/docker/docker-compose.yml images`.
 
 Digest pinning (`image: repo:tag@sha256:…`) applies to the **production** images
 built in Plan 0D. Local dependencies are pinned by exact tag: a digest here would

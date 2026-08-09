@@ -9,9 +9,10 @@
 -- The application role MUST NOT be a superuser and MUST NOT have BYPASSRLS.
 -- A superuser ignores every row-level security policy, FORCE included, which
 -- makes RLS look enabled while doing nothing at all. This is the single most
--- likely way for the tenant-isolation backstop to be silently absent, so
--- packages/database/test/rls.integration.test.ts asserts both attributes are
--- false rather than trusting this file.
+-- likely way for the tenant-isolation backstop to be silently absent.
+-- packages/database/test/rls.integration.test.ts (Task 8, not yet written)
+-- WILL assert both attributes are false rather than trusting this file; until
+-- it lands, nothing in the repository verifies this automatically.
 --
 -- ALTER DEFAULT PRIVILEGES with no FOR ROLE clause applies to objects created
 -- by the CURRENT role. `prisma migrate` connects as the owner (metrika), which
