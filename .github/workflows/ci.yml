@@ -132,6 +132,13 @@ jobs:
       #     ERE bracket expression `\n` is the two characters backslash and `n`,
       #     not a newline, and the `*` allows zero of them — so the old suffix
       #     matched the same set of lines and only read as if it did something.
+      #   - `*.mjs` is in the include list. It was not, and `apps/web/postcss.config.mjs`
+      #     is the first `.mjs` file under `apps/` — the extension was uncovered by
+      #     both gates from the moment it appeared. Clean today; the point is that
+      #     a suppression added to it tomorrow would not have been seen. The
+      #     `.cjs` extension is deliberately still absent: nothing in this
+      #     workspace uses it, and an include pattern that matches nothing is a
+      #     line nobody can tell is working.
       #   - The justification test runs against the LINE CONTENT only. `grep -rn`
       #     emits `path:lineno:content`, and a bare `grep -v -- '--'` on that
       #     drops any line whose PATH contains `--`, so a genuinely unjustified
@@ -141,7 +148,7 @@ jobs:
       - name: Reject unjustified suppressions
         run: |
           if grep -rnE '(eslint-disable|@ts-expect-error)' \
-               --include='*.ts' --include='*.tsx' --include='*.js' \
+               --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
                --exclude-dir=.next \
                packages apps 2>/dev/null \
@@ -149,7 +156,7 @@ jobs:
              | grep -q .; then
             echo "::error::Every eslint-disable / @ts-expect-error needs a '-- <justification>'"
             grep -rnE '(eslint-disable|@ts-expect-error)' \
-               --include='*.ts' --include='*.tsx' --include='*.js' \
+               --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
                --exclude-dir=.next \
                packages apps 2>/dev/null \
@@ -165,7 +172,7 @@ jobs:
       # match itself — not on grep's own exit status. Same reasoning as the step above.
       - name: Reject @ts-ignore
         run: |
-          if grep -rn '@ts-ignore' --include='*.ts' --include='*.tsx' \
+          if grep -rn '@ts-ignore' --include='*.ts' --include='*.tsx' --include='*.mjs' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
                --exclude-dir=.next \
                packages apps 2>/dev/null | grep -q .; then
