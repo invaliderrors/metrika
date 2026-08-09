@@ -1,0 +1,77 @@
+import { z } from 'zod';
+
+export const SUPPORTED_LOCALES = ['es-CO', 'en-US'] as const;
+export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+
+const PublicKeys = {
+  NEXT_PUBLIC_API_BASE_URL: z.string().regex(/^https?:\/\//, 'must be an http:// or https:// URL'),
+  NEXT_PUBLIC_DEFAULT_LOCALE: z.enum(SUPPORTED_LOCALES),
+};
+
+export const ClientEnvSchema = z.object(PublicKeys);
+export type ClientEnv = z.infer<typeof ClientEnvSchema>;
+
+export const ServerEnvSchema = z.object({
+  ...PublicKeys,
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  WEB_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+});
+export type ServerEnv = z.infer<typeof ServerEnvSchema>;
+
+export class EnvValidationError extends Error {
+  constructor(issues: readonly z.core.$ZodIssue[]) {
+    super(
+      [
+        'Environment configuration is invalid. Every problem, not just the first:',
+        ...issues.map((issue) => {
+          const path = issue.path.join('.');
+          return `  ${path !== '' ? path : '(root)'}: ${issue.message}`;
+        }),
+        '',
+        'Copy .env.example to .env and fill in the values it names.',
+      ].join('\n'),
+    );
+    this.name = 'EnvValidationError';
+  }
+}
+
+/** Pure, so it can be unit-tested without touching the ambient environment. */
+export function parseServerEnv(source: Record<string, string | undefined>): ServerEnv {
+  const result = ServerEnvSchema.safeParse(source);
+  if (!result.success) throw new EnvValidationError(result.error.issues);
+  return result.data;
+}
+
+export function loadServerEnv(): ServerEnv {
+  return parseServerEnv(process.env);
+}
+
+/**
+ * Each key is read by its FULL LITERAL TEXT, and the object is built by hand.
+ *
+ * Next's `NEXT_PUBLIC_` support is a textual substitution performed at build
+ * time on the exact string `process.env.NEXT_PUBLIC_WHATEVER`. Any indirection
+ * — a computed member access with the key in a variable, destructuring
+ * `process.env`, spreading it, aliasing it to a local — is not substituted,
+ * type-checks cleanly, passes every server-side test, and evaluates to
+ * `undefined` in the browser. A loop over a key list would be tidier and would
+ * silently ship a broken client bundle.
+ *
+ * Note the phrasing above avoids writing the computed form out. That is not
+ * squeamishness: `test/env-inlining.test.ts` greps THIS FILE's text for it, and
+ * a regex over source cannot tell a comment from code. Describing the banned
+ * form in prose is the cost of a check cheap enough to actually run.
+ *
+ * The two accesses below compile only because `./process-env.d.ts` declares
+ * these keys on `NodeJS.ProcessEnv`; without it `noPropertyAccessFromIndexSignature`
+ * rejects both with TS4111 and pushes you toward the one form Next will not
+ * substitute. That file carries the full reasoning.
+ *
+ * Parsed at module scope so a misconfigured deployment fails at build, not on
+ * a user's first render. `vitest.config.ts` supplies both keys for the same
+ * reason: importing this module runs this parse.
+ */
+export const clientEnv: ClientEnv = ClientEnvSchema.parse({
+  NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+  NEXT_PUBLIC_DEFAULT_LOCALE: process.env.NEXT_PUBLIC_DEFAULT_LOCALE,
+});
