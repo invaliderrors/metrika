@@ -94,6 +94,59 @@ describe('GET /health/deep', () => {
   });
 
   /**
+   * RFC 9110 §11.1: the auth-scheme is case-insensitive, so `bearer <token>` is
+   * a conformant request. A `startsWith('Bearer ')` check answers 401 to a
+   * client that did nothing wrong, and the failure looks identical to a genuine
+   * bad-credential 401 from the caller's side — the worst kind of interop bug to
+   * debug.
+   */
+  it('accepts the scheme in any case — RFC 9110 makes it case-insensitive', async () => {
+    for (const scheme of ['bearer', 'BEARER', 'BeArEr']) {
+      const response = await fetch(`${baseUrl}/health/deep`, {
+        headers: { authorization: `${scheme} ${TOKEN}` },
+      });
+      expect(response.status, scheme).toBe(200);
+    }
+  });
+
+  /**
+   * Case-insensitivity applies to the SCHEME only. If it leaked into the token
+   * comparison, every token would have 2^n matching variants.
+   */
+  it('keeps the token itself case-sensitive', async () => {
+    const response = await fetch(`${baseUrl}/health/deep`, {
+      headers: { authorization: `Bearer ${TOKEN.toUpperCase()}` },
+    });
+    expect(TOKEN.toUpperCase()).not.toBe(TOKEN);
+    expect(response.status).toBe(401);
+  });
+
+  /**
+   * RFC 9110 §11.6.1 requires a 401 to carry a challenge. Asserted on the wire
+   * rather than at the guard, because the guard writes the header and then
+   * THROWS — that it survives depends on DomainExceptionFilter answering on the
+   * same reply object, which is somebody else's implementation detail and
+   * exactly the kind of thing that changes without warning.
+   */
+  it('carries a WWW-Authenticate challenge on every 401, and none on success', async () => {
+    for (const headers of [
+      undefined,
+      { authorization: 'Bearer wrong' },
+      { authorization: TOKEN },
+    ]) {
+      const response = await fetch(`${baseUrl}/health/deep`, headers ? { headers } : undefined);
+      expect(response.status).toBe(401);
+      expect(response.headers.get('www-authenticate')).toBe('Bearer');
+    }
+
+    const ok = await fetch(`${baseUrl}/health/deep`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('www-authenticate')).toBeNull();
+  });
+
+  /**
    * `ApiErrorResponse` documents `message` as localised and safe to display, and
    * a 401 from this guard is the first one a real user can hit. The guard throws
    * a `DomainError`, not an `HttpException`, so `DomainExceptionFilter` takes its
