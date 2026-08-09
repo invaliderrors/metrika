@@ -1,3 +1,4 @@
+import { Money } from '@metrika/contracts';
 import { describe, expect, it } from 'vitest';
 import { MoneyRequest } from '../src/shared/http/money-request.schema.js';
 
@@ -32,6 +33,24 @@ describe('MoneyRequest', () => {
     if (!result.success) {
       expect(result.error.issues[0]?.path).toEqual(['exponent']);
     }
+  });
+
+  it('refines Money rather than replacing it — a STORED stale exponent still parses', () => {
+    // The other direction, and the reason this schema exists in apps/api instead
+    // of in packages/contracts. An accepted quote must be reconstructible
+    // indefinitely, so a value persisted when a currency's used exponent was
+    // different has to keep parsing through the unrefined `Money` forever;
+    // pinning the stored type to today's CURRENCY_REGISTRY would make that quote
+    // unreadable the day the registry changes. The registry is the right
+    // authority for INBOUND data only.
+    //
+    // This fails the day somebody "fixes" the apparent gap by moving the check
+    // into `Money` — at which point MoneyRequest is redundant and the
+    // reproducibility property is gone, with every other test in this file
+    // still green.
+    const stale = { amountMinor: '350000', currency: 'COP', exponent: 2 };
+    expect(Money.safeParse(stale).success).toBe(true);
+    expect(MoneyRequest.safeParse(stale).success).toBe(false);
   });
 
   it('still rejects everything base Money rejects', () => {

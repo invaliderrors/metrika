@@ -30,6 +30,11 @@ class BoomController {
     throw new DomainError('QUOTE_EXPIRED', 'La cotización ha expirado', { quoteId: 'q-1' });
   }
 
+  @Get('retryable')
+  retryable(): never {
+    throw new DomainError('SLICING_FAILED', 'El laminado ha fallado');
+  }
+
   @Get('unexpected')
   unexpected(): never {
     throw new Error('a stack trace that must never cross the boundary');
@@ -75,6 +80,28 @@ describe('DomainExceptionFilter', () => {
         retryable: false,
       },
     });
+  });
+
+  it('reads status AND retryable from the map rather than the branch', async () => {
+    // Every other assertion in this file throws QUOTE_EXPIRED, which the map
+    // marks `retryable: false` — so all of them stay green against a filter that
+    // hardcodes `retryable: false` on the domain branch, and against one that
+    // hardcodes 410. A code the map marks retryable at a different status is the
+    // only thing that separates "read from the table" from "written twice".
+    const response = await fetch(`${baseUrl}/boom/retryable`);
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as { error: { code: string; retryable: boolean } };
+    expect(body.error.code).toBe('SLICING_FAILED');
+    expect(body.error.retryable).toBe(true);
+  });
+
+  it('omits details entirely when the error carries none', async () => {
+    // The conditional spread, pinned: `details: undefined` and an absent
+    // `details` are different documents on the wire, and ApiErrorResponse
+    // declares the field optional, not nullable.
+    const response = await fetch(`${baseUrl}/boom/retryable`);
+    const body = (await response.json()) as { error: Record<string, unknown> };
+    expect(body.error).not.toHaveProperty('details');
   });
 
   it('maps an unexpected error to 500 INTERNAL_ERROR', async () => {
