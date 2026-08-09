@@ -1,0 +1,39 @@
+{
+  "name": "@metrika/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "prisma",
+    "sql"
+  ],
+  "scripts": {
+    "db:generate": "node --env-file-if-exists=../../.env ../../scripts/prisma.mjs generate",
+    "build": "pnpm db:generate && tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "test:unit": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@metrika/contracts": "workspace:*",
+    "@prisma/client": "6.19.3"
+  },
+  "devDependencies": {
+    "@metrika/eslint-config": "workspace:*",
+    "@metrika/typescript-config": "workspace:*",
+    "eslint": "10.8.0",
+    "prisma": "6.19.3",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}
