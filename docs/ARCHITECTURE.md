@@ -665,7 +665,7 @@ Full detail in [CONTRACTS_AND_API.md](./CONTRACTS_AND_API.md).
 
 - REST at `/api/v1`, resource-oriented, cursor pagination on every collection, consistent `?filter[...]&sort=&cursor=&limit=`.
 - Every response carries `X-Request-Id`; every error body is `{ error: { code, message, details?, requestId } }` with `code` drawn from a closed union in `packages/contracts`. Stack traces never cross the boundary.
-- OpenAPI 3.1 generated from the `nestjs-zod` DTOs, published at `/api/v1/openapi.json`, diffed in CI to catch unintended breaking changes. No generator emits 3.1 natively, so the version is overridden explicitly in one place — see [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
+- OpenAPI 3.1 generated from the `nestjs-zod` DTOs, published at `/api/v1/openapi.json`, and committed so it can be diffed to catch unintended breaking changes — the diff gate is verified to fail on a stale document but is not yet wired into CI. No generator emits 3.1 natively, so the version is overridden explicitly in one place — see [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
 - Long-running operations return `202` with a resource whose state the client polls or subscribes to via SSE. No HTTP request waits on geometry or slicing.
 
 ---

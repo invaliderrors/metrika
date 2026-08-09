@@ -30,7 +30,20 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .setTitle('Metrika API')
     .setDescription('Manufacturing quotes for 3D-printed architectural models.')
     .setVersion('1.0.0')
-    .addBearerAuth(undefined, BEARER_SCHEME)
+    // `addSecurity`, not `addBearerAuth`. The latter hardcodes
+    // `bearerFormat: 'JWT'` and spreads it BEFORE its options argument, so the
+    // default cannot be overridden through it — and the claim would be false:
+    // the only route on this scheme today is /health/deep, guarded by a
+    // timingSafeEqual over the SHA-256 of a static shared secret, never a JWT.
+    // No generator codegens from `bearerFormat`, so nothing breaks either way,
+    // but it is the one field where the document could assert something untrue
+    // about a real route, and it would collide the day real JWT auth shares
+    // this scheme name.
+    .addSecurity(BEARER_SCHEME, {
+      type: 'http',
+      scheme: 'bearer',
+      description: 'Static shared secret, compared in constant time. Not a JWT.',
+    })
     .build();
 
   const document = cleanupOpenApiDoc(SwaggerModule.createDocument(app, config), {

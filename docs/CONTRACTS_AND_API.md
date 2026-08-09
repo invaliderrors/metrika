@@ -262,8 +262,14 @@ through it: `bootstrap.ts` builds the document once at boot and serves it, and
 `apps/api/openapi/openapi.json`, which is committed.
 
 ```bash
-pnpm --filter @metrika/api openapi:emit
+DATABASE_URL=… HEALTH_DEEP_TOKEN=… pnpm --filter @metrika/api openapi:emit
 ```
+
+The environment goes on the command line because, unlike `start` and `dev`, the
+emit script carries no `--env-file`. That is deliberate: a `--env-file` would
+make a local run read real credentials while CI supplies dummies, so the two
+would feed different inputs to an artefact that is compared byte for byte. The
+values are only parsed, never connected to — see below.
 
 The emit script runs against the module graph, never against a running system:
 it calls `NestFactory.create()` — which instantiates every provider, all
@@ -285,7 +291,18 @@ with `JSON.stringify(doc, null, 2)` and diffed byte-for-byte; Prettier's
 leaving it formatted makes `format:check` and the diff gate disagree with the
 emitter permanently.
 
-CI diffs the generated spec against the committed baseline. A breaking change — a removed field, a narrowed type, a new required request property — fails the build unless the pull request carries an `api-breaking-change` label and updates the baseline. This is the mechanism that makes "do not break the client" a rule rather than an aspiration.
+The intended gate is that CI diffs the generated spec against the committed
+baseline, so a breaking change — a removed field, a narrowed type, a new
+required request property — fails the build unless the pull request carries an
+`api-breaking-change` label and updates the baseline. That is what makes "do not
+break the client" a rule rather than an aspiration.
+
+**This gate is not wired yet.** `git diff --exit-code -- apps/api/openapi/openapi.json`
+is verified to fail on a stale document, but no CI job runs it, and CI runs no
+integration tests either — so the runtime assertions in
+`apps/api/test/openapi.integration.test.ts` do not execute there. Until both
+jobs exist, the committed document is protected only by whoever runs the emit
+locally.
 
 ---
 

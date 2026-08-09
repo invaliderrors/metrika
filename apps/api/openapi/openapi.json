@@ -104,9 +104,9 @@
   "components": {
     "securitySchemes": {
       "bearer": {
+        "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "JWT",
-        "type": "http"
+        "description": "Static shared secret, compared in constant time. Not a JWT."
       }
     },
     "schemas": {
