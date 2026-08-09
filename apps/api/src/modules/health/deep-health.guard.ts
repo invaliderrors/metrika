@@ -5,12 +5,32 @@
 // must NOT be type-imported. Nothing here is injected by type, so this is not
 // the DI footgun — the guard's own `EnvService` parameter is a value import.
 import { type CanActivate, type ExecutionContext, Injectable } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { DomainError } from '../../shared/errors/domain-error.js';
 import { EnvService } from '../../config/env.service.js';
 
+/**
+ * The scheme is matched case-INSENSITIVELY: RFC 9110 §11.1 makes the auth-scheme
+ * token case-insensitive, so `bearer <token>` is a conformant request and a
+ * `startsWith('Bearer ')` check answers 401 to a client that did nothing wrong.
+ * `toLowerCase()` and not `toLocaleLowerCase()` — the latter is locale-dependent
+ * and would fold `I` differently under a Turkish locale.
+ *
+ * Only the SCHEME is compared this way. The token comparison below stays
+ * byte-exact and constant-time.
+ */
 const BEARER = 'Bearer ';
+const BEARER_LOWER = BEARER.toLowerCase();
+
+/**
+ * RFC 9110 §11.6.1 requires a 401 to carry `WWW-Authenticate`. It names the
+ * scheme the client should retry with and reveals nothing — no realm, because a
+ * realm here would be a name for internal topology on the one endpoint whose
+ * entire purpose is to describe internal topology.
+ */
+const CHALLENGE_HEADER = 'WWW-Authenticate';
+const CHALLENGE = 'Bearer';
 
 /**
  * SHA-256 of the presented and expected tokens, compared with
@@ -59,15 +79,33 @@ export class DeepHealthGuard implements CanActivate {
   constructor(private readonly config: EnvService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest<FastifyRequest>();
-    const header = request.headers.authorization;
+    const http = context.switchToHttp();
+    const header = http.getRequest<FastifyRequest>().headers.authorization;
 
-    if (typeof header !== 'string' || !header.startsWith(BEARER)) {
-      throw new DomainError('UNAUTHENTICATED', 'Credenciales requeridas.');
+    /**
+     * The challenge is written on the reply and then the DomainError is thrown.
+     * Fastify keeps headers written on a reply, and `DomainExceptionFilter`
+     * answers on that SAME reply object rather than constructing a new one, so
+     * the header survives the throw — pinned by a fixture, because "the filter
+     * answers on the same reply" is somebody else's implementation detail.
+     *
+     * Written only on the failure paths, so a successful probe does not carry a
+     * challenge it is not making.
+     */
+    const reject = (message: string): never => {
+      http.getResponse<FastifyReply>().header(CHALLENGE_HEADER, CHALLENGE);
+      throw new DomainError('UNAUTHENTICATED', message);
+    };
+
+    if (
+      typeof header !== 'string' ||
+      header.slice(0, BEARER.length).toLowerCase() !== BEARER_LOWER
+    ) {
+      return reject('Credenciales requeridas.');
     }
 
     if (!tokenMatches(header.slice(BEARER.length), this.config.values.HEALTH_DEEP_TOKEN)) {
-      throw new DomainError('UNAUTHENTICATED', 'Credenciales inválidas.');
+      return reject('Credenciales inválidas.');
     }
 
     return true;
