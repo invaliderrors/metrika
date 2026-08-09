@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -48,6 +49,8 @@ export const ADMIN_URL_VAR = 'METRIKA_TEST_DATABASE_ADMIN_URL';
 
 let container: StartedPostgreSqlContainer | undefined;
 let handle: DatabaseHandle | undefined;
+/** Set only while a container start is in flight; see `startDatabase`'s concurrency guard. */
+let inFlight: Promise<DatabaseHandle> | undefined;
 
 function urlFor(started: StartedPostgreSqlContainer, user: string, password: string): string {
   const host = started.getHost();
@@ -60,6 +63,95 @@ function publishedHandle(): DatabaseHandle | undefined {
   const adminUrl = process.env[ADMIN_URL_VAR];
   if (applicationUrl === undefined || adminUrl === undefined) return undefined;
   return { applicationUrl, adminUrl };
+}
+
+const HEALTH_CHECK_TIMEOUT_MS = 10_000;
+
+/**
+ * Dials `host:port` from THIS process — the same one every real caller of
+ * `applicationUrl` connects from — and resolves once the TCP handshake
+ * completes. A bare connect, not a Postgres handshake: cheap, and enough to
+ * prove the address in the URL this function is about to hand out is not a
+ * dead port.
+ */
+async function assertTcpReachable(host: string, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host, port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(
+        new Error(
+          `timed out connecting to ${host}:${String(port)} within ${String(HEALTH_CHECK_TIMEOUT_MS)}ms`,
+        ),
+      );
+    }, HEALTH_CHECK_TIMEOUT_MS);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.end();
+      resolve();
+    });
+    socket.once('error', (error: unknown) => {
+      clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
+}
+
+/**
+ * Confirms `applicationUrl` is a real, migrated, connectable database before
+ * `startDatabase` hands it to anyone — not just that `.start()` and
+ * `prisma migrate deploy` both exited 0. Two independent checks, because
+ * either one alone misses half of what can go wrong:
+ *
+ * 1. {@link assertTcpReachable} against `applicationUrl`'s own host and
+ *    port. Catches a broken URL — e.g. the mapped port read wrong — exactly
+ *    where it would bite a real caller: this same process, dialling this
+ *    same string.
+ * 2. `docker exec` into the container, authenticating as `metrika_app` over
+ *    TCP against the container's OWN internal port (5432 — not the mapped
+ *    one `applicationUrl` uses) and querying `HealthCheck`, a table that
+ *    only exists once migrations have actually run. This catches "the
+ *    `prisma migrate deploy` step silently stopped happening" specifically
+ *    — a check that queried nothing, or queried a table sql/00-app-role.sql
+ *    itself does not gate on, would not: `metrika_app` is created by that
+ *    file at container INIT, independently of whether any migration ever
+ *    ran, so a bare `SELECT 1` would keep passing even with zero migrations
+ *    applied.
+ *
+ * Why not have (2) alone dial `applicationUrl`'s mapped port directly,
+ * skipping (1) entirely? MEASURED, not assumed: a container cannot reach its
+ * own published host port from inside itself on this Docker Desktop setup —
+ * there is no hairpin NAT back to the originating container — so
+ * `docker exec <container> psql "$applicationUrl"` reliably fails with
+ * ECONNREFUSED regardless of whether the port is right or wrong. Confirmed
+ * directly, against a container's own known-good mapped port, before
+ * settling on the two-check split above.
+ */
+async function assertDatabaseReachable(
+  started: StartedPostgreSqlContainer,
+  applicationUrl: string,
+): Promise<void> {
+  const url = new URL(applicationUrl);
+  await assertTcpReachable(url.hostname, Number(url.port));
+
+  const probe = await started.exec(
+    [
+      'psql',
+      '--set=ON_ERROR_STOP=1',
+      '--host=127.0.0.1',
+      '--port=5432',
+      `--username=${APPLICATION_ROLE}`,
+      `--dbname=${DATABASE}`,
+      '--command=SELECT 1 FROM "HealthCheck"',
+    ],
+    { env: { PGPASSWORD: APPLICATION_PASSWORD } },
+  );
+  if (probe.exitCode !== 0) {
+    throw new Error(
+      `metrika_app cannot query a migrated table after "prisma migrate deploy" ` +
+        `(exit ${String(probe.exitCode)}): ${probe.output}`,
+    );
+  }
 }
 
 /**
@@ -87,6 +179,26 @@ export async function startDatabase(options: StartDatabaseOptions): Promise<Data
     return handle;
   }
 
+  // Concurrency guard. Unreachable when `globalSetup` runs first (the
+  // `published` branch above returns before this point is ever reached by a
+  // second caller) — but this function is also the one an editor plugin's
+  // `it.concurrent` can call directly, with no `globalSetup` in front of it
+  // at all. Without this, two callers racing the first, container-less call
+  // would each start their own container, and the loser's would be orphaned
+  // with nothing left to stop it. `??=` only evaluates `startContainer(...)`
+  // on the first call reaching this line; JS's synchronous-until-first-await
+  // semantics mean every other caller in the same race sees `inFlight`
+  // already set before it can start a second one — no lock needed.
+  inFlight ??= startContainer(options);
+  try {
+    handle = await inFlight;
+  } finally {
+    inFlight = undefined;
+  }
+  return handle;
+}
+
+async function startContainer(options: StartDatabaseOptions): Promise<DatabaseHandle> {
   await assertDockerAvailable();
 
   container = await new PostgreSqlContainer(POSTGRES_IMAGE)
@@ -126,8 +238,19 @@ export async function startDatabase(options: StartDatabaseOptions): Promise<Data
     env: { ...process.env, DATABASE_ADMIN_URL: adminUrl },
   });
 
-  handle = { adminUrl, applicationUrl };
-  return handle;
+  // `.start()` and `migrate deploy` both exiting 0 proves the container
+  // came up and the CLI ran without error — it does not prove `applicationUrl`
+  // is a connectable, migrated database. Both have failed silently in
+  // practice: a URL-construction bug can hand out a dead port while everything
+  // above still exits 0, and this call itself could be deleted or short-
+  // circuited without either of the two prior steps noticing. Verifying here,
+  // once, in the process that started the container, means every caller
+  // downstream gets a URL that has actually been dialled — never a "mystery
+  // connection error" surfacing three layers away in a test that has nothing
+  // to do with the real cause.
+  await assertDatabaseReachable(container, applicationUrl);
+
+  return { adminUrl, applicationUrl };
 }
 
 /**
@@ -147,9 +270,15 @@ export async function stopDatabase(): Promise<void> {
 /**
  * Runs `fn` against a client the CALLER knows how to build, connected as
  * metrika_app — so anything the callback does is subject to row-level security
- * exactly as production is. The client is disposed of in a `finally`, including
- * when the callback throws: a leaked connection here exhausts a small
- * container's pool a dozen tests later, where the cause is invisible.
+ * exactly as production is. The client is disposed of even when the callback
+ * throws: a leaked connection here exhausts a small container's pool a dozen
+ * tests later, where the cause is invisible.
+ *
+ * Deliberately NOT a bare `try { ... } finally { await db.$disconnect(); }`:
+ * if `fn` throws AND `$disconnect()` also throws while cleaning up after it,
+ * a `finally` lets the disconnect error silently replace the callback's own
+ * error — the one thing a caller actually needs to see. Both are kept, via
+ * `AggregateError`, rather than choosing one to drop.
  */
 export async function withDatabase<TClient extends DisposableClient, T>(
   options: WithDatabaseOptions<TClient>,
@@ -157,9 +286,23 @@ export async function withDatabase<TClient extends DisposableClient, T>(
 ): Promise<T> {
   const started = await startDatabase(options);
   const db = options.createClient(started.applicationUrl);
+
+  let result: T;
   try {
-    return await fn(db);
-  } finally {
-    await db.$disconnect();
+    result = await fn(db);
+  } catch (error: unknown) {
+    try {
+      await db.$disconnect();
+    } catch (disconnectError: unknown) {
+      throw new AggregateError(
+        [error, disconnectError],
+        'withDatabase: the callback failed, and $disconnect() also failed while cleaning up after it',
+        { cause: disconnectError },
+      );
+    }
+    throw error;
   }
+
+  await db.$disconnect();
+  return result;
 }
