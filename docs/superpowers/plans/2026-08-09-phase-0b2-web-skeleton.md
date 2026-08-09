@@ -814,26 +814,65 @@ export const clientEnv: ClientEnv = ClientEnvSchema.parse({
 `apps/web/eslint.config.js`:
 
 ```js
-import { next } from '@metrika/eslint-config';
+import { next, typeChecked } from '@metrika/eslint-config';
 
 export default [
+  // ORDER IS LOAD-BEARING, and `next()` alone is not enough.
+  //
+  // `next()` composes `react()`, which starts from `js.configs.recommended`
+  // rather than this repo's `base`. On its own it resolves 156 rules against a
+  // .tsx file; `nest()` — what apps/api gets — resolves 123, and 55 of those
+  // are ABSENT under `next()` alone. Not just the type-aware set:
+  // `no-restricted-properties` (the CLAUDE.md process.env ban),
+  // `no-console` and `eqeqeq` are all OFF, and
+  // `reportUnusedDisableDirectives` drops from error to warn. MEASURED.
+  // Composing `typeChecked()` restores all 55 and takes the total to 210.
+  //
+  // `next()` FIRST. `eslint-config-next/typescript` sets
+  // `@typescript-eslint/no-unused-vars: 'warn'` — severity only, so ESLint 10
+  // preserves typeChecked()'s `^_` ignore patterns either way — but putting it
+  // last still downgrades that rule and `no-unused-expressions` from error to
+  // warn, and re-enables `no-unexpected-multiline` against
+  // eslint-config-prettier. The downgrade is INVISIBLE LOCALLY: `pnpm verify`
+  // runs `turbo run lint` with no `--max-warnings`, while CI passes
+  // `--max-warnings=0`. See the ordering fixture in packages/eslint-config.
   ...next({
-    tsconfigRootDir: import.meta.dirname,
-    project: './tsconfig.json',
     // Must equal the `react` pin in this package.json. `eslint-config-next`
     // sets 'detect', whose code path calls an ESLint 9 API that ESLint 10
     // removed — ESLint exits 2 before linting a single file. See ADR-0021.
     reactVersion: '<pin>',
   }),
+  ...typeChecked({ tsconfigRootDir: import.meta.dirname, project: './tsconfig.json' }),
   {
     // The one sanctioned process.env reader, per CLAUDE.md. Everything else in
     // the app takes configuration through the exports of this module.
+    //
+    // This exemption is only meaningful because `typeChecked()` above turns
+    // `no-restricted-properties` ON. Under `next()` alone the rule is off for
+    // the whole app and this block would exempt nothing while reading as
+    // enforcement — which is worse than having no exemption at all.
     files: ['src/config/env.ts'],
     rules: { 'no-restricted-properties': 'off' },
   },
   { ignores: ['.next/**', 'coverage/**', 'playwright-report/**'] },
 ];
 ```
+
+- [ ] **Step 5b: Prove the boundary is actually enforced, not merely configured**
+
+The block above is exactly the shape that has already shipped twice in this
+repo asserting a control that did not exist. Verify it rather than trusting it:
+
+```bash
+cat > apps/web/src/probe-env.ts <<'TS'
+export const leaked = process.env.NEXT_PUBLIC_API_BASE_URL;
+TS
+pnpm --filter @metrika/web lint; echo "PROBE_EXIT=$?"
+rm apps/web/src/probe-env.ts
+```
+
+Expected: **non-zero**, `no-restricted-properties`. If it exits 0, `typeChecked()`
+is not composed and the exemption below it is decorative.
 
 `apps/web/vitest.config.ts`:
 
