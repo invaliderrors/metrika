@@ -80,9 +80,27 @@ Every policy is a pure function, so the test is a truth table over (subject kind
 
 **Testcontainers** for everything. No test depends on a developer's local setup, and no test can pass on one machine and fail on another for environmental reasons.
 
+`packages/testing` (the harness itself) does not know what a Prisma client is — it cannot: `packages/database` depends on `packages/testing`, so the reverse import would make Turbo's build graph cyclic. Its `withDatabase` therefore takes an explicit options object and a caller-supplied client factory, not just a callback expecting a `PrismaClient`:
+
 ```ts
-// packages/testing/src/harness.ts
+// packages/testing/src/database.ts
+export async function startDatabase(options: StartDatabaseOptions): Promise<DatabaseHandle>;
+export async function withDatabase<TClient extends DisposableClient, T>(
+  options: WithDatabaseOptions<TClient>,       // { databasePackageRoot, createClient }
+  fn: (db: TClient) => Promise<T>,
+): Promise<T>;
+```
+
+The single-argument, Prisma-shaped `withDatabase(fn)` this section used to show directly is restored one layer up, in `packages/database/test/support.ts` — the one place allowed to know about both packages, and where `createClient` is finally wired to `createPrismaClient()`:
+
+```ts
+// packages/database/test/support.ts
 export async function withDatabase<T>(fn: (db: PrismaClient) => Promise<T>): Promise<T>;
+```
+
+Not yet built — land with the modules that first use them, per `docs/ROADMAP.md` 0.13:
+
+```ts
 export async function withStorage<T>(fn: (s3: S3Client) => Promise<T>): Promise<T>;      // MinIO
 export async function withTemporal<T>(fn: (env: TestWorkflowEnvironment) => Promise<T>): Promise<T>;
 ```
