@@ -4741,7 +4741,22 @@ const ACCEPTABLE_REQUEST_ID = /^.*$/;
 ```
 
 Run: `pnpm --filter @metrika/api test:unit -- request-context`
-Expected: **RED, four times** — the array case, the newline case, the over-long case and the empty-string case all fail. Restore.
+Expected: **RED, three times** — the over-long case, the empty-string case, and
+the middleware's hostile-replacement case. Restore.
+
+Two cases deliberately survive this mutation, and neither is a weak assertion —
+`/^.*$/` is simply a weaker mutation than it looks:
+
+- **The array case never reaches the regex.** `normaliseRequestId` rejects a
+  non-string on the `typeof` guard first, so widening the pattern cannot affect
+  it.
+- **`/^.*$/` does not match `'abc\ndef'`.** In JavaScript `.` excludes `\n`, and
+  `$` without the `m` flag anchors to end-of-input, not end-of-line. So the
+  newline case still fails the widened pattern and is still replaced.
+
+To prove all four hostile-input assertions are load-bearing, run the second
+mutation as well — widen to `/^[\s\S]*$/` **and** coerce non-strings instead of
+rejecting them. Expected: **RED, eight times.** Restore both.
 
 - [ ] **Step 7: Mutation — prove the echo is real**
 
@@ -5852,10 +5867,20 @@ import { ZodSerializerInterceptor } from 'nestjs-zod';
 import { ConfigModule } from './config/config.module.js';
 import { PersistenceModule } from './infrastructure/persistence/persistence.module.js';
 import { HealthModule } from './modules/health/health.module.js';
-import { RequestContextModule } from './shared/request-context/request-context.module.js';
+
+// `RequestContextModule` is deliberately NOT imported here. Task 10 measured
+// that `consumer.apply(...).forRoutes('{*splat}')` cannot reach the routes
+// excluded from the global prefix: core's `RouteInfoPathExtractor` resolves the
+// wildcard to include `/health/live`, `/health/ready` and `/health/deep`, and
+// then `FastifyAdapter.createMiddlewareFactory` (fastify-adapter.js:384)
+// re-prefixes them to `/api/v1/health/*` — paths that do not exist. The
+// composed app registers the middleware globally in `bootstrap.ts` via
+// `app.use()`, which is flushed by `httpAdapter.init()` before every other
+// middleware. Registering in both places runs it twice: the outer run mints an
+// id that the inner run immediately discards.
 
 @Module({
-  imports: [RequestContextModule, ConfigModule, PersistenceModule, HealthModule],
+  imports: [ConfigModule, PersistenceModule, HealthModule],
   // The runtime half of ADR-0019's obligation 1. `@ZodResponse` only ATTACHES
   // metadata (ZodSerializerDto + ApiResponse + HttpCode); this interceptor is
   // what reads it and parses the handler's return value. Measured on this exact
