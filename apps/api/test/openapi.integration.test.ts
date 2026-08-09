@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { OpenAPIObject } from '@nestjs/swagger';
 import { ZodResponse } from 'nestjs-zod';
+import { z } from 'zod';
 import { bootApiForTest, stopDatabase } from './support.js';
 import { buildOpenApiDocument } from '../src/openapi/build-document.js';
 import { HealthLiveDto } from '../src/modules/health/health.dto.js';
@@ -43,6 +44,33 @@ function securitySchemes(document: OpenAPIObject, path: string): readonly string
   );
 }
 
+/**
+ * `HealthLiveDto.properties.status` — the schema for `z.literal('ok')` — read
+ * off the SERIALISED document with every key intact.
+ *
+ * It goes through JSON and Zod rather than through `OpenAPIObject` because the
+ * key that matters, `const`, is a JSON Schema 2020-12 keyword that
+ * `@nestjs/swagger`'s `SchemaObject` (a 3.0-era interface) does not declare —
+ * so the typed view of the document cannot see the very field that proves the
+ * document is 3.1. Serialising first also means this asserts against exactly
+ * the bytes that reach `apps/api/openapi/openapi.json`.
+ */
+const LiveStatusSchema = z
+  .object({
+    components: z.object({
+      schemas: z.object({
+        HealthLiveDto: z.object({
+          properties: z.object({ status: z.record(z.string(), z.unknown()) }),
+        }),
+      }),
+    }),
+  })
+  .transform((document) => document.components.schemas.HealthLiveDto.properties.status);
+
+function liveStatusSchema(document: OpenAPIObject): Record<string, unknown> {
+  return LiveStatusSchema.parse(JSON.parse(JSON.stringify(document)));
+}
+
 beforeAll(async () => {
   ({ app, baseUrl } = await bootApiForTest());
 });
@@ -64,6 +92,41 @@ describe('buildOpenApiDocument', () => {
     expect(paths).toContain('/health/live');
     expect(paths).toContain('/health/ready');
     expect(paths).toContain('/health/deep');
+  });
+
+  /**
+   * The version FIELD and the schema BODIES are set by two different calls, and
+   * only the first test above covers the field. This covers the bodies.
+   *
+   * MEASURED against nestjs-zod@5.5.0 + @nestjs/swagger@11.4.6, and it does not
+   * match the failure this task was briefed to expect: `createDocument` alone
+   * already emits fully populated schemas here, so simply DELETING the
+   * `cleanupOpenApiDoc` call leaves every other assertion in this file green.
+   * What it actually changes is smaller and still wrong to ship:
+   *
+   *   - `version: '3.0'` lowers `z.literal('ok')` from JSON Schema 2020-12's
+   *     `const` to `enum: ["ok"]`. A document whose header says 3.1 while its
+   *     bodies are 3.0 is a document that lies to a generator, and the two
+   *     halves are set independently, so nothing but this couples them.
+   *   - Dropping the call entirely leaks nestjs-zod's internal marker
+   *     `x-nestjs_zod-uses-3-point-1-syntax` into the published contract, which
+   *     `orval` would carry into `packages/api-client`.
+   *
+   * Neither is visible in any other assertion, which is why this test exists in
+   * this shape rather than the "schemas are empty" shape the brief predicted.
+   *
+   * NOT covered, and worth knowing: `version: '3.1'`'s documented main effect is
+   * on `null` — `nullable: true` in 3.0 versus `anyOf: [..., {type:'null'}]` in
+   * 3.1. No DTO in this app has a nullable field yet, so that half is currently
+   * unfalsifiable. The first DTO that does should assert it here.
+   */
+  it('runs the 3.1 cleanup over the schema bodies, not just the version field', () => {
+    const document = buildOpenApiDocument(app);
+    const status = liveStatusSchema(document);
+
+    expect(status['const']).toBe('ok');
+    expect(status).not.toHaveProperty('enum');
+    expect(JSON.stringify(document)).not.toContain('x-nestjs_zod');
   });
 
   it('emits populated response schemas — an empty schema object is the ts-rest failure mode', () => {
