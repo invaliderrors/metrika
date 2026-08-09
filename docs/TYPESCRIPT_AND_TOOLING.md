@@ -300,6 +300,10 @@ Prettier owns formatting entirely. No ESLint formatting rules; `eslint-config-pr
 
 The version is pinned **exactly** (not `^`), because a Prettier patch release that changes output turns an unrelated pull request into a thousand-line diff.
 
+**This applies to every dependency in the workspace, and it is enforced rather than asked for.** `packages/typescript-config/test/dependency-pins.test.ts` walks every manifest named by `pnpm-workspace.yaml`'s globs plus the root, and fails on a caret, a tilde, a range, `*` or a dist-tag such as `latest`. `workspace:` and `catalog:` protocols are allowed; `peerDependencies` are excluded, because a peer range is a compatibility statement rather than an install instruction. An unrecognised glob shape throws instead of being skipped, so the gate cannot silently stop covering a package.
+
+The reason it is a test and not a convention: this repository has twice shipped a version outside a peer range and lost a whole class of checking silently — `typescript-eslint`'s type-aware rules once, and `eslint-plugin-react`'s under ESLint 10. A range is how that happens without anyone choosing it.
+
 Python: `ruff format` + `ruff check` with an equivalently strict rule set, and `mypy --strict` on `apps/workers`. The Python side gets the same treatment as TypeScript — an untyped worker is exactly as capable of producing a wrong price.
 
 ---
