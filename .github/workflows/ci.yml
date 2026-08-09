@@ -9,9 +9,35 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# READ THIS BEFORE ADDING A CACHE STEP TO ANY JOB IN THIS FILE.
+#
+# Do not add `actions/cache` for `.turbo`, and do not enable a Turbo remote
+# cache, without first landing project `references` in the tsconfigs. Every job
+# below runs `pnpm build`, and `tsc -b`'s up-to-date check is only trustworthy
+# here because a fresh checkout carries no `*.tsbuildinfo`. The full reasoning,
+# with the measurements behind it, is on the `Typecheck` step of the `verify`
+# job. It applies to `integration` and `openapi` identically: both build the
+# workspace, and both would start believing a stale build-info the moment one
+# is restored.
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      # packages/database's `build` runs `prisma generate`, and schema.prisma's
+      # datasource is `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is
+      # what `--env-file-if-exists` in the root db:* scripts is for — so if
+      # anything resolves that variable, the value has to come from here.
+      #
+      # MEASURED on Prisma 6.19.3, from a clean clone with the variable unset:
+      # `pnpm build` exits 0 and generates the client without complaint, so
+      # `generate` does NOT resolve the datasource url. This block is therefore
+      # not load-bearing today. It is set anyway, in all three jobs, because
+      # every other Prisma subcommand (`migrate`, `validate`, `studio`) does
+      # resolve it, the failure mode when one is added is an unhelpful
+      # `Environment variable not found: DATABASE_ADMIN_URL`, and a URL nothing
+      # connects to costs nothing. Do not read this as proof the build needs it.
+      DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
     steps:
       - uses: actions/checkout@v4
 
@@ -28,9 +54,47 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
+      # Mirrors `pnpm verify`, which builds before it lints: `lint` and
+      # `typecheck` both declare `dependsOn: ["^build", "db:generate"]`, so a
+      # workspace dependency that does not compile has to surface as a failed
+      # build rather than as a confusing type error in its consumer.
+      - name: Build
+        run: pnpm build
+
       - name: Lint
         run: pnpm lint -- --max-warnings=0
 
+      # `typecheck` is `tsc -b --force` in every package, and the `--force` is
+      # load-bearing. No tsconfig in this repo declares project `references`, so a
+      # workspace dependency's emitted `.d.ts` is not among a consumer project's own
+      # input file names — which means `tsc -b`'s up-to-date check cannot see it change,
+      # and the consumer is skipped as up to date against a stale build-info.
+      # MEASURED: with a type-only widening in packages/contracts, `pnpm verify` reported
+      # every task successful while `tsc -b --force` failed with TS2741.
+      #
+      # Two things keep that from biting CI today, and BOTH are load-bearing:
+      #
+      #   1. the `--force` above, and
+      #   2. the fact that nothing here caches `.turbo` or any `*.tsbuildinfo`.
+      #
+      # A `.turbo` cache step is the obvious speed-up for this workflow. DO NOT ADD ONE
+      # without first landing project `references` (the real fix): restoring build-info
+      # into a fresh checkout is what turns this job from "catches a cross-package type
+      # break" into "silently reports it green". Turbo's `outputs` is not a substitute —
+      # MEASURED, turbo does not clean declared outputs before a cache-miss run, so a
+      # stale `*.tsbuildinfo` survives and `tsc -b` skips exactly as before.
+      #
+      # `--force` does NOT reach the `build` task, which skips for the same reason:
+      # MEASURED, `pnpm build` exits 0 on a tree that does not compile and never
+      # touches apps/api/dist. Turbo is not what saves us there — it ran the task as a
+      # cache MISS and `tsc -b` itself decided there was nothing to do. What keeps that
+      # harmless today is narrower and will not hold forever: apps/api's emitted JS
+      # inlines nothing from contracts, and no package re-exports a workspace
+      # dependency's types in its own `.d.ts`. The day packages/database re-exports a
+      # contracts type — it already declares the dependency — apps/api's
+      # `typecheck --force` will be checking against a stale
+      # packages/database/dist/*.d.ts, which is this whole problem reopening one level
+      # upstream, where `--force` cannot see it.
       - name: Typecheck
         run: pnpm typecheck
 
@@ -70,3 +134,88 @@ jobs:
             echo "::error::@ts-ignore is banned — use @ts-expect-error with a justification"
             exit 1
           fi
+
+  # A separate job, not a step in `verify`, because everything it proves is
+  # invisible to `verify`'s gates. `import type` on an injected provider, a
+  # `Module.forRoot()` in AppModule, an RLS policy that does not isolate a
+  # tenant, a probe that answers 200 while its dependency is down, a stack
+  # trace escaping the exception filter: `format:check`, `lint`, `typecheck`
+  # and `test:unit` are all green for every one of them.
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      # Same variable, same reasoning as the `verify` job above — read the note
+      # there before assuming this is what makes the build work. Note also that
+      # nothing in this job connects to it: the Testcontainers harness runs
+      # `prisma migrate deploy` with the real, container-derived URL, which it
+      # passes explicitly.
+      DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # See the cache warning at the top of this file before adding `.turbo`
+      # caching to speed this up.
+      - name: Build
+        run: pnpm build
+
+      # No `docker compose up` here: Testcontainers starts its own Postgres per
+      # run, which is the point of it — the suite must not depend on a stack a
+      # workflow file happened to bring up. ubuntu-latest ships a running
+      # Docker daemon, so packages/testing's preflight passes.
+      - name: Integration tests
+        run: pnpm test:integration
+
+  openapi:
+    runs-on: ubuntu-latest
+    env:
+      # Same variable, same reasoning as the `verify` job — see the note there.
+      DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # See the cache warning at the top of this file before adding `.turbo`
+      # caching to speed this up. `openapi:emit` runs `dist/scripts/
+      # emit-openapi.js`, so this step is what produces the thing the next two
+      # steps read — it is not an optimisation.
+      - name: Build
+        run: pnpm build
+
+      # There is no `services: postgres:` block and no Testcontainer here, on
+      # purpose. `emit-openapi.ts` does not call `app.init()`, so no lifecycle
+      # hook fires and `PrismaService.$connect()` is never reached — emitting a
+      # document is a static operation on the module graph. DATABASE_URL still
+      # has to be present and well-formed, because ConfigModule validates the
+      # environment while the graph is built; it does not have to be reachable.
+      # The values are supplied here rather than through a `.env` file because
+      # `openapi:emit` deliberately carries no `--env-file`.
+      - name: Regenerate the OpenAPI document
+        env:
+          DATABASE_URL: postgresql://metrika_app:metrika_app@127.0.0.1:5432/metrika_dev?schema=public
+          HEALTH_DEEP_TOKEN: ci-health-deep-token-value
+        run: pnpm --filter @metrika/api openapi:emit
+
+      # The document is committed, so a route or schema change that nobody
+      # regenerated shows up as a diff here rather than as a client that no
+      # longer matches the server.
+      - name: Fail if the committed document is stale
+        run: git diff --exit-code -- apps/api/openapi/openapi.json

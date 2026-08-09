@@ -1,6 +1,6 @@
 # ADR-0009 — Zod as the single source of truth, delivered via ts-rest
 
-**Status:** Accepted, spike-gated · **Date:** 2026-08-07
+**Status:** Superseded by [ADR-0019](./0019-nestjs-zod-contracts.md) · **Date:** 2026-08-07
 
 ## Context
 

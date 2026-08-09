@@ -4,12 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0A is complete: the monorepo, quality-gate config packages, and
-`packages/contracts` core primitives exist and are tested. `apps/` is still
-empty — Plan 0B builds the runtime skeletons.
+Phase 0A and Plan 0B-1 are complete: the monorepo and quality gates,
+`packages/contracts`, `packages/database` (Prisma + RLS + soft delete),
+`packages/testing` (Testcontainers Postgres) and `apps/api` (NestJS on Fastify,
+health probes, OpenAPI 3.1) exist and are tested. `apps/web` and `apps/workers`
+do not exist yet — Plans 0B-2 and 0B-3 build them.
 
 Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
-which phase it belongs to.
+which phase and which sub-plan the work belongs to.
 
 Do not scaffold `apps/` or `packages/` ad hoc — Phase 0 defines the exact order and contents, and skipping it produces a repo the later phases assume does not exist.
 
@@ -17,23 +19,34 @@ The blueprint is the source of truth. If a request conflicts with it, say so and
 
 ## Commands
 
-Working today: `verify`, `lint`, `typecheck`, `test:unit`, `format`, `format:check`.
-Not yet created (Plans 0B/0C): `dev`, `test:integration`, `test:e2e`, `db:*`, `contracts:emit`.
+Working today: `verify` (format:check + build + lint + typecheck + test:unit),
+`build`, `test:integration` (Docker required), `infra:up`/`infra:down`/`infra:reset`,
+`db:generate`/`db:migrate`/`db:deploy`/`db:reset`/`db:studio` (all from the
+repository root — they load the root `.env` and pass `--schema` explicitly; a
+bare `pnpm exec prisma` inside `packages/database` cannot find
+`DATABASE_ADMIN_URL`), and `pnpm --filter @metrika/api dev`.
+Not yet created (Plans 0B-2/0B-3): `dev` across all runtimes, `test:e2e`,
+`db:seed`, `contracts:emit`.
 
 ```bash
-pnpm verify              # format:check + lint + typecheck + test:unit — the gate to run before claiming done
-pnpm dev                 # web + api + workflow worker + python workers
-pnpm lint                # eslint --max-warnings=0 across the workspace
-pnpm typecheck           # tsc -b (topological, Turbo-cached)
+pnpm verify                    # format:check + build + lint + typecheck + test:unit — the gate to run before claiming done
+pnpm build                     # tsc -b per package, topological through Turbo
+pnpm lint                      # eslint --max-warnings=0 across the workspace
+pnpm typecheck                 # tsc -b --force (the --force is load-bearing; see .github/workflows/ci.yml)
 pnpm test:unit
-pnpm test:integration    # Testcontainers; Docker must be running
-pnpm test:e2e            # Playwright
-pnpm db:migrate | db:seed | db:generate | db:reset
-pnpm contracts:emit      # regenerate JSON Schema + pydantic models; CI fails if this produces a diff
+pnpm test:integration          # Testcontainers; Docker must be running
+pnpm infra:up | infra:down | infra:reset   # postgres, redis, minio, mailpit
+pnpm db:generate | db:migrate | db:deploy | db:reset | db:studio
+pnpm --filter @metrika/api dev # the only runtime that exists yet
+pnpm --filter @metrika/api openapi:emit    # regenerate apps/api/openapi/openapi.json; CI fails if this produces a diff
 ```
 
-Single test: `pnpm --filter @metrika/pricing-engine test -- <pattern>` (Vitest) · `uv run pytest <path>::<test>` in `apps/workers`.
-Local infrastructure: `docker compose up -d` (postgres, redis, minio, temporal, mailpit). See [`docs/LOCAL_DEVELOPMENT.md`](./docs/LOCAL_DEVELOPMENT.md).
+Single test: `pnpm --filter @metrika/api test:unit -- <pattern>` (Vitest).
+Local infrastructure: `pnpm infra:up` (postgres, redis, minio, mailpit — `temporal` and `temporal-ui` land in Plan 0B-3). See [`docs/LOCAL_DEVELOPMENT.md`](./docs/LOCAL_DEVELOPMENT.md).
+
+CI runs three jobs on every pull request: `verify` (the gates above plus the two
+suppression greps), `integration` (`pnpm test:integration` against
+Testcontainers), and `openapi` (re-emits the document and fails on a diff).
 
 ## Architecture in one paragraph
 
@@ -68,6 +81,28 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
 **Boundaries**
 
 - `@prisma/client` may only be imported from `apps/api/src/infrastructure/persistence/**`.
+- **Never `import type` a class used in NestJS constructor injection.** It erases
+  the `design:paramtypes` metadata Nest resolves against and produces
+  `UnknownDependenciesException` at boot. `tsc` exits 0 and ESLint reports
+  nothing — the only guard is the app-boot integration test.
+- `@metrika/database` is restricted exactly like `@prisma/client`: importable
+  only from `apps/api/src/infrastructure/persistence/**`.
+- `$queryRawUnsafe` and `$executeRawUnsafe` are banned everywhere, persistence
+  included. Use the tagged-template forms.
+- **`packages/testing` must not depend on `packages/database`, in either
+  dependency block.** The edge runs one way: `database` and `api` depend on
+  `testing`. Adding the reverse makes Turbo's `^build` graph cyclic and every
+  `pnpm build` fails with `Cyclic dependency detected`. That is why
+  `startDatabase()` takes the migrations location as an option and
+  `withDatabase()` takes a client factory.
+- **Every Prisma CLI call goes through the root `db:*` scripts.** Prisma's
+  dotenv search never reaches the repository root, so
+  `cd packages/database && pnpm exec prisma …` fails with
+  `Environment variable not found: DATABASE_ADMIN_URL` on a correctly
+  configured machine.
+- Soft-deleted rows are revealed by `withDeleted(fn)` — a scoped function, so
+  "forgot to turn filtering back on" is not a reachable state. Do not add a
+  flag or a second client.
 - `process.env` may only be read in `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts`.
 - `packages/contracts` imports nothing but `zod`. `packages/pricing-engine` imports only contracts + `decimal.js` — no framework, no I/O, no `Date`, no `Math.random`.
 - `apps/web` must not import `packages/database` or `packages/pricing-engine`. Prices are computed server-side; a client-side recomputation is a second source of truth.

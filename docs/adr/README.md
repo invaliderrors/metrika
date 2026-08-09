@@ -14,7 +14,7 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 | [0006](./0006-temporal.md)                      | Temporal Cloud for durable workflows                                                     | Accepted                              |
 | [0007](./0007-python-workers.md)                | Python for both geometry and slicing workers; workers have no database access            | Accepted                              |
 | [0008](./0008-prusaslicer.md)                   | PrusaSlicer CLI behind a `SlicerEngine` port                                             | Accepted, pending legal review        |
-| [0009](./0009-ts-rest-contracts.md)             | Zod as the single source of truth, delivered via ts-rest                                 | Accepted, spike-gated                 |
+| [0009](./0009-ts-rest-contracts.md)             | Zod as the single source of truth, delivered via ts-rest                                 | Superseded by ADR-0019                |
 | [0010](./0010-rest-and-sse.md)                  | REST over GraphQL; SSE over WebSockets until printer telemetry                           | Accepted                              |
 | [0011](./0011-outbox-not-kafka.md)              | Transactional outbox in Postgres, no message broker                                      | Accepted                              |
 | [0012](./0012-authentication.md)                | Clerk for authentication only; Metrika owns organizations                                | Accepted                              |
@@ -24,4 +24,5 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 | [0016](./0016-aws-terraform-vercel.md)          | AWS + Terraform for backend; Vercel for the web app                                      | Accepted                              |
 | [0017](./0017-admin-in-web.md)                  | Admin as a route group in `apps/web` until Phase 11                                      | Accepted                              |
 | [0018](./0018-branded-types.md)                 | Brand entity IDs and money-adjacent units; nothing else                                  | Accepted                              |
+| [0019](./0019-nestjs-zod-contracts.md)          | Zod as the single source of truth, delivered via `nestjs-zod`                            | Accepted, supersedes ADR-0009         |
 | [0020](./0020-internal-package-build-output.md) | Internal packages `apps/api` depends on emit compiled `dist/`, not source-only `exports` | Accepted, supersedes part of ADR-0001 |

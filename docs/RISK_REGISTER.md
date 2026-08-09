@@ -102,11 +102,13 @@ _Mitigation:_ per-org slicing rate limits (60/hour, 5 concurrent) and monthly qu
 
 ## Tier 3 — watch
 
-### R12 — ts-rest abandonment or incompatibility
+### R12 — contract-layer abandonment or incompatibility
 
-**P: Low · I: Medium**
+**P: Low · I: Medium** — _materialised for ts-rest in Phase 0; mitigation worked._
 
-_Mitigation:_ the source of truth is Zod, not ts-rest — migration means hand-writing controllers and generating a client from OpenAPI, roughly a week. A Phase 0 spike validates compatibility with the chosen Zod version, Nest on Fastify, and OpenAPI 3.1 before committing. Documented fallback: `nestjs-zod` + `orval`. **Phase 0.**
+_What happened:_ the Phase 0 spike found `@ts-rest/core` hard-pinned to Zod 3 internals, no publish of any kind in fourteen months, and `@ts-rest/open-api` emitting silently empty schemas against Zod 4. The documented fallback was taken before any code depended on it. See [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
+
+_Mitigation, still standing for `nestjs-zod`:_ the source of truth is Zod, not the delivery library — migration means rewriting one-line DTO wrappers and regenerating the client from the emitted OpenAPI, roughly a week. Contract libraries in this space are small and short-lived; assume the next one is too, and keep `packages/contracts` free of any of them. **Phase 0, resolved.**
 
 ### R13 — Prisma limitations at scale
 
@@ -149,6 +151,28 @@ _Mitigation:_ deletion and export workflows built to the documented data map; pr
 Both are genuinely valuable and genuinely hard, and both are seductive.
 
 _Mitigation:_ explicitly classified V2 in [ROADMAP.md](./ROADMAP.md); the schema already models N parts per order item so neither requires a migration later; the definition of done for Phase 13 is a working single-part flow, not a feature list.
+
+---
+
+## Phase 0B-1 follow-up
+
+One risk was promoted out of Plan 0B-1's ledger. The three findings its
+whole-branch review raised were all fixed before the branch merged — the
+request shapes Node's parser rejects now go through the error envelope
+(`clientErrorHandler`), the two stale comments now describe what the guards
+actually catch, and `ARCHITECTURE.md` and `TESTING.md` were reconciled.
+
+### R19 — `tsc -b` skips stale cross-package dependencies
+
+**P: High (measured) · I: High**
+
+No tsconfig in the repository declares project `references`, so a workspace dependency resolves through its `node_modules` symlink to `dist/index.d.ts`, which is not among the consuming project's own input files and never invalidates its build-info. `tsc -b` therefore reports a project up to date when only a dependency's types changed. Measured: a type-only widening in `packages/contracts` leaves `pnpm verify` at exit 0 on a tree where `tsc -b --force` exits 1.
+
+`typecheck` now carries `--force` as a stopgap. `build` does not, and `--force` cannot reach a stale `.d.ts` one hop upstream — the day `packages/database` re-exports a contracts type, `apps/api` will typecheck against stale declarations again.
+
+CI catches this today **only** because nothing caches `.turbo`; a fresh checkout has no build-info.
+
+_Mitigation:_ declare project `references` in each consumer tsconfig, pointing at the dependency's `tsconfig.build.json`. That covers both `build` and `typecheck` and keeps incrementality, at the cost of `tsc -b` emitting `dist/**` from the `typecheck` task — outputs Turbo does not currently declare for it. Listing `*.tsbuildinfo` in Turbo `outputs` was measured and does **not** work, because Turbo does not clean declared outputs before a cache-miss run.
 
 ---
 

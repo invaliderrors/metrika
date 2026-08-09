@@ -46,24 +46,35 @@ packages/       contracts · pricing-engine · api-client · database · ui · p
 infra/          terraform · docker
 ```
 
+That is the target shape. Built so far: `apps/api`, and `packages/contracts`,
+`packages/database`, `packages/testing`, `packages/eslint-config`,
+`packages/typescript-config` and `infra/docker`.
+
 Orchestrated by **Temporal Cloud**. Storage in **S3**. Data in **PostgreSQL** with row-level security.
 
 ## Stack
 
-Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zustand · NestJS · Fastify · Prisma · PostgreSQL · Redis · Temporal · Python · Trimesh · Manifold3D · PrusaSlicer · Zod · ts-rest · AWS ECS Fargate · Terraform · OpenTelemetry · Vitest · Playwright · pnpm · Turborepo · uv
+Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zustand · NestJS · Fastify · Prisma · PostgreSQL · Redis · Temporal · Python · Trimesh · Manifold3D · PrusaSlicer · Zod · nestjs-zod · AWS ECS Fargate · Terraform · OpenTelemetry · Vitest · Playwright · pnpm · Turborepo · uv
 
 ## Quick start
 
-Not yet reachable — `apps/` has not been built (Phase 0A covered the monorepo and
-`packages/contracts` only). The target experience, verified by CI once it exists:
+Working today, on a fresh clone — `apps/api` is a health-probe skeleton and
+`apps/web` and `apps/workers` do not exist yet:
 
 ```bash
-pnpm install
-cp .env.example .env.local
-docker compose up -d
-pnpm db:migrate && pnpm db:seed
-pnpm dev
+pnpm install --frozen-lockfile
+cp .env.example .env            # `.env` is the ONLY local environment file
+pnpm infra:up                   # postgres, redis, minio, mailpit
+pnpm db:deploy
+pnpm --filter @metrika/api dev  # then GET localhost:3001/health/live
+
+pnpm verify                     # format:check + build + lint + typecheck + unit
+pnpm test:integration           # Testcontainers; Docker must be running
 ```
+
+`pnpm db:seed` and a `pnpm dev` that starts every runtime at once do not exist
+yet. CI runs three jobs on every pull request: `verify`, `integration` and
+`openapi`.
 
 See [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md).
 

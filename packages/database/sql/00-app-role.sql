@@ -10,9 +10,9 @@
 -- A superuser ignores every row-level security policy, FORCE included, which
 -- makes RLS look enabled while doing nothing at all. This is the single most
 -- likely way for the tenant-isolation backstop to be silently absent.
--- packages/database/test/rls.integration.test.ts (Task 8, not yet written)
--- WILL assert both attributes are false rather than trusting this file; until
--- it lands, nothing in the repository verifies this automatically.
+-- packages/database/test/harness.integration.test.ts asserts both attributes
+-- are false against a live `metrika_app` connection, rather than trusting
+-- this file.
 --
 -- ALTER DEFAULT PRIVILEGES with no FOR ROLE clause applies to objects created
 -- by the CURRENT role. `prisma migrate` connects as the owner (metrika), which

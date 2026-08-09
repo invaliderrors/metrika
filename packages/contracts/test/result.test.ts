@@ -92,7 +92,7 @@ describe('DomainErrorCode', () => {
   });
 
   // --- Additional edge cases beyond the brief ---
-  // The brief only spot-checks four of the twenty-six codes. A loop asserting
+  // The brief only spot-checks four of the twenty-eight codes. A loop asserting
   // `safeParse(code).success` for every `code` in `DomainErrorCode.options`
   // cannot fail: `.options` *is* the parse whitelist a `z.enum` builds itself
   // from, so every element trivially round-trips by construction, on any
@@ -102,9 +102,10 @@ describe('DomainErrorCode', () => {
   // and in order, duplicated deliberately so that changing the enum without
   // updating this test is exactly the event that fails the build.
 
-  it('is exactly this set of twenty-six codes, in this order', () => {
+  it('is exactly this set of twenty-eight codes, in this order', () => {
     expect(DomainErrorCode.options).toEqual([
       'VALIDATION_FAILED',
+      'ROUTE_NOT_FOUND',
       'UNAUTHENTICATED',
       'INSUFFICIENT_PERMISSIONS',
       'MODEL_NOT_FOUND',
@@ -124,6 +125,7 @@ describe('DomainErrorCode', () => {
       'QUOTE_NOT_FOUND',
       'QUOTE_EXPIRED',
       'QUOTE_SUPERSEDED',
+      'ORDER_NOT_FOUND',
       'INVALID_STATE_TRANSITION',
       'PAYMENT_VERIFICATION_FAILED',
       'IDEMPOTENCY_KEY_REUSED',

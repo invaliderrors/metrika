@@ -5,24 +5,30 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b --force",
     "lint": "eslint .",
     "start": "node --env-file=../../.env dist/main.js",
     "dev": "concurrently --kill-others --names tsc,api \"tsc -b tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --env-file=../../.env dist/main.js\"",
-    "test:unit": "vitest run --config vitest.config.ts"
+    "openapi:emit": "node dist/scripts/emit-openapi.js",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@metrika/contracts": "workspace:*",
+    "@metrika/database": "workspace:*",
     "@nestjs/common": "11.1.28",
     "@nestjs/core": "11.1.28",
     "@nestjs/platform-fastify": "11.1.28",
-    "fastify": "5.6.1",
+    "@nestjs/swagger": "11.4.6",
+    "fastify": "5.10.0",
+    "nestjs-zod": "5.5.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@metrika/eslint-config": "workspace:*",
+    "@metrika/testing": "workspace:*",
     "@metrika/typescript-config": "workspace:*",
     "@types/node": "24.13.3",
     "eslint": "10.8.0",

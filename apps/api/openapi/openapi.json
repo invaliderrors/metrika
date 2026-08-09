@@ -1,0 +1,221 @@
+{
+  "openapi": "3.1.1",
+  "paths": {
+    "/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The process is running. Says nothing about its dependencies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthLiveDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Every dependency answered. Safe to route traffic here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReadyDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "At least one dependency is not usable. Do not route traffic here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReadyDto"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/health/deep": {
+      "get": {
+        "operationId": "HealthController_deep",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Every dependency answered, with per-dependency latency.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthDeepDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token. Carries `WWW-Authenticate: Bearer`."
+          },
+          "503": {
+            "description": "At least one dependency is not usable. Do not route traffic here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthDeepDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Health"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Metrika API",
+    "description": "Manufacturing quotes for 3D-printed architectural models.",
+    "version": "1.0.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Static shared secret, compared in constant time. Not a JWT."
+      }
+    },
+    "schemas": {
+      "HealthLiveDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "development",
+              "test",
+              "production"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "environment"
+        ]
+      },
+      "HealthReadyDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ]
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "degraded",
+                    "down"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "status"
+              ]
+            }
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ]
+      },
+      "HealthDeepDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ]
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "degraded",
+                    "down"
+                  ]
+                },
+                "latencyMs": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "name",
+                "status",
+                "latencyMs"
+              ]
+            }
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ]
+      }
+    }
+  }
+}

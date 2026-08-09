@@ -20,9 +20,10 @@
   "scripts": {
     "db:generate": "node --env-file-if-exists=../../.env ../../scripts/prisma.mjs generate",
     "build": "pnpm db:generate && tsc -b tsconfig.build.json",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b --force",
     "lint": "eslint .",
-    "test:unit": "vitest run --config vitest.config.ts"
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@metrika/contracts": "workspace:*",
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@metrika/eslint-config": "workspace:*",
+    "@metrika/testing": "workspace:*",
     "@metrika/typescript-config": "workspace:*",
     "eslint": "10.8.0",
     "prisma": "6.19.3",

@@ -1,0 +1,39 @@
+{
+  "name": "@metrika/testing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./images": {
+      "types": "./dist/images.d.ts",
+      "default": "./dist/images.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b --force",
+    "lint": "eslint .",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "@testcontainers/postgresql": "12.1.0",
+    "testcontainers": "12.1.0"
+  },
+  "devDependencies": {
+    "@metrika/eslint-config": "workspace:*",
+    "@metrika/typescript-config": "workspace:*",
+    "eslint": "10.8.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}

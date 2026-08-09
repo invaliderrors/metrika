@@ -1,0 +1,5 @@
+{
+  "extends": "@metrika/typescript-config/node.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.integration.config.ts"]
+}

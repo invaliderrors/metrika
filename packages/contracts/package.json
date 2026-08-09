@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b --force",
     "lint": "eslint .",
     "test:unit": "vitest run --coverage"
   },

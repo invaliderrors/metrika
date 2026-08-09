@@ -1,8 +1,10 @@
 # Metrika — Local Development
 
 > Target: clone to a working end-to-end quote flow in five commands, verified by CI on
-> a clean checkout. **Not yet reachable** — `apps/` doesn't exist, so there is no quote
-> flow to run yet, and CI currently runs `pnpm verify` only. See §2 for what works today.
+> a clean checkout. **Not yet reachable** — there is no quote flow to run: `apps/api` is
+> a health-probe skeleton and `apps/web` and `apps/workers` do not exist. What is
+> reachable today is a clean clone to a running API with a migrated database, and CI
+> verifies that across three jobs (`verify`, `integration`, `openapi`). See §2.
 
 ---
 
@@ -17,37 +19,52 @@
 | uv     | latest                 | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                       |
 | Docker | 24+                    | Docker Desktop or OrbStack                                               |
 
+**Docker is not optional.** It runs the local stack (`pnpm infra:up`) _and_ every
+integration test: `pnpm test:integration` starts its own Postgres through
+Testcontainers, and `packages/testing`'s preflight fails with a readable
+`DockerUnavailableError` when no daemon is reachable rather than hanging. A
+change to `packages/database` or `apps/api` cannot be verified without it.
+
 `mise` is recommended over nvm + pyenv because a polyglot repository with two version managers has two ways to be subtly wrong. `.nvmrc` and `.python-version` are committed anyway so nobody is forced to adopt it.
 
 ---
 
 ## 2. Getting running
 
-Working after Plan 0A: `mise install`, `pnpm install`, `pnpm verify`.
-`docker compose up -d`, `pnpm db:migrate`, `pnpm db:seed` and `pnpm dev`
-arrive in Plan 0B.
+Working today, in this order — every line below runs on a fresh clone:
 
 ```bash
 git clone git@github.com:<org>/metrika.git && cd metrika
 mise install                    # Node + Python at the pinned versions
-pnpm install                    # workspace dependencies
-cp .env.example .env.local      # every value works out of the box for local dev
+pnpm install --frozen-lockfile  # workspace dependencies
+cp .env.example .env            # every value works out of the box for local dev
+                                # `.env` is the ONLY local environment file — see §8
 
-docker compose up -d            # postgres, redis, minio, temporal, temporal-ui, mailpit
-pnpm db:migrate                 # apply migrations
-pnpm db:seed                    # deterministic fixtures
-pnpm dev                        # web + api + workflow worker + python workers
+pnpm infra:up                   # postgres, redis, minio, mailpit — waits for healthy
+pnpm db:deploy                  # apply committed migrations (prisma migrate deploy)
+pnpm --filter @metrika/api dev  # the API, on API_PORT (3001 by default)
+
+pnpm verify                     # the pre-push gate
+pnpm test:integration           # Testcontainers; needs Docker, not `infra:up`
 ```
 
-| Service       | URL                        | Notes                                 |
-| ------------- | -------------------------- | ------------------------------------- |
-| Web           | http://localhost:3000      |                                       |
-| API           | http://localhost:3001      | OpenAPI at `/api/v1/openapi.json`     |
-| API docs      | http://localhost:3001/docs | Scalar                                |
-| Temporal UI   | http://localhost:8233      | Inspect and replay workflows          |
-| MinIO console | http://localhost:9001      | `metrika` / `metrika-local`           |
-| Mailpit       | http://localhost:8025      | Catches all outbound email            |
-| Postgres      | localhost:5432             | `metrika` / `metrika` / `metrika_dev` |
+`pnpm db:seed` and a `pnpm dev` that starts every runtime at once do not exist
+yet. `pnpm db:migrate` (`prisma migrate dev`) is for authoring a new migration;
+`pnpm db:deploy` is what a fresh clone wants.
+
+| Service       | URL                        | Notes                                                                    |
+| ------------- | -------------------------- | ------------------------------------------------------------------------ |
+| Web           | http://localhost:3000      | Plan 0B-2 — `apps/web` does not exist yet                                |
+| API           | http://localhost:3001      | `/health/{live,ready,deep}` and `/api/v1/openapi.json` today             |
+| API docs      | http://localhost:3001/docs | Scalar — not mounted yet                                                 |
+| Temporal UI   | http://localhost:8233      | Plan 0B-3 — not in `docker-compose.yml` yet                              |
+| MinIO console | http://localhost:9001      | `metrika` / `metrika-local`                                              |
+| Mailpit       | http://localhost:8025      | Catches all outbound email                                               |
+| Postgres      | localhost:5432             | `metrika` / `metrika` / `metrika_dev`; the API connects as `metrika_app` |
+
+Every published port binds to `127.0.0.1`, not `0.0.0.0` — Docker's publish path
+inserts firewall rules that would otherwise expose Postgres and the MinIO console
+to the whole LAN.
 
 Application code runs **on the host**, not in Docker. Compose provides only stateful dependencies. Running the API in a container for local development costs file-watching reliability and debugger attachment for no benefit.
 
@@ -55,12 +72,14 @@ Application code runs **on the host**, not in Docker. Compose provides only stat
 
 ## 3. Fakes by default
 
+_Nothing in this section exists yet — the fakes land with the subsystems they stand in for (Phases 2, 3, 6 and 9). Mailpit is the exception: it is already in `docker-compose.yml`._
+
 Local development uses deterministic fakes so the full flow works without heavyweight dependencies:
 
 | Dependency | Local default                                                   | Real via                                                        |
 | ---------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
 | Slicer     | `FakeSlicerEngine` — metrics derived from a hash of the request | `METRIKA_SLICER=real` + `docker compose --profile slicer up -d` |
-| Payments   | `FakePaymentProvider` — deterministic success/failure by amount | Provider sandbox credentials in `.env.local`                    |
+| Payments   | `FakePaymentProvider` — deterministic success/failure by amount | Provider sandbox credentials in `.env`                          |
 | Email      | Mailpit                                                         | —                                                               |
 | Auth       | Clerk development instance                                      | —                                                               |
 | Geometry   | **Real** — Trimesh runs natively; there is no reason to fake it | —                                                               |
@@ -70,6 +89,8 @@ Local development uses deterministic fakes so the full flow works without heavyw
 ---
 
 ## 4. Seed data
+
+_`pnpm db:seed` does not exist yet — it arrives with the entities below, from Phase 1 onward. The initial migration creates one `RlsProbe` table and nothing else. This section is the target shape._
 
 Deterministic, fixed UUIDs, idempotent. `pnpm db:seed` can run repeatedly.
 
@@ -111,75 +132,105 @@ Plus a `READY` quote, an `ACCEPTED` quote with an order in `AWAITING_PAYMENT`, a
 ## 5. Everyday commands
 
 ```bash
-pnpm dev                       # everything
-pnpm --filter @metrika/api dev # one app
-pnpm verify                    # format + lint + typecheck + unit — the pre-push gate
+pnpm --filter @metrika/api dev # the only runtime that exists yet
+pnpm verify                    # format:check + build + lint + typecheck + unit — the pre-push gate
 
 pnpm test:unit                 # fast
 pnpm test:integration          # Testcontainers; Docker must be running
-pnpm test:e2e                  # Playwright
-pnpm test:e2e --ui             # interactive
 
-pnpm db:migrate                # create + apply a migration
-pnpm db:reset                  # drop, migrate, seed — refuses in production
+pnpm infra:up                  # start postgres, redis, minio, mailpit and wait for healthy
+pnpm infra:down                # stop them, keeping the volumes
+pnpm infra:reset               # stop them AND drop the volumes — this is what re-runs
+                               # packages/database/sql/00-app-role.sql on a fresh Postgres
+
+pnpm db:generate               # regenerate the Prisma client
+pnpm db:migrate                # create + apply a migration (prisma migrate dev)
+pnpm db:deploy                 # apply committed migrations (prisma migrate deploy)
+pnpm db:reset                  # drop and re-migrate — destructive
 pnpm db:studio                 # Prisma Studio
 
-pnpm contracts:emit            # regenerate JSON Schema + pydantic models
+pnpm --filter @metrika/api openapi:emit  # regenerate apps/api/openapi/openapi.json
 pnpm lint:fix
 ```
+
+**Run every `db:*` command from the repository root.** They go through
+`scripts/prisma.mjs`, which loads the root `.env` and passes `--schema`
+explicitly. `cd packages/database && pnpm exec prisma migrate deploy` fails with
+`Environment variable not found: DATABASE_ADMIN_URL` — Prisma's dotenv search
+looks beside the schema and in the cwd, and never reaches the repository root.
+
+`pnpm test:e2e` (Playwright) arrives in Plan 0B-2; `pnpm contracts:emit` and
+`pnpm db:seed` in Plan 0B-3.
 
 ---
 
 ## 6. Debugging
 
-**Workflows** — the Temporal UI at :8233 shows event history, inputs, outputs and failures for every workflow. Replay a failed workflow locally against modified code to reproduce a non-determinism error, which is otherwise the hardest class of bug here.
+Everything in this section except **Database** describes a runtime that does not
+exist yet. It is kept as the intended shape, marked for what it is.
 
-**API** — `pnpm --filter @metrika/api dev:debug` starts with `--inspect`; a `.vscode/launch.json` attach configuration is committed.
+**Workflows** _(Plan 0B-3)_ — the Temporal UI at :8233 shows event history, inputs, outputs and failures for every workflow. Replay a failed workflow locally against modified code to reproduce a non-determinism error, which is otherwise the hardest class of bug here.
 
-**Python workers** — `debugpy` is enabled in dev mode; the corresponding attach configuration is committed.
+**API** — `pnpm --filter @metrika/api dev` runs `tsc -b --watch` alongside `node --watch dist/main.js`, reading the root `.env`. A `dev:debug` script and a committed `.vscode/launch.json` attach configuration are intended and do not exist yet; until then, `node --inspect --env-file=.env dist/main.js` from `apps/api` is the equivalent.
 
-**Database** — `pnpm db:studio`, or connect directly. Note that RLS is active locally: a raw `psql` session sees nothing until `SET app.current_org_id`. This is intentional — local development should behave like production, and discovering RLS in staging is worse than discovering it on day one.
+**Python workers** _(Plan 0B-3)_ — `debugpy` is enabled in dev mode; the corresponding attach configuration is committed.
 
-**SSE** — `curl -N -H "Authorization: Bearer <token>" localhost:3001/api/v1/model-versions/<id>/events` streams the raw events.
+**Database** — `pnpm db:studio`, or connect directly. Note that RLS is active locally: a `psql` session **as `metrika_app`** sees nothing until `SET app.current_org_id`. This is intentional — local development should behave like production, and discovering RLS in staging is worse than discovering it on day one. `metrika`, the owner role the compose stack creates and that migrations run as, is a Postgres superuser and therefore bypasses RLS unconditionally — which is exactly why `DATABASE_URL` names `metrika_app` and only `DATABASE_ADMIN_URL` names `metrika`. Connect as `metrika` and you are not testing what production does. Both halves are asserted against a live connection rather than trusted: `packages/database/test/harness.integration.test.ts` checks that `metrika_app` is neither `SUPERUSER` nor `BYPASSRLS`, and `packages/database/test/rls.integration.test.ts` checks that `relforcerowsecurity` is actually set on the applied table.
+
+**SSE** _(Phase 3)_ — `curl -N -H "Authorization: Bearer <token>" localhost:3001/api/v1/model-versions/<id>/events` streams the raw events.
 
 ---
 
 ## 7. Common problems
 
-| Symptom                                                | Cause                                      | Fix                                                                                                                                           |
-| ------------------------------------------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Cannot find module '@metrika/contracts'`              | Packages not resolved                      | `pnpm install`                                                                                                                                |
-| Prisma client type errors after a schema edit          | Client not regenerated                     | `pnpm db:generate`                                                                                                                            |
-| Integration tests hang                                 | Docker not running                         | Start Docker                                                                                                                                  |
-| Temporal worker not picking up tasks                   | Namespace or task queue mismatch           | Check `.env.local`; confirm the worker registered in the Temporal UI                                                                          |
-| Uploads fail with a signature error                    | MinIO path-style addressing                | `S3_FORCE_PATH_STYLE=true` in `.env.local`                                                                                                    |
-| Empty query results in `psql`                          | RLS active                                 | `SET app.current_org_id = '<uuid>';`                                                                                                          |
-| `exactOptionalPropertyTypes` errors on a Prisma update | Expected                                   | Use the conditional-spread pattern in [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#the-exactoptionalpropertytypes--prisma-pattern) |
-| Slicing never completes locally                        | Real slicer selected without its container | Unset `METRIKA_SLICER` or start the `slicer` compose profile                                                                                  |
+| Symptom                                                     | Cause                                                     | Fix                                                                                                                                           |
+| ----------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Cannot find module '@metrika/contracts'`                   | Packages not resolved, or not built                       | `pnpm install`, then `pnpm build` — the package resolves to `dist/`, not `src/`                                                               |
+| Prisma client type errors after a schema edit               | Client not regenerated                                    | `pnpm db:generate`                                                                                                                            |
+| `pnpm install` exits 1 with `ERR_PNPM_IGNORED_BUILDS`       | A new dependency has an install script                    | Add it to `allowBuilds` in `pnpm-workspace.yaml`                                                                                              |
+| `error: Environment variable not found: DATABASE_ADMIN_URL` | A Prisma command was run from inside `packages/database`  | Use the root `pnpm db:*` scripts — Prisma's dotenv search never reaches the repository root                                                   |
+| `Cyclic dependency detected` from Turbo                     | Something added `@metrika/database` to `packages/testing` | Remove it; the dependency runs one way only — `database` and `api` depend on `testing`, never the reverse                                     |
+| Integration tests hang                                      | Docker not running                                        | Start Docker                                                                                                                                  |
+| Temporal worker not picking up tasks                        | Namespace or task queue mismatch                          | Check `.env`; confirm the worker registered in the Temporal UI                                                                                |
+| Uploads fail with a signature error                         | MinIO path-style addressing                               | `S3_FORCE_PATH_STYLE=true` in `.env`                                                                                                          |
+| Empty query results in `psql`                               | RLS active                                                | `SET app.current_org_id = '<uuid>';`                                                                                                          |
+| `exactOptionalPropertyTypes` errors on a Prisma update      | Expected                                                  | Use the conditional-spread pattern in [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#the-exactoptionalpropertytypes--prisma-pattern) |
+| Slicing never completes locally                             | Real slicer selected without its container                | Unset `METRIKA_SLICER` or start the `slicer` compose profile                                                                                  |
 
 ---
 
 ## 8. Environment configuration
 
-`.env.example` is committed with working local defaults for every key, and **CI verifies it is a superset of what the Zod schemas require** — so a fresh clone can never fail with an unexplained missing-variable error.
+`.env` is the **only** local environment file. There is no `.env.local`: the
+Prisma CLI loads `.env` natively through `scripts/prisma.mjs`, and the API is
+started with `node --env-file=.env`. A second file would be a second way to be
+wrong.
+
+`.env.example` is committed with working local defaults for every key, and
+**`apps/api/test/env-example.test.ts` asserts it is a superset of what the Zod
+schema requires** — so a fresh clone can never fail with an unexplained
+missing-variable error. It is a unit test, so it runs in `pnpm verify`; letting
+`.env.example` drift fails the build rather than the next new clone.
 
 ```bash
-# .env.example (excerpt)
-DATABASE_URL=postgresql://metrika:metrika@localhost:5432/metrika_dev
+# .env.example (excerpt) — see the file itself for the authoritative list
+NODE_ENV=development
+API_PORT=3001
+LOG_LEVEL=debug
+HEALTH_DEEP_TOKEN=local-health-deep-token
+
+# Two URLs, two roles, deliberately: the API connects as metrika_app, which is
+# NOSUPERUSER NOBYPASSRLS so RLS actually applies to it. Migrations connect as
+# the owner; schema.prisma names DATABASE_ADMIN_URL.
+DATABASE_URL=postgresql://metrika_app:metrika_app@localhost:5432/metrika_dev?schema=public
+DATABASE_ADMIN_URL=postgresql://metrika:metrika@localhost:5432/metrika_dev?schema=public
+
+# Present in docker compose, wired up in later plans
 REDIS_URL=redis://localhost:6379
 S3_ENDPOINT=http://localhost:9000
 S3_BUCKET=metrika-local
-S3_ACCESS_KEY_ID=metrika
-S3_SECRET_ACCESS_KEY=metrika-local
 S3_FORCE_PATH_STYLE=true
-TEMPORAL_ADDRESS=localhost:7233
-TEMPORAL_NAMESPACE=default
-CLERK_SECRET_KEY=sk_test_...
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-METRIKA_SLICER=fake
-METRIKA_PAYMENTS=fake
-OTEL_EXPORTER_OTLP_ENDPOINT=            # empty locally — telemetry to console
-LOG_LEVEL=debug
+SMTP_URL=smtp://localhost:1025
 ```
 
-Configuration is read in exactly two files (`apps/api/src/config/env.ts`, `apps/web/src/config/env.ts`), each a Zod schema parsed at startup. A missing or malformed value crashes the process immediately with a readable list of what is wrong — never a mysterious `undefined` three layers into a request. A lint rule forbids `process.env` everywhere else.
+Configuration is read in exactly one file today (`apps/api/src/config/env.ts`); `apps/web/src/config/env.ts` joins it in Plan 0B-2. Each is a Zod schema parsed at startup. A missing or malformed value crashes the process immediately with a readable list of what is wrong — never a mysterious `undefined` three layers into a request. A lint rule forbids `process.env` everywhere else.
