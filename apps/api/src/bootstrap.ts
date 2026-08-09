@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module.js';
 import { buildOpenApiDocument } from './openapi/build-document.js';
+import { handleClientError } from './shared/errors/client-error.handler.js';
 import { DomainExceptionFilter } from './shared/errors/domain-exception.filter.js';
 import { handleFrameworkError } from './shared/errors/framework-error.handler.js';
 import { RequestContextMiddleware } from './shared/request-context/request-context.middleware.js';
@@ -15,12 +16,23 @@ export const API_PREFIX = 'api/v1';
  * one, and wiring mistakes are the defect class this app is most exposed to.
  */
 export async function createApiApp(): Promise<NestFastifyApplication> {
-  // `frameworkErrors` catches what find-my-way raises BEFORE Nest's pipeline
-  // exists — a malformed percent-escape in the path, say. Those responses
-  // bypass both the exception filter and the request-context middleware, and
-  // MEASURED they went out in Fastify's own shape with no request id anywhere.
-  // See handleFrameworkError.
-  const adapter = new FastifyAdapter({ frameworkErrors: handleFrameworkError });
+  // TWO hooks, because there are two ways out of this app that never reach
+  // Nest's pipeline, and neither covers the other.
+  //
+  // `frameworkErrors` catches what find-my-way raises once a request object
+  // exists but before Nest's pipeline does — a malformed percent-escape in the
+  // path, say. `clientErrorHandler` catches what Node's HTTP parser rejects
+  // BEFORE there is a request object at all: an oversized header block (431), a
+  // malformed method token, an obs-fold continuation line. Those arrive on the
+  // server's `clientError` event with a raw socket and no reply, which is why
+  // `frameworkErrors` cannot see them — MEASURED against the real dist/main.js,
+  // all three went out in Fastify's own shape with no request id anywhere.
+  //
+  // See handleFrameworkError and handleClientError.
+  const adapter = new FastifyAdapter({
+    frameworkErrors: handleFrameworkError,
+    clientErrorHandler: handleClientError,
+  });
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter);
   app.setGlobalPrefix(API_PREFIX, { exclude: ['health/live', 'health/ready', 'health/deep'] });
   app.useGlobalFilters(new DomainExceptionFilter());
@@ -69,8 +81,22 @@ export async function createApiApp(): Promise<NestFastifyApplication> {
   // `app.use()` takes a different route through the adapter: it forwards
   // straight to middie with no path, so it matches every request, and
   // `httpAdapter.init()` flushes it before `registerModules()` runs, which puts
-  // it ahead of every other middleware. Nothing that logs or throws runs
-  // without an id.
+  // it ahead of every other middleware.
+  //
+  // Nothing that reaches a Nest handler therefore runs without an id. The two
+  // paths that do NOT reach one — find-my-way's router-level rejections and
+  // Node's parse failures — mint their own, in `handleFrameworkError` and
+  // `handleClientError` respectively, and all three go through the same
+  // `normaliseRequestId`, so a client value is accepted or refused by exactly
+  // one rule.
+  //
+  // Do not read that as "every byte this process writes carries an id" — it is
+  // the claim this comment used to make and it was false for three request
+  // shapes for as long as `clientErrorHandler` was unset. What is true, and is
+  // asserted over raw sockets in test/client-error.integration.test.ts and over
+  // HTTP in framework-error / request-context / error-filter, is that every
+  // RESPONSE carries one. A connection this process never answers — a peer that
+  // resets, a socket already destroyed — has no response to put a header on.
   //
   // Keep the assertions in test/request-context.integration.test.ts that hit
   // `/health/live` and `/`: they are what caught this, and they are what would
