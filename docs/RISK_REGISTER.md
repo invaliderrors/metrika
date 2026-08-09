@@ -154,6 +154,62 @@ _Mitigation:_ explicitly classified V2 in [ROADMAP.md](./ROADMAP.md); the schema
 
 ---
 
+## Open findings carried out of Phase 0B-1
+
+These were found by the whole-branch review of Plan 0B-1 and merged unfixed, deliberately. They are recorded here rather than in a plan ledger so they survive the branch.
+
+### F1 — Three request shapes escape the error envelope
+
+**P: High (already reproducible) · I: Medium**
+
+Node's HTTP parser rejects some requests before Fastify's routing runs, so they reach `defaultClientErrorHandler` rather than the `frameworkErrors` hook the exception filter is wired into. Measured against the built app:
+
+| Shape                  | Response                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| Header block > 16 KB   | `431 {"error":"Request Header Fields Too Large","message":"…","statusCode":431}`, **no** `x-request-id` |
+| Malformed method token | `400 {"error":"Bad Request","message":"Client Error","statusCode":400}`, no `x-request-id`              |
+| `obs-fold` header      | Same `400` body, no `x-request-id`                                                                      |
+
+In each, `error` is a **string** where [`ApiErrorResponse`](./CONTRACTS_AND_API.md#errors) declares an object, `code` is absent, and there is no `requestId` — so a client parsing with the published contract fails outright and support has no id to trace. This is the same defect already closed for `FST_ERR_BAD_URL`, one layer lower. The 431 case is a realistic oversized-cookie scenario, and `/health/deep` is an `Authorization`-header route.
+
+`apps/api/src/bootstrap.ts` currently comments that "nothing that logs or throws runs without an id", which is false for these three.
+
+_Mitigation:_ pass `clientErrorHandler` alongside `frameworkErrors` in the `FastifyAdapter` options — it is a first-class Fastify option and the fix is symmetric with the existing hook. It receives a raw `net.Socket` rather than a `FastifyReply`, so the response is written by hand and a throw inside it must not escape; a 431 means the headers were unparseable, so there may be no client id to echo and one must be minted.
+
+### F2 — Two comments describe the pre-guard world
+
+**P: Medium · I: Low**
+
+`apps/api/src/shared/request-context/request-context.module.ts` and `apps/api/test/request-context.test.ts` both state that importing `RequestContextModule` into `AppModule` leaves the integration suite green. That was true before the Task 10 guards landed; at HEAD a direct import exits 1. As written they argue the integration spy count cannot catch anything, which is the argument for deleting the guard that does.
+
+_Mitigation:_ correct both to record which spelling each guard catches — the unit metadata assertion sees direct and spread imports, the integration spy count sees the dynamic and transitive ones it cannot.
+
+### F3 — `ARCHITECTURE.md` and `TESTING.md` assert controls that do not exist
+
+**P: High (already true) · I: Medium**
+
+Plan 0B-1's final task reconciled five documents with reality and missed these two. Each of the following is stated as present fact and is false: no application code exists yet (`ARCHITECTURE.md`); Turbo remote caching is enabled; CI compares the repository tree in §6 against the directory listing and the env-var table against the Zod schemas; each integration test runs inside a rolled-back transaction (nothing rolls back — `withOrganizationContext` commits, and the RLS suite depends on its seed rows surviving); the IDOR suite runs on every pull request. Smaller instances exist for `brandUnsafe`, `contracts:emit`, Scalar, two lint rules, and part of the integration coverage list.
+
+Two of these now directly contradict corrections landed in `CONTRIBUTING.md` on the same branch.
+
+The remote-caching claim is the one with teeth: `ci.yml` states that enabling a Turbo cache silently disarms the last real cross-package type gate, because `tsc -b` skips re-checking when only a dependency's `.d.ts` changed. Someone reconciling "the architecture says caching is on, CI does not have it" turns it on and removes the gate.
+
+_Mitigation:_ apply the same honest form used elsewhere in the blueprint — describe the target state and say plainly that it is not built yet. See also [R19](#r19--tsc--b-skips-stale-cross-package-dependencies).
+
+### R19 — `tsc -b` skips stale cross-package dependencies
+
+**P: High (measured) · I: High**
+
+No tsconfig in the repository declares project `references`, so a workspace dependency resolves through its `node_modules` symlink to `dist/index.d.ts`, which is not among the consuming project's own input files and never invalidates its build-info. `tsc -b` therefore reports a project up to date when only a dependency's types changed. Measured: a type-only widening in `packages/contracts` leaves `pnpm verify` at exit 0 on a tree where `tsc -b --force` exits 1.
+
+`typecheck` now carries `--force` as a stopgap. `build` does not, and `--force` cannot reach a stale `.d.ts` one hop upstream — the day `packages/database` re-exports a contracts type, `apps/api` will typecheck against stale declarations again.
+
+CI catches this today **only** because nothing caches `.turbo`; a fresh checkout has no build-info.
+
+_Mitigation:_ declare project `references` in each consumer tsconfig, pointing at the dependency's `tsconfig.build.json`. That covers both `build` and `typecheck` and keeps incrementality, at the cost of `tsc -b` emitting `dist/**` from the `typecheck` task — outputs Turbo does not currently declare for it. Listing `*.tsbuildinfo` in Turbo `outputs` was measured and does **not** work, because Turbo does not clean declared outputs before a cache-miss run.
+
+---
+
 ## Review cadence
 
 The register is reviewed at the end of every phase. A risk is closed only when its mitigation is implemented **and tested** — not when it is designed. New risks discovered during implementation are added with the same fields, and the top four are re-ranked, because the ranking is the useful part.

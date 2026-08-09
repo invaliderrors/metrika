@@ -1,6 +1,6 @@
 # Metrika — Architecture
 
-> **Status:** Blueprint (pre-implementation). No application code exists yet.
+> **Status:** Blueprint. Implementation has started — Phase 0A and Plan 0B-1 have landed, so `apps/api` boots, serves health probes and talks to Postgres. Everything else here still describes the target, not the tree. [`ROADMAP.md`](./ROADMAP.md) is the authority on what exists today; where this document and the repository disagree, the repository is right and this document is stale.
 > **Audience:** Any senior engineer picking up implementation without re-deriving fundamental decisions.
 > **Scope:** This document is the spine. Deep-dives live in sibling documents and are linked inline.
 
@@ -259,13 +259,19 @@ apps/workers/pyproject.toml: [tool.uv.workspace] members = ["packages/*", "geome
 | `test:integration` | `^build`, own `build`   | no     | Testcontainers; not cached (container state)                                                                  |
 | `db:generate`      | —                       | no     | Prisma client; input = `schema.prisma`; not cached                                                            |
 
-Remote caching (Vercel Remote Cache) is enabled from Phase 0 — it is free for this scale and turns a 6-minute CI run into 40 seconds on unchanged packages.
+**Remote caching is deliberately OFF, and turning it on is currently unsafe.** There is no `remoteCache` block in `turbo.json` and no `TURBO_TOKEN`/`TURBO_TEAM` in the workflow; `pnpm verify` logs "Remote caching disabled". That is not an oversight waiting to be tidied up.
+
+No tsconfig in this repository declares project `references`, so a workspace dependency's emitted `.d.ts` is not among a consumer project's own input file names and `tsc -b`'s up-to-date check cannot see it change. MEASURED: with a type-only widening in `packages/contracts`, `pnpm verify` reported every task successful while `tsc -b --force` failed with TS2741. Two things keep that from reaching CI — `typecheck` runs `tsc -b --force`, and **nothing restores a `.turbo` cache or a `*.tsbuildinfo` into a fresh checkout**. A remote cache, or an `actions/cache` step for `.turbo`, removes the second one and turns the last real cross-package type gate green on broken code. Turbo's `outputs` is not a substitute: turbo does not clean declared outputs before a cache-miss run, so a stale `*.tsbuildinfo` survives and `tsc -b` skips exactly as before.
+
+The prerequisite is landing project `references`, not a cache token. `.github/workflows/ci.yml` carries the same warning at the top of the file and on the `Typecheck` step, and [`ROADMAP.md`](./ROADMAP.md) tracks it. Until then the CI run is slower on purpose.
 
 **Why not Nx?** Nx's generators and module-boundary enforcement are genuinely better, but Turborepo is simpler, and boundary enforcement is handled here by ESLint `no-restricted-imports` zones (§7), which are explicit and readable. Not worth the migration surface. See [ADR-0001](./adr/0001-monorepo-strategy.md).
 
 ---
 
 ## 6. Complete repository tree
+
+**This is the TARGET tree, not the current one, and nothing checks it.** Most of it does not exist yet: today `apps/` holds only `api`, `packages/` holds `contracts`, `database`, `eslint-config`, `testing` and `typescript-config`, and `infra/` holds only `docker`. `apps/api/src` additionally contains `bootstrap.ts`, `openapi/` and `scripts/`, which are absent below. Read this as the shape the phases are building towards; read `ROADMAP.md` and the repository itself for what is there now.
 
 ```
 metrika/
@@ -389,21 +395,22 @@ graph TD
     class api,web,workers app
 ```
 
-Enforced rules, each with a corresponding ESLint `no-restricted-imports` zone in `packages/eslint-config`:
+The rules, and whether the ESLint zone that enforces each one exists yet. A rule with no zone is a convention, not a control — the "Enforced" column is what separates the two, and only a zone with a fixture asserting it rejects the violation counts as enforced here.
 
-| Rule                                                                                                 | Rationale                                                                                               |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `contracts` imports nothing but `zod`                                                                | It is the root of the graph. Any dependency here propagates everywhere, including to the browser bundle |
-| `pricing-engine` may not import Nest, Prisma, HTTP, `node:fs`, or reference `Date`/`Math.random`     | Purity is what makes golden-file tests meaningful. Time is injected as `evaluatedAt`                    |
-| `ui` may not import `api-client`, `contracts` or `database`                                          | A design-system component that knows about a `Quote` is a feature component in the wrong place          |
-| `apps/web` may not import `database` or `pricing-engine`                                             | No Prisma in a browser bundle; no second pricing source of truth                                        |
-| `printer-sdk` may not import order/quote domain types                                                | The driver layer must be reusable by a future partner-network implementation                            |
-| Only `apps/api/src/infrastructure/persistence/**` may import `@prisma/client` or `packages/database` | Forces every query through the mapping + authorization layer                                            |
-| Only `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts` may read `process.env`            | §54. Enforced by `no-restricted-properties`                                                             |
-| Only `apps/api/src/infrastructure/persistence/**` may import `brandUnsafe`                           | The single controlled place where a DB `string` becomes a branded ID                                    |
-| `apps/*` may not import from another app's `src`                                                     | Cross-app sharing goes through a package or it does not happen                                          |
+| Rule                                                                                                 | Enforced                                       | Rationale                                                                                               |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `contracts` imports nothing but `zod`                                                                | yes — `contractsBoundary`                      | It is the root of the graph. Any dependency here propagates everywhere, including to the browser bundle |
+| Only `apps/api/src/infrastructure/persistence/**` may import `@prisma/client` or `packages/database` | yes — `prismaImportBoundary`                   | Forces every query through the mapping + authorization layer                                            |
+| No `$queryRawUnsafe` / `$executeRawUnsafe`                                                           | yes — `rawSqlBan`                              | Raw SQL built from application strings is the injection surface RLS cannot cover                        |
+| Only `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts` may read `process.env`            | yes — `no-restricted-properties`               | §54                                                                                                     |
+| `pricing-engine` may not import Nest, Prisma, HTTP, `node:fs`, or reference `Date`/`Math.random`     | not yet — the package does not exist (Phase 2) | Purity is what makes golden-file tests meaningful. Time is injected as `evaluatedAt`                    |
+| `ui` may not import `api-client`, `contracts` or `database`                                          | not yet — the package does not exist           | A design-system component that knows about a `Quote` is a feature component in the wrong place          |
+| `apps/web` may not import `database` or `pricing-engine`                                             | not yet — the app does not exist (Plan 0B-2)   | No Prisma in a browser bundle; no second pricing source of truth                                        |
+| `printer-sdk` may not import order/quote domain types                                                | not yet — the package does not exist           | The driver layer must be reusable by a future partner-network implementation                            |
+| Only `apps/api/src/infrastructure/persistence/**` may import `brandUnsafe`                           | not yet — **the helper itself does not exist** | The single controlled place where a DB `string` becomes a branded ID                                    |
+| `apps/*` may not import from another app's `src`                                                     | not yet — there is only one app                | Cross-app sharing goes through a package or it does not happen                                          |
 
-The Python side consumes contracts by **generating pydantic models from JSON Schema emitted by `packages/contracts`** in a `pnpm contracts:emit` step, committed and checked in CI (`git diff --exit-code`). This keeps one source of truth across the language boundary without a runtime dependency.
+The Python side is to consume contracts by **generating pydantic models from JSON Schema emitted by `packages/contracts`** in a `pnpm contracts:emit` step, committed and diffed in CI. **That script does not exist yet** — neither does `apps/workers` — and no CI job runs it. Both land in Plan 0B-3. The design intent is one source of truth across the language boundary without a runtime dependency.
 
 ---
 
@@ -980,7 +987,7 @@ Every flag from §9 is enabled, with two deliberate deviations, explained in [TY
 
 `skipLibCheck: true` is on, pragmatically: third-party `.d.ts` errors are not actionable. `moduleResolution` is `bundler` for `apps/web` and `nodenext` elsewhere.
 
-Branded types are defined once via Zod `.brand()` in `packages/contracts` for every entity ID and for the five physical quantities that flow into money (`Millimeters`, `CubicMillimeters`, `Grams`, `Seconds`, `MinorUnits`). They are **not** applied to every string in the system — the value is in preventing `ModelId`/`QuoteId` confusion and unit mix-ups, and the cost of over-branding is arithmetic friction. A single `brandUnsafe` helper, importable only from `infrastructure/persistence`, converts database strings to branded IDs at exactly one boundary.
+Branded types are defined once via Zod `.brand()` in `packages/contracts` for every entity ID and for the five physical quantities that flow into money (`Millimeters`, `CubicMillimeters`, `Grams`, `Seconds`, `MinorUnits`). They are **not** applied to every string in the system — the value is in preventing `ModelId`/`QuoteId` confusion and unit mix-ups, and the cost of over-branding is arithmetic friction. The plan is a single `brandUnsafe` helper, importable only from `infrastructure/persistence`, converting database strings to branded IDs at exactly one boundary — see [ADR-0018](./adr/0018-branded-types.md). Neither the helper nor its lint zone exists yet; nothing in the repository maps a database row to a branded ID so far.
 
 ---
 
@@ -1014,7 +1021,7 @@ graph LR
     L --> M[deploy production]
 ```
 
-Turborepo remote caching makes unchanged packages free. Nothing deploys if any gate fails.
+Nothing deploys if any gate fails. The diagram is the target pipeline; `.github/workflows/ci.yml` runs the part of it that exists — `verify` (format, build, lint, typecheck, unit), `integration` (Testcontainers) and `openapi` (emit + `git diff --exit-code`). Turborepo remote caching would make unchanged packages free and is deliberately **off**: see §5 for the measurement, and do not enable it — or add an `actions/cache` step for `.turbo` — before project `references` land.
 
 **Git hooks are deliberately minimal.** `lint-staged` runs Prettier and ESLint on changed files only, plus `commitlint` on the message. Typecheck and tests do **not** run pre-commit — they run in CI, where they can be parallel and cached, and a slow pre-commit hook trains people to use `--no-verify`, which is worse than no hook.
 
@@ -1092,7 +1099,7 @@ Seeds are deterministic and fixed-UUID: two organizations, five users across eve
 This `docs/` tree plus root `README.md`, `CONTRIBUTING.md` and `SECURITY.md`. Rules that keep documentation honest:
 
 - **ADRs are immutable.** A decision is superseded by a new ADR, never edited.
-- **Architecture documents are checked by CI where mechanically possible** — the repository tree in this file is compared against the actual directory listing, and the environment-variable table against the Zod schemas. Documentation that can drift silently, will.
+- **Documentation that can drift silently, will** — so it should be checked mechanically wherever that is possible. One such check exists today: `apps/api/test/env-example.test.ts` asserts that `.env.example` is a superset of what `apps/api`'s Zod schema requires, and it runs in `pnpm verify`. Nothing yet compares §6's repository tree against the actual directory listing, or the environment-variable tables in these documents against the schemas; §6 is labelled target-state for that reason, and `CONTRIBUTING.md` says the same. Both checks are worth building; neither should be described as if it already ran.
 - Every module directory carries a short `README.md` stating its responsibility and allowed dependencies, so an agent opening that directory has the boundary in context.
 
 ---

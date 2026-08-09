@@ -105,9 +105,13 @@ export async function withStorage<T>(fn: (s3: S3Client) => Promise<T>): Promise<
 export async function withTemporal<T>(fn: (env: TestWorkflowEnvironment) => Promise<T>): Promise<T>;
 ```
 
-Containers start once per suite; each test runs inside a transaction that is rolled back, giving isolation without container churn.
+**One container per run, and NOTHING rolls back.** Vitest `globalSetup` starts a single Postgres for the whole run (measured: without it, `fileParallelism: false` plus the default isolation still gives one container per file). `withDatabase` builds a client, runs the callback and disconnects; `withOrganizationContext` opens a transaction that **commits**. Rows written by a test survive it, survive the file, and survive the run.
 
-Covered: repositories against real Postgres (including RLS behaviour), API modules end to end through the real Nest bootstrap, the S3 adapter against MinIO, Temporal activities against the time-skipping test environment, migration up/down smoke tests, and the outbox poller's at-least-once delivery under concurrent writers.
+That is a deliberate design, not a gap — `rls.integration.test.ts` seeds in `beforeAll` and depends on those rows still being there — but it means **isolation is each suite's own job**. Write rows nobody else's assertions can see: scope by organization id, use ids unique to the suite, and never assert `toEqual([])` over a shared table. A suite that assumes an empty database passes alone and fails when another file runs first. That exact coupling was found and removed once already (Task 7), and it was hidden at the time by an alphabetical sequencer that also silently disabled `--shard`.
+
+Covered today: `packages/database` (soft delete, organization context, RLS isolation against a non-superuser role) and `apps/api` end to end through the **real** `createApiApp()` bootstrap — request context, the error envelope, health probes against a severable TCP proxy, and the emitted OpenAPI document.
+
+Not covered, and not built: the S3 adapter against MinIO, Temporal activities against the time-skipping test environment, migration up/down smoke tests, and the outbox poller's at-least-once delivery under concurrent writers. `withStorage` and `withTemporal` above are the fixtures those need.
 
 ### RLS tests are their own category
 
@@ -122,7 +126,9 @@ it('returns zero rows when the org context does not match', async () => {
 
 These test the backstop specifically — with the application-level check bypassed — because the whole point of a backstop is that it works when the primary control has failed.
 
-### The cross-tenant IDOR suite
+### The cross-tenant IDOR suite — NOT BUILT YET
+
+This is the target shape, and none of it exists: there is no `ALL_TENANT_SCOPED_ROUTES`, no `apps/api/src/authorization/`, and no tenant-scoped route to point it at. It lands with the first one, in Phase 1. `CONTRIBUTING.md` says the same; do not read the snippet below as something CI runs.
 
 Generated from the route table, so it cannot fall behind:
 
@@ -136,7 +142,7 @@ describe.each(ALL_TENANT_SCOPED_ROUTES)('IDOR: %s', (route) => {
 });
 ```
 
-Runs on every pull request. Adding a tenant-scoped route without an authorization check fails CI immediately. This is the highest-value security test in the repository.
+Once it exists it will run on every pull request, and adding a tenant-scoped route without an authorization check will fail CI immediately. It is intended to be the highest-value security test in the repository — which is exactly why it must not be described as if it were already running. Until then, cross-tenant isolation is covered only at the database layer, by `packages/database/test/rls.integration.test.ts`.
 
 ---
 
