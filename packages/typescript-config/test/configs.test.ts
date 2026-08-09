@@ -71,6 +71,12 @@ describe('nest.json', () => {
     const emitted = readFileSync(path.join(outDir, 'value-import.controller.js'), 'utf8');
     expect(emitted).toContain('design:paramtypes');
     expect(emitted).toContain('WidgetService');
+    // toContain('WidgetService') alone is satisfied by the surviving
+    // `import { WidgetService } from './service.js';` line, not by the
+    // metadata array — a `[Function]` emit with that import intact would
+    // still pass it. Pin the array shape itself, the way the `import type`
+    // sibling test below pins `[Function]`.
+    expect(emitted).toMatch(/design:paramtypes",\s*\[WidgetService\]/);
   });
 
   it('erases the constructor parameter type for an `import type` — the DI footgun, captured', () => {
@@ -80,6 +86,20 @@ describe('nest.json', () => {
     // UnknownDependenciesException at boot. tsc reports nothing.
     expect(emitted).not.toContain('WidgetService');
     expect(emitted).toMatch(/design:paramtypes",\s*\[Function\]/);
+  });
+
+  it('resolves compilerOptions.types to ["node"], proving the extends chain runs through node.json', async () => {
+    const { stdout } = await run('pnpm', ['exec', 'tsc', '--showConfig', '-p', 'nest.json'], {
+      cwd: packageRoot,
+    });
+    const resolved = JSON.parse(stdout) as { compilerOptions?: { types?: unknown } };
+    // base.json declares no `types` field at all. If nest.json's `extends`
+    // were swapped from ./node.json to ./base.json, this key would be
+    // entirely absent from the resolved config, not merely a different
+    // array — node.json is the one link in the chain that sets it, and
+    // that is the whole reason nest.json extends node.json rather than
+    // base.json directly.
+    expect(resolved.compilerOptions?.types).toEqual(['node']);
   });
 });
 

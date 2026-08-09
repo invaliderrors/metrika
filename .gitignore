@@ -13,3 +13,7 @@ __pycache__/
 
 # agent scratch — ledgers, briefs, review packages
 .superpowers/
+
+# stray output an interrupted `packages/typescript-config` test run can leave behind
+packages/typescript-config/test/.tmp-nest-out/
+packages/typescript-config/test/next-fixtures/page.js
