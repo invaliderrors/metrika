@@ -15,8 +15,9 @@ See [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md).
 ```bash
 git switch -c feat/quote-expiry-sweeper
 # ... work ...
-pnpm verify          # format + lint + typecheck + unit — the same gates CI runs
-git commit           # conventional commits, enforced by commitlint
+pnpm verify          # format:check + build + lint + typecheck + unit — CI's `verify` job
+pnpm test:integration # if you touched packages/database or apps/api; Docker must be running
+git commit           # conventional commits — a convention today; commitlint is not installed yet
 ```
 
 Branches: `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`. Squash merge into `main`.
@@ -38,12 +39,13 @@ Two conventions that apply to every commit:
 
 A change is ready when **all** of these hold:
 
-- [ ] `pnpm verify` passes
-- [ ] CI passes, including the cross-tenant IDOR suite
+- [ ] `pnpm verify` passes — it is `format:check` **+ `build`** + `lint` + `typecheck` + `test:unit`, in that order, and the `build` is not incidental: `lint` and `typecheck` both depend on `^build`, so a workspace dependency that does not compile has to fail as a build
+- [ ] `pnpm test:integration` passes locally if the change touches `packages/database` or `apps/api`. Neither `pnpm verify` nor any other local gate can see what it sees — an `import type` on an injected provider, an RLS policy that stops isolating, a probe that answers 200 while its dependency is down, or a stack trace escaping the exception filter are all green under lint, types and unit tests
+- [ ] CI passes — all three jobs: `verify`, `integration` and `openapi`. From Phase 1 that includes the cross-tenant IDOR suite, which does not exist yet
 - [ ] Coverage targets for the touched packages are met ([docs/TESTING.md](./docs/TESTING.md))
 - [ ] No `any`. No unjustified `@ts-expect-error`. No unjustified `eslint-disable`. No skipped tests without a linked issue
 - [ ] Database changes ship as a reviewed migration that is expand/contract-safe
-- [ ] New endpoints appear in the generated OpenAPI and the typed client
+- [ ] New endpoints appear in the regenerated `apps/api/openapi/openapi.json`, committed in the same pull request — CI's `openapi` job re-emits it and fails on a diff. The typed client generated from it arrives in Plan 0B-2
 - [ ] New asynchronous work is idempotent by a **database constraint**, not by an application check
 - [ ] Anything that can fail has observability — a span, a metric, or a log with correlation IDs
 - [ ] Security-relevant changes name the control they rely on
@@ -52,6 +54,8 @@ A change is ready when **all** of these hold:
 ## Non-negotiables
 
 These are enforced mechanically. If you find yourself fighting one, the design is probably wrong, not the rule.
+
+Each rule's enforcement lands with the code it protects, so some of the rows below name a control that is not installed yet. Live today: the `any` rules, the `process.env` restriction, the Prisma and `@metrika/database` import zones, and the `$queryRawUnsafe` / `$executeRawUnsafe` ban. The `workflows` ESLint profile arrives with `apps/api/src/workflows` in Plan 0B-3; the money, `transition()` and versioning rules arrive with the schemas they apply to.
 
 | Rule                                               | Enforcement                                           |
 | -------------------------------------------------- | ----------------------------------------------------- |
@@ -94,6 +98,6 @@ Pin infrastructure and tool versions exactly. Renovate is configured to exclude 
 
 ## Documentation
 
-Documentation lives with the code and changes with it. Where drift can be detected mechanically it is — the repository tree in `ARCHITECTURE.md` is checked against the actual directory listing, and the environment table against the Zod schemas.
+Documentation lives with the code and changes with it. Where drift can be detected mechanically it is — today that means `.env.example` against `apps/api`'s Zod schema (`apps/api/test/env-example.test.ts`, a unit test, so `pnpm verify` fails on drift) and `apps/api/openapi/openapi.json` against the emitted document (CI's `openapi` job). A mechanical check of the repository tree in `ARCHITECTURE.md` against the actual directory listing is intended and does not exist yet; until it does, that tree is maintained by hand and is the first thing to check when a document looks stale.
 
-Every module directory carries a short `README.md` stating its responsibility and allowed dependencies.
+Every module directory should carry a short `README.md` stating its responsibility and allowed dependencies. That starts with the feature modules in Phase 1 — `apps/api`'s current tree is a runtime skeleton, and nothing in it has module READMEs yet.

@@ -291,18 +291,29 @@ with `JSON.stringify(doc, null, 2)` and diffed byte-for-byte; Prettier's
 leaving it formatted makes `format:check` and the diff gate disagree with the
 emitter permanently.
 
-The intended gate is that CI diffs the generated spec against the committed
-baseline, so a breaking change — a removed field, a narrowed type, a new
-required request property — fails the build unless the pull request carries an
-`api-breaking-change` label and updates the baseline. That is what makes "do not
-break the client" a rule rather than an aspiration.
+The gate is that CI diffs the generated spec against the committed baseline, so
+a breaking change — a removed field, a narrowed type, a new required request
+property — fails the build. That is what makes "do not break the client" a rule
+rather than an aspiration.
 
-**This gate is not wired yet.** `git diff --exit-code -- apps/api/openapi/openapi.json`
-is verified to fail on a stale document, but no CI job runs it, and CI runs no
-integration tests either — so the runtime assertions in
-`apps/api/test/openapi.integration.test.ts` do not execute there. Until both
-jobs exist, the committed document is protected only by whoever runs the emit
-locally.
+**This gate is wired.** CI's `openapi` job runs
+`pnpm --filter @metrika/api openapi:emit` and then
+`git diff --exit-code -- apps/api/openapi/openapi.json`, so a document nobody
+regenerated fails the build. The job needs no database: `emit-openapi.ts` never
+calls `app.init()`, so no lifecycle hook fires and `PrismaService.$connect()` is
+never reached — but `DATABASE_URL` and `HEALTH_DEEP_TOKEN` are still supplied
+inline in the step, because `ConfigModule` validates the environment while the
+module graph is built and `openapi:emit` deliberately carries no `--env-file`.
+CI's `integration` job runs `apps/api/test/openapi.integration.test.ts` too, so
+the runtime assertions about the document's shape execute on every pull
+request alongside the byte-for-byte diff.
+
+Not yet part of the gate: the `api-breaking-change` label that would let a pull
+request update the baseline deliberately. Today every diff fails equally,
+whether it is a rename nobody intended or a considered breaking change, and the
+fix is the same — regenerate and commit. The label distinguishes those two
+cases and arrives with the typed client that would be broken by the second one
+(Plan 0B-2).
 
 ---
 

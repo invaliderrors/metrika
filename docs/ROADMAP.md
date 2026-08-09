@@ -61,45 +61,53 @@
 
 **Deliverables**
 
-| #    | Task                                                                                                                                                                                                  | Location                                                                      |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 0.1  | ✅ pnpm workspace + Turborepo pipeline (`typecheck`, `lint`, `test:unit`, `test:integration`, `build`), remote cache                                                                                  | root                                                                          |
-| 0.2  | ✅ `packages/typescript-config` — `base`, `node`, `react-library`, `next`, `nest` configs with every flag from [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md)                               | `packages/typescript-config`                                                  |
-| 0.3  | ✅ `packages/eslint-config` — flat config profiles: `base`, `typeChecked`, `react`, `next`, `nest`, `workflows`, `test`, `boundaries`                                                                 | `packages/eslint-config`                                                      |
-| 0.4  | ✅ Prettier (exact-pinned) + `.editorconfig` + `ruff` + `mypy --strict` for Python                                                                                                                    | root, `apps/workers`                                                          |
-| 0.5  | ✅ `packages/contracts` skeleton: `Brand` helper, all branded IDs, `Money`, unit types, `Result`, `assertNever`, `DomainErrorCode`, canonical JSON hashing                                            | `packages/contracts/src`                                                      |
-| 0.6  | `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness                                                                                         | `packages/database`                                                           |
-| 0.7  | `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                                                 | `apps/api/src`                                                                |
-| 0.8  | `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                                                   | `apps/web/src`                                                                |
-| 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                                                | `apps/workers`                                                                |
-| 0.10 | `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit                                                                                                                          | `infra/docker`                                                                |
-| 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                                                            | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
-| 0.12 | ✅ GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                                                             | `.github/workflows`                                                           |
-| 0.13 | `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env                                                                                                            | `packages/testing`                                                            |
-| 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role                                                                                                                                         | `infra/terraform/shared`                                                      |
-| 0.15 | **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in an ADR. **Outcome: ts-rest failed; `nestjs-zod` adopted in ADR-0019** | throwaway branch                                                              |
-| 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                                                              | root, `docs/`                                                                 |
+| #    | Task                                                                                                                                                                                                     | Location                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 0.1  | ✅ pnpm workspace + Turborepo pipeline (`typecheck`, `lint`, `test:unit`, `test:integration`, `build`), remote cache                                                                                     | root                                                                          |
+| 0.2  | ✅ `packages/typescript-config` — `base`, `node`, `react-library`, `next`, `nest` configs with every flag from [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md)                                  | `packages/typescript-config`                                                  |
+| 0.3  | ✅ `packages/eslint-config` — flat config profiles: `base`, `typeChecked`, `react`, `next`, `nest`, `workflows`, `test`, `boundaries`                                                                    | `packages/eslint-config`                                                      |
+| 0.4  | ✅ Prettier (exact-pinned) + `.editorconfig` + `ruff` + `mypy --strict` for Python                                                                                                                       | root, `apps/workers`                                                          |
+| 0.5  | ✅ `packages/contracts` skeleton: `Brand` helper, all branded IDs, `Money`, unit types, `Result`, `assertNever`, `DomainErrorCode`, canonical JSON hashing                                               | `packages/contracts/src`                                                      |
+| 0.6  | ✅ `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness                                                                                         | `packages/database`                                                           |
+| 0.7  | ✅ `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                                                 | `apps/api/src`                                                                |
+| 0.8  | `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                                                      | `apps/web/src`                                                                |
+| 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                                                   | `apps/workers`                                                                |
+| 0.10 | ◐ `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit — all but `temporal`/`temporal-ui`, which land in Plan 0B-3                                                               | `infra/docker`                                                                |
+| 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                                                               | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
+| 0.12 | ✅ GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                                                                | `.github/workflows`                                                           |
+| 0.13 | ◐ `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env — Postgres done; Redis, MinIO and Temporal follow their consumers                                           | `packages/testing`                                                            |
+| 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role                                                                                                                                            | `infra/terraform/shared`                                                      |
+| 0.15 | ✅ **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in an ADR. **Outcome: ts-rest failed; `nestjs-zod` adopted in ADR-0019** | throwaway branch                                                              |
+| 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                                                                 | root, `docs/`                                                                 |
 
-Progress: 0.1–0.5, 0.12 complete for what Plan 0A scoped; 0.15 decided (see the
-outcome noted on its row). Remaining: 0.6–0.11, 0.13, 0.14, 0.16. Caveats on the ✅ rows: several describe end-state work that lands
-incrementally as the runtimes that need it are built. 0.1's `test:integration`
-turbo task and remote caching don't exist yet — `turbo.json` defines only
-`typecheck`, `lint`, `test:unit` and `build`, and `pnpm verify` logs "Remote
-caching disabled"; both land once there's something to integration-test and a
-Vercel remote-cache token to configure. 0.2's `next`/`nest` tsconfigs and 0.3's
-`react`/`next`/`nest`/`workflows` ESLint profiles arrive with `apps/web` and
-`apps/api` (Plan 0B) — today only `base`/`node`/`react-library` and
-`base`/`typeChecked`/`test`/`contractsBoundary` exist. 0.4's `ruff`/`mypy`
-land with `apps/workers` (Plan 0B); only the Prettier/`.editorconfig` half is
-done. 0.12's CI currently runs format, lint, typecheck and unit tests only —
-the rest of [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)'s gate list
-(integration tests, `contracts:emit`, security scanning, deploys) grows in
-later plans. 0.6 (`packages/database`) has no code at all yet — it needs
-Postgres via `docker compose`, which Plan 0A deliberately does not stand up
-(see [Plan 0A](./superpowers/plans/2026-08-07-phase-0a-monorepo-and-contracts-core.md)'s
-deferred-work table) — it lands in Plan 0B along with `apps/`. 0.16's root docs
+✅ = done · ◐ = partially done, with the remainder named on the row.
+
+Progress: 0.1–0.7, 0.12, 0.13 (Postgres harness), 0.15 complete. 0.10 partially:
+`postgres`, `redis`, `minio` and `mailpit` exist; `temporal` and `temporal-ui`
+land in Plan 0B-3. Remaining: 0.8, 0.9, 0.11, 0.14, and 0.13's Redis/MinIO/
+Temporal harnesses.
+
+Caveats on the ✅ rows: several describe end-state work that lands incrementally
+as the runtimes that need it are built. 0.1's Turbo remote caching is still off
+— `pnpm verify` logs "Remote caching disabled" — and turning it on is gated on
+a real fix, not a token: no tsconfig in this repository declares project
+`references`, so `tsc -b`'s up-to-date check cannot see a workspace
+dependency's `.d.ts` change, and a restored `.turbo` cache would silently
+convert CI's cross-package type gate into a pass. `.github/workflows/ci.yml`
+carries the measurement. 0.2 is complete — `base`, `node`, `react-library`,
+`web-library`, `nest` and `next` all exist. 0.3's `react`/`next`/`workflows`
+ESLint profiles arrive with `apps/web` (Plan 0B-2) and
+`apps/api/src/workflows` (Plan 0B-3); `base`, `typeChecked`, `nest`, `test`
+and the four boundary profiles exist. 0.4's `ruff`/`mypy` land with
+`apps/workers` (Plan 0B-3); only the Prettier/`.editorconfig` half is done.
+0.12's CI now runs three jobs — `verify` (format, build, lint, typecheck, unit
+tests, suppression greps), `integration` (Testcontainers Postgres) and
+`openapi` (re-emit and diff) — but the rest of
+[INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)'s gate list (`contracts:emit`,
+security scanning, e2e, deploys) grows in later plans. 0.16's root docs
 (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`) and ADRs 0001–0018 in
-[`docs/adr/`](./adr/) all predate this plan and were not produced by it.
+[`docs/adr/`](./adr/) all predate Plan 0A and were not produced by it;
+ADR-0019 and ADR-0020 were.
 
 ### Carried into Plan 0B from Plan 0A's final review
 
@@ -122,16 +130,24 @@ more code depends on the surface it protects.
    part of the source-only decision in ADR-0001; see
    [ADR-0020](./adr/0020-internal-package-build-output.md) for why the
    original decision was right for its assumptions and what changed.
-2. **No decorator support.** `packages/typescript-config` has no
-   `experimentalDecorators`, no `emitDecoratorMetadata`, and no `nest.json` or
-   `next.json` (both named in row 0.2). Compounding it, `base.json` sets
-   `verbatimModuleSyntax: true`, which is the known NestJS DI friction point —
-   `import type` erases the constructor parameter type that
-   `emitDecoratorMetadata` needs, producing runtime failures rather than
-   compile errors. Decide the `nest.json` shape deliberately.
-3. **`composite: true` in `base.json`** is right for project references but
-   fights Next.js, which rewrites `tsconfig.json` on `next dev`. Expect
-   `next.json` to turn it off.
+2. ~~**No decorator support.**~~ **Closed by Plan 0B-1 Task 2.**
+   `packages/typescript-config` had no `experimentalDecorators`, no
+   `emitDecoratorMetadata`, and no `nest.json` or `next.json` (both named in
+   row 0.2). Compounding it, `base.json` sets `verbatimModuleSyntax: true`,
+   which is the known NestJS DI friction point — `import type` erases the
+   constructor parameter type that `emitDecoratorMetadata` needs, producing
+   runtime failures rather than compile errors. `nest.json` now sets **both**
+   decorator flags, which is also what makes typescript-eslint suppress
+   `consistent-type-imports` on decorated classes — with only the metadata
+   flag, `pnpm lint:fix` would rewrite every Nest constructor import into the
+   broken form. A fixture pins it, and the hazard itself is now a rule in
+   [`CLAUDE.md`](../CLAUDE.md) because `tsc` exits 0 and ESLint says nothing:
+   the only guard is `apps/api/test/boot.integration.test.ts`.
+3. ~~**`composite: true` in `base.json`**~~ **Closed by Plan 0B-1 Task 2.**
+   Right for project references but it fights Next.js, which rewrites
+   `tsconfig.json` on `next dev`. `next.json` turns it off. A premise was
+   corrected on the way: `composite: true` with `noEmit: true` is legal at
+   TypeScript 6.0.3 — the old restriction was relaxed upstream.
 
 **Test and gate gaps**
 
@@ -144,37 +160,50 @@ brandedUuid('QuoteId')`) still passed the whole suite. It now asserts a
    independent non-adjacent collision, and a total brand loss (one ID's
    schema stops calling `.brand()`), all four confirmed to fail the specific
    assertion(s) they should and nothing else.
-5. **The dynamic-import boundary rule misses template literals.** The selector
-   is narrowed to `ImportExpression[source.type='Literal']`, so
-   ``import(`node:crypto`)`` with backticks lints clean. Backstopped for
-   Node built-ins by `tsc` (TS2307); the live residual is a template-literal
-   import of an already-installed, typed package.
-6. **`packages/contracts/tsconfig.json` admits Node ambients into `src/**`.**
-   Only `tsc -b tsconfig.build.json` rejects `Buffer`/`__dirname`/`require`.
-   Since editors and ESLint's type-aware program both read `tsconfig.json`, a
-   Node global in `src/` looks clean in-editor and fails only in CI.
-7. **`lib` is duplicated** across `tsconfig.json` and `tsconfig.build.json`.
-   Divergence would silently undo the browser-safety guarantee. A shared
-   `web-library.json` in `@metrika/typescript-config` is the durable home.
-8. **`packages/typescript-config`'s local ESLint config is weaker than the
-   shared one.** It composes the libraries directly to avoid a real package
-   cycle, and so misses the four type-aware rules plus `base`'s
-   `no-restricted-properties` on `process.env` — the last of which is a
-   repo-wide invariant and should be added back explicitly.
+5. ~~**The dynamic-import boundary rule misses template literals.**~~
+   **Closed by Plan 0B-1 Task 3.** The selector was narrowed to
+   `ImportExpression[source.type='Literal']`, so ``import(`node:crypto`)``
+   with backticks linted clean.
+6. ~~**`packages/contracts/tsconfig.json` admits Node ambients into
+   `src/**`.**~~ **Closed by Plan 0B-1 Task 3.** Only
+   `tsc -b tsconfig.build.json` rejected `Buffer`/`__dirname`/`require`, so a
+   Node global in `src/` looked clean in-editor — editors and ESLint's
+   type-aware program both read `tsconfig.json` — and failed only in CI.
+7. ~~**`lib` is duplicated** across `tsconfig.json` and
+   `tsconfig.build.json`.~~ **Closed by Plan 0B-1 Task 2.** Divergence would
+   have silently undone the browser-safety guarantee; the shared
+   `web-library.json` in `@metrika/typescript-config` is now the single home.
+8. ~~**`packages/typescript-config`'s local ESLint config is weaker than the
+   shared one.**~~ **Closed by Plan 0B-1 Task 3.** It composed the libraries
+   directly to avoid a real package cycle, and so missed the four type-aware
+   rules plus `base`'s `no-restricted-properties` on `process.env`. Task 3
+   also found that four boundary controls — including the
+   `$executeRawUnsafe` ban and the `ignores` glob deciding whether
+   `apps/api`'s persistence layer may import Prisma — had no fixture at all
+   and stayed green when deleted. All four now gate by exit code.
 
 **Domain obligations**
 
-9. **Validate `Money.exponent` against `CURRENCY_REGISTRY` at the API request
-   boundary.** `Money` deliberately does not, for the reason in
-   [ADR-0014](./adr/0014-money-representation.md); see the money rules in
-   [`CLAUDE.md`](../CLAUDE.md).
-10. **Add `ORDER_NOT_FOUND` to `DomainErrorCode`** when the HTTP-status mapping
-    lands. It was deliberately withheld from Plan 0A as speculative.
-11. **The production Docker base image** is still pinned to
-    `node:22-bookworm-slim` in [ARCHITECTURE.md](./ARCHITECTURE.md) and
-    [INFRASTRUCTURE.md](./INFRASTRUCTURE.md), while dev and CI run Node 24.
-    Reconcile when the Dockerfiles are written in 0.10 — the production image
-    tag is a separate decision from the toolchain pin, not an oversight.
+9. ~~**Validate `Money.exponent` against `CURRENCY_REGISTRY` at the API request
+   boundary.**~~ **Closed by Plan 0B-1 Task 11.** `Money` deliberately does
+   not, for the reason in [ADR-0014](./adr/0014-money-representation.md); the
+   check now lives at the request boundary in `apps/api`, where today's
+   registry is the right authority, and `apps/api/test/money-request.test.ts`
+   pins both directions — a request whose `exponent` contradicts its
+   `currency` is rejected, and an already-persisted `Money` is never
+   revalidated against the registry.
+10. ~~**Add `ORDER_NOT_FOUND` to `DomainErrorCode`**~~ **Closed by Plan 0B-1
+    Task 11**, alongside the HTTP-status mapping it was waiting for. Every
+    `DomainErrorCode` now has a status, enforced by the type system in one
+    direction and by a runtime test in the other; no known domain failure maps
+    to 500.
+11. ~~**The production Docker base image** is still pinned to
+    `node:22-bookworm-slim`~~ **Closed by Plan 0B-1 Task 13.** Both
+    [ARCHITECTURE.md](./ARCHITECTURE.md) and
+    [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) now name
+    `node:24-bookworm-slim`, matching the major pinned in `.nvmrc`. The tag
+    names the major; the digest that Plan 0D's Dockerfile pins names the
+    bytes. No Dockerfile exists yet — this closed the documentation half only.
 
 **Contracts.** `Brand<T,K>`, every `*Id`, `Money`, `Millimeters`/`Grams`/`Seconds`/`CubicMillimeters`, `Result<T,E>`, `DomainErrorCode`, `canonicalJson()` + `sha256Canonical()`.
 

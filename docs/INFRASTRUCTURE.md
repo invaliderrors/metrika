@@ -8,10 +8,15 @@
 
 Three images. All multi-stage, non-root, pinned by digest, no build tooling in the runtime layer.
 
+None of these Dockerfiles exist yet — they are written in Plan 0D. The
+production image tag tracks the toolchain major pinned in `.nvmrc` (24), and is
+pinned by digest in the Dockerfile that Plan 0D writes — the tag here names the
+major, the digest there names the bytes.
+
 ### API
 
 ```dockerfile
-FROM node:22-bookworm-slim@sha256:<digest> AS base
+FROM node:24-bookworm-slim@sha256:<digest> AS base
 ENV PNPM_HOME=/pnpm PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
@@ -170,24 +175,44 @@ infra/terraform/
 
 ## 4. CI/CD
 
-`.github/workflows/ci.yml` — on every pull request:
+`.github/workflows/ci.yml` — **what runs today**, on every pull request and on
+pushes to `main`:
 
-| Job                | Runs                                                                                                |
-| ------------------ | --------------------------------------------------------------------------------------------------- |
-| `setup`            | pnpm install `--frozen-lockfile`, uv sync `--frozen`; caches restored                               |
-| `format`           | `pnpm format:check`                                                                                 |
-| `lint`             | `pnpm lint` (`--max-warnings=0`) + `ruff check` + suppression-justification check                   |
-| `typecheck`        | `pnpm typecheck` + `mypy --strict apps/workers`                                                     |
-| `test-unit`        | `pnpm test:unit` + `pytest -m "not integration and not regression"` with per-package coverage gates |
-| `test-integration` | Testcontainers: Postgres, Redis, MinIO, Temporal test env                                           |
-| `contracts`        | `pnpm contracts:emit && git diff --exit-code`; OpenAPI baseline diff                                |
-| `build`            | `pnpm build` + container builds (not pushed on PRs)                                                 |
-| `security`         | `pnpm audit`, gitleaks, Trivy on images, CodeQL                                                     |
-| `e2e`              | Playwright against an ephemeral stack (docker compose + fakes)                                      |
+| Job           | Runs                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify`      | `pnpm install --frozen-lockfile` · `format:check` · `build` · `lint` (`--max-warnings=0`) · `typecheck` · `test:unit` · the two suppression greps |
+| `integration` | `pnpm build` then `pnpm test:integration` — Testcontainers starts its own Postgres, so there is no `services:` block and no `docker compose up`   |
+| `openapi`     | `pnpm --filter @metrika/api openapi:emit` then `git diff --exit-code -- apps/api/openapi/openapi.json`                                            |
 
-`main` additionally: push images to ECR, `terraform apply` to staging, `prisma migrate deploy`, ECS rolling deploy, smoke tests, then a **manual gate** before production.
+The three jobs are independent and run in parallel; each does its own install
+and build, because nothing is shared between GitHub Actions jobs.
 
-Turborepo remote caching (Vercel Remote Cache) means unchanged packages cost nothing. A typical pull request touching one feature runs in well under two minutes.
+`integration` is a separate job rather than a step in `verify` because
+everything it proves is invisible to `verify`'s gates: an `import type` on an
+injected provider, a dynamic `Module.forRoot()` slipping past the `AppModule`
+import guard, an RLS policy that stops isolating a tenant, a probe that answers
+200 while its dependency is down, a stack trace escaping the exception filter.
+`format:check`, `lint`, `typecheck` and `test:unit` are green for every one of
+them.
+
+**Turborepo remote caching is deliberately off, and `.turbo` is deliberately not
+cached between runs.** No tsconfig in this repository declares project
+`references`, so `tsc -b`'s up-to-date check cannot see a workspace
+dependency's emitted `.d.ts` change and skips the consumer against a stale
+build-info. What keeps CI honest is that a fresh checkout has no build-info at
+all. Restoring one — which is exactly what a `.turbo` cache step does — would
+silently convert the cross-package type gate into a pass. The measurement and
+the conditions for lifting this are in the workflow file itself; read them
+before adding a cache step.
+
+**Growing into this table** as the runtimes that need them land: `ruff` and
+`mypy --strict` and the Python test job (Plan 0B-3), `contracts:emit` with its
+own diff gate (Plan 0B-3), Playwright `e2e` (Plan 0B-2), Redis/MinIO/Temporal
+Testcontainers (with their harnesses), per-package coverage gates, container
+builds, and `security` (`pnpm audit`, gitleaks, Trivy, CodeQL — Plan 0D).
+`main`-only deployment — push images to ECR, `terraform apply` to staging,
+`prisma migrate deploy`, ECS rolling deploy, smoke tests, then a **manual
+gate** before production — arrives with the Terraform environments.
 
 Nightly: slicer regression suite, dependency audit, Terraform drift detection, estimate-calibration report.
 
@@ -210,7 +235,13 @@ Renaming `Quote.total` to `Quote.totalMinor` is four deploys, not one:
 4. DROP COLUMN "total"                                    -- destructive, marked
 ```
 
-Rules enforced by a CI check that parses generated SQL:
+Rules to be enforced by a CI check that parses generated SQL. **That check does
+not exist yet.** What does exist is `packages/database/test/migration-sql.test.ts`,
+a unit test that parses the committed migrations for a narrower set of
+properties — every table that `ENABLE`s row-level security also `FORCE`s it,
+every policy constrains writes as well as reads, and no later migration reopens
+what an earlier one closed. The expand/contract rules below are conventions
+until the parser lands:
 
 | Statement                                       | Rule                                                  |
 | ----------------------------------------------- | ----------------------------------------------------- |
@@ -220,7 +251,7 @@ Rules enforced by a CI check that parses generated SQL:
 | `ALTER TABLE ... SET NOT NULL` on a large table | Requires a validated check constraint first           |
 | Long-running backfill                           | Must be a batched script, never inline in a migration |
 
-Migrations run as a one-off ECS task before the service rolling update, with `statement_timeout` and `lock_timeout` set so a migration that would block writes fails fast rather than taking the site down. Every migration is tested up **and** down against a seeded database in CI.
+Migrations run as a one-off ECS task before the service rolling update, with `statement_timeout` and `lock_timeout` set so a migration that would block writes fails fast rather than taking the site down. Every migration is to be tested up **and** down against a seeded database in CI; today CI applies them forward only, as `prisma migrate deploy` against a fresh Testcontainers Postgres on every integration run.
 
 ---
 

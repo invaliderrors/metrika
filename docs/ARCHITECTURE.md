@@ -665,7 +665,7 @@ Full detail in [CONTRACTS_AND_API.md](./CONTRACTS_AND_API.md).
 
 - REST at `/api/v1`, resource-oriented, cursor pagination on every collection, consistent `?filter[...]&sort=&cursor=&limit=`.
 - Every response carries `X-Request-Id`; every error body is `{ error: { code, message, details?, requestId } }` with `code` drawn from a closed union in `packages/contracts`. Stack traces never cross the boundary.
-- OpenAPI 3.1 generated from the `nestjs-zod` DTOs, published at `/api/v1/openapi.json`, and committed so it can be diffed to catch unintended breaking changes — the diff gate is verified to fail on a stale document but is not yet wired into CI. No generator emits 3.1 natively, so the version is overridden explicitly in one place — see [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
+- OpenAPI 3.1 generated from the `nestjs-zod` DTOs, published at `/api/v1/openapi.json`, and committed so it can be diffed to catch unintended breaking changes. **The diff gate is wired**: CI's `openapi` job re-emits the document and runs `git diff --exit-code -- apps/api/openapi/openapi.json`, so a route or schema change nobody regenerated fails the build. No generator emits 3.1 natively, so the version is overridden explicitly in one place — see [ADR-0019](./adr/0019-nestjs-zod-contracts.md).
 - Long-running operations return `202` with a resource whose state the client polls or subscribes to via SSE. No HTTP request waits on geometry or slicing.
 
 ---
@@ -1028,9 +1028,13 @@ Three images, all multi-stage, non-root, pinned by digest, with health checks an
 
 | Image              | Base                        | Notes                                                                      |
 | ------------------ | --------------------------- | -------------------------------------------------------------------------- |
-| `metrika-api`      | `node:22-bookworm-slim`     | Prisma engines copied explicitly; `dumb-init` as PID 1                     |
+| `metrika-api`      | `node:24-bookworm-slim`     | Prisma engines copied explicitly; `dumb-init` as PID 1                     |
 | `metrika-geometry` | `python:3.12-slim-bookworm` | uv-installed deps in a virtualenv layer; read-only root; tmpfs scratch     |
 | `metrika-slicer`   | `python:3.12-slim-bookworm` | PrusaSlicer binary pinned by checksum; licence file preserved in the image |
+
+The production image tag tracks the toolchain major pinned in `.nvmrc` (24), and
+is pinned by digest in the Dockerfile that Plan 0D writes — the tag here names
+the major, the digest there names the bytes.
 
 Local development uses `docker compose` for Postgres, Redis, MinIO and Temporal only — application code runs on the host for fast reloads.
 
@@ -1067,11 +1071,15 @@ Target, verified by CI on a clean checkout ([LOCAL_DEVELOPMENT.md](./LOCAL_DEVEL
 
 ```bash
 pnpm install
-cp .env.example .env.local
-docker compose up -d      # postgres, redis, minio, temporal, temporal-ui
-pnpm db:migrate && pnpm db:seed
+cp .env.example .env      # `.env` is the ONLY local environment file
+pnpm infra:up             # postgres, redis, minio, mailpit
+pnpm db:deploy && pnpm db:seed
 pnpm dev                  # web, api, and both python workers via turbo
 ```
+
+Reached so far: everything above except `pnpm db:seed` and a `pnpm dev` that
+starts more than `apps/api`. `temporal` and `temporal-ui` join `pnpm infra:up`
+in Plan 0B-3.
 
 Seeds are deterministic and fixed-UUID: two organizations, five users across every role, three printer profiles, four materials, one published pricing rule set, and a set of models in every processing state — including one stuck at `AWAITING_UNIT_CONFIRMATION`, because that path is easy to forget and hard to reach by hand.
 
