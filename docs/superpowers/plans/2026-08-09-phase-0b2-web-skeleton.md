@@ -874,6 +874,49 @@ rm apps/web/src/probe-env.ts
 Expected: **non-zero**, `no-restricted-properties`. If it exits 0, `typeChecked()`
 is not composed and the exemption below it is decorative.
 
+- [ ] **Step 5c: Pin the composition ORDER, which the probe above cannot see**
+
+`packages/eslint-config`'s fixtures pin the ordering property inside that
+package; they never read `apps/web/eslint.config.js`. And Step 5b does not cover
+it either — `no-restricted-properties` is **not** among the three rules that
+differ between the two orders, so it resolves identically and the probe passes
+whichever way round the composition is. Measured: exactly three rules change,
+and that is the only signal.
+
+`apps/web/test/eslint-order.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { ESLint } from 'eslint';
+
+/**
+ * `next()` must come BEFORE `typeChecked()`. Reversed, `eslint-config-next`'s
+ * bare `'warn'` for these two rules wins on severity and they drop from error
+ * to warning — which `pnpm verify` cannot see, because it runs `turbo run lint`
+ * with no `--max-warnings`, while CI passes `--max-warnings=0`. The failure
+ * would therefore be invisible locally and red only in CI.
+ *
+ * Resolved config, not a lint run: this asserts the property directly rather
+ * than hoping some file happens to trip the rule.
+ */
+describe('apps/web eslint composition', () => {
+  it('keeps no-unused-vars an error, which reversing the order would not', async () => {
+    const eslint = new ESLint({ cwd: new URL('..', import.meta.url).pathname });
+    const config = await eslint.calculateConfigForFile('src/app/page.tsx');
+    expect(config.rules?.['@typescript-eslint/no-unused-vars']?.[0]).toBe(2);
+  });
+
+  it('keeps no-unused-expressions an error', async () => {
+    const eslint = new ESLint({ cwd: new URL('..', import.meta.url).pathname });
+    const config = await eslint.calculateConfigForFile('src/app/page.tsx');
+    expect(config.rules?.['@typescript-eslint/no-unused-expressions']?.[0]).toBe(2);
+  });
+});
+```
+
+Prove it: swap the two spreads in `apps/web/eslint.config.js`, confirm the suite
+exits non-zero, and restore.
+
 `apps/web/vitest.config.ts`:
 
 ```ts
