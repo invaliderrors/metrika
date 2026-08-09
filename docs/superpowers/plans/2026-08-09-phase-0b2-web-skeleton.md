@@ -73,14 +73,14 @@ Nothing in this task ships in `apps/web`. It produces a measurement and a decisi
 
 **Files:**
 
-- Create: `docs/adr/0020-next-major-and-frontend-stack.md`
+- Create: `docs/adr/0021-next-major-and-frontend-stack.md`
 - Modify: `docs/adr/README.md`, `docs/ARCHITECTURE.md` (the Next version reference)
 - Test: none — the deliverable is a measurement, recorded
 
 **Interfaces:**
 
 - Consumes: nothing
-- Produces: **the exact pin for every package Tasks 2–6 install**, written into ADR-0020 as a table — `next`, `react`, `react-dom`, `@types/react`, `@types/react-dom`, `next-intl`, `tailwindcss`, `@tailwindcss/postcss`, `eslint-config-next`, `eslint-plugin-react`, `eslint-plugin-react-hooks`, `eslint-plugin-jsx-a11y`, `clsx`, `tailwind-merge`, `@playwright/test`. Later tasks write `<pin>` wherever a version appears; that placeholder means "read ADR-0020's table", never "choose one now".
+- Produces: **the exact pin for every package Tasks 2–6 install**, written into ADR-0021 as a table — `next`, `react`, `react-dom`, `@types/react`, `@types/react-dom`, `next-intl`, `tailwindcss`, `@tailwindcss/postcss`, `eslint-config-next`, `eslint-plugin-react`, `eslint-plugin-react-hooks`, `eslint-plugin-jsx-a11y`, `clsx`, `tailwind-merge`, `@playwright/test`. Later tasks write `<pin>` wherever a version appears; that placeholder means "read ADR-0021's table", never "choose one now".
 
 - [ ] **Step 1: Create a throwaway spike directory outside the workspace**
 
@@ -105,7 +105,7 @@ for p in next react react-dom @types/react @types/react-dom \
 done
 ```
 
-Write the output into ADR-0020's table in Step 7. Every package Tasks 2–6 install appears in this list — a pin decided ad hoc in a later task is a pin nobody reviewed.
+Write the output into ADR-0021's table in Step 7. Every package Tasks 2–6 install appears in this list — a pin decided ad hoc in a later task is a pin nobody reviewed.
 
 - [ ] **Step 3: Check peer ranges before installing anything**
 
@@ -220,12 +220,22 @@ export default async function Page() {
 TSX
 
 cat > eslint.config.js <<'JS'
-import next from 'eslint-config-next/flat';
-export default [...(Array.isArray(next) ? next : [next])];
+import coreWebVitals from 'eslint-config-next/core-web-vitals';
+import typescript from 'eslint-config-next/typescript';
+
+export default [
+  ...coreWebVitals,
+  ...typescript,
+  // `eslint-config-next` sets `settings.react.version: 'detect'`, and
+  // eslint-plugin-react's detect path calls `context.getFilename()`, removed
+  // in ESLint 10 — ESLint exits 2 without this. Pin to the React version in
+  // apps/web/package.json.
+  { settings: { react: { version: '19.2.8' } } },
+];
 JS
 ```
 
-If `eslint-config-next/flat` does not resolve, find the package's actual flat-config export (`node -e "console.log(Object.keys(require('eslint-config-next')))"` and inspect its `exports` map) and record what it is — Task 2 needs the real name.
+These two specifiers and the `settings.react.version` pin are what the spike measured; `eslint-config-next/flat` does **not** exist and throws `ERR_PACKAGE_PATH_NOT_EXPORTED`. If the exports map has moved again, inspect it (`node -e "console.log(require('eslint-config-next/package.json').exports)"`) and record the real names — Task 2 consumes them.
 
 - [ ] **Step 6: Run the gates and record every exit code**
 
@@ -247,9 +257,9 @@ find .next -name '*.css' -exec grep -l 'padding' {} + | head -1
 
 An empty result means the PostCSS plugin did not run — a Tailwind failure, even though `next build` exited 0.
 
-- [ ] **Step 7: Write ADR-0020**
+- [ ] **Step 7: Write ADR-0021**
 
-`docs/adr/0020-next-major-and-frontend-stack.md`. Use the exact structure of the existing ADRs (`Status` / `Context` / `Decision` / `Alternatives` / `Consequences`) — read `docs/adr/0019-nestjs-zod-contracts.md` for the house style.
+`docs/adr/0021-next-major-and-frontend-stack.md`. Use the exact structure of the existing ADRs (`Status` / `Context` / `Decision` / `Alternatives` / `Consequences`) — read `docs/adr/0019-nestjs-zod-contracts.md` for the house style.
 
 The ADR must contain:
 
@@ -262,7 +272,7 @@ The ADR must contain:
 
 - [ ] **Step 8: Reconcile `ARCHITECTURE.md`**
 
-`docs/ARCHITECTURE.md:279` says `# Next.js 15 App Router`. Update it to whatever Step 7 decided, and add the ADR-0020 row to `docs/adr/README.md` in numeric order.
+`docs/ARCHITECTURE.md:279` says `# Next.js 15 App Router`. Update it to whatever Step 7 decided, and add the ADR-0021 row to `docs/adr/README.md` in numeric order.
 
 - [ ] **Step 9: Destroy the spike and commit**
 
@@ -273,7 +283,7 @@ rm -rf "$SPIKE"
 The spike directory must not be committed and must not appear in the workspace.
 
 ```bash
-git add docs/adr/0020-next-major-and-frontend-stack.md docs/adr/README.md docs/ARCHITECTURE.md
+git add docs/adr/0021-next-major-and-frontend-stack.md docs/adr/README.md docs/ARCHITECTURE.md
 git commit -m "docs(adr): pin the frontend stack against a measured spike"
 ```
 
@@ -287,19 +297,19 @@ ROADMAP 0.3 lists these profiles as part of `packages/eslint-config` and defers 
 
 **Files:**
 
-- Create: `packages/eslint-config/src/react.js`, `packages/eslint-config/src/next.js`, `packages/eslint-config/test/eslint.react.config.js`, `packages/eslint-config/test/react.test.ts`
+- Create: `packages/eslint-config/src/react.js`, `packages/eslint-config/src/next.js`, `packages/eslint-config/test/eslint.react.config.js`, `packages/eslint-config/test/eslint.next.config.js`, `packages/eslint-config/test/react.test.ts`
 - Modify: `packages/eslint-config/src/index.js`, `packages/eslint-config/package.json`
 - Test: `packages/eslint-config/test/react.test.ts`
 
 **Interfaces:**
 
-- Consumes: Task 1's ADR-0020 for the `eslint-config-next` pin and its real flat-config export name
+- Consumes: Task 1's ADR-0021 for the `eslint-config-next` pin and its real flat-config export name
 - Produces:
   - `react(options: { tsconfigRootDir: string; project: string }): FlatConfig[]`
-  - `next(options: { tsconfigRootDir: string; project: string }): FlatConfig[]` — composes `react`
+  - `next(options: { tsconfigRootDir: string; project: string; reactVersion: string }): FlatConfig[]` — composes `react`. `reactVersion` is required and must equal `apps/web`'s `react` pin; it is what stops ESLint exiting 2 (ADR-0021 obligation 3).
   - both exported from `@metrika/eslint-config`
 
-- [ ] **Step 1: Add the dependencies at the pins ADR-0020 recorded**
+- [ ] **Step 1: Add the dependencies at the pins ADR-0021 recorded**
 
 ```bash
 pnpm --filter @metrika/eslint-config add \
@@ -309,7 +319,7 @@ pnpm --filter @metrika/eslint-config add \
   eslint-config-next@<pin>
 ```
 
-Exact versions from ADR-0020's table. No ranges.
+Exact versions from ADR-0021's table. No ranges.
 
 - [ ] **Step 2: Write the failing fixture test**
 
@@ -319,15 +329,16 @@ Exact versions from ADR-0020's table. No ranges.
 import { describe, expect, it } from 'vitest';
 import { ESLint } from 'eslint';
 import reactConfig from './eslint.react.config.js';
+import nextConfig from './eslint.next.config.js';
 
-async function lint(code: string, filename: string): Promise<string[]> {
-  const eslint = new ESLint({
-    overrideConfigFile: true,
-    overrideConfig: reactConfig,
-  });
+async function run(config: unknown, code: string, filename: string): Promise<string[]> {
+  const eslint = new ESLint({ overrideConfigFile: true, overrideConfig: config as never });
   const [result] = await eslint.lintText(code, { filePath: filename });
   return (result?.messages ?? []).map((m) => m.ruleId ?? '(fatal)');
 }
+
+const lint = (code: string, filename: string) => run(reactConfig, code, filename);
+const lintWithNext = (code: string, filename: string) => run(nextConfig, code, filename);
 
 describe('the react profile', () => {
   it('rejects a conditional hook call', async () => {
@@ -357,6 +368,46 @@ describe('the react profile', () => {
       'src/C.tsx',
     );
     expect(rules).toEqual([]);
+  });
+});
+
+/**
+ * ADR-0021 obligation 3. `eslint-config-next` depends on eslint-plugin-react,
+ * whose peer range excludes ESLint 10 and which has not published in 16
+ * months; its `settings.react.version: 'detect'` path calls
+ * `context.getFilename()`, removed in ESLint 10. The `next` profile overrides
+ * that setting, and this block is what proves the override left the rules
+ * REPORTING rather than merely stopping the crash.
+ *
+ * The distinction is not hypothetical here. Plan 0A shipped a config where
+ * TypeScript resolved outside typescript-eslint's peer range and every
+ * type-aware rule silently stopped running, with no error and a green build.
+ * A test asserting the config loads would have passed throughout.
+ */
+describe('the next profile, against ADR-0021 obligation 3', () => {
+  it('does not exit non-zero merely by loading', async () => {
+    await expect(lintWithNext(`export const C = () => <p>ok</p>;`, 'src/C.tsx')).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('still reports react/display-name — the rule whose detect path crashes', async () => {
+    // Named specifically: this is the rule that throws under ESLint 10 without
+    // the settings override, so it is the one whose silence would mean the
+    // workaround masked the problem instead of fixing it.
+    const rules = await lintWithNext(
+      `export const C = () => { const Inner = () => <p>x</p>; return <Inner />; };`,
+      'src/C.tsx',
+    );
+    expect(rules).toContain('react/display-name');
+  });
+
+  it('still reports react/jsx-key', async () => {
+    const rules = await lintWithNext(
+      `export const C = () => <>{[1, 2].map((n) => <li>{n}</li>)}</>;`,
+      'src/C.tsx',
+    );
+    expect(rules).toContain('react/jsx-key');
   });
 });
 ```
@@ -422,9 +473,9 @@ export const react = ({ tsconfigRootDir, project }) => [
 ];
 ```
 
-Note: the exact rule-set accessor (`react.configs.flat.recommended`, `jsxA11y.flatConfigs.recommended`) differs between plugin majors. Verify against the versions ADR-0020 pinned before assuming these names — `node -e "import('eslint-plugin-react').then(m => console.log(Object.keys(m.default.configs)))"`.
+Note: the exact rule-set accessor (`react.configs.flat.recommended`, `jsxA11y.flatConfigs.recommended`) differs between plugin majors. Verify against the versions ADR-0021 pinned before assuming these names — `node -e "import('eslint-plugin-react').then(m => console.log(Object.keys(m.default.configs)))"`.
 
-- [ ] **Step 5: Write the fixture config**
+- [ ] **Step 5: Write the two fixture configs**
 
 `packages/eslint-config/test/eslint.react.config.js`:
 
@@ -434,6 +485,19 @@ import { react } from '../src/react.js';
 export default react({
   tsconfigRootDir: import.meta.dirname,
   project: './tsconfig.json',
+});
+```
+
+`packages/eslint-config/test/eslint.next.config.js` — the obligation-3 fixture's
+subject. `reactVersion` must be the same literal as `apps/web`'s `react` pin:
+
+```js
+import { next } from '../src/next.js';
+
+export default next({
+  tsconfigRootDir: import.meta.dirname,
+  project: './tsconfig.json',
+  reactVersion: '<pin>',
 });
 ```
 
@@ -462,19 +526,30 @@ If either mutation leaves the suite green, the fixture is not exercising the pro
 - [ ] **Step 8: Write `src/next.js`**
 
 ```js
-import nextPlugin from 'eslint-config-next/flat';
+import coreWebVitals from 'eslint-config-next/core-web-vitals';
+import typescript from 'eslint-config-next/typescript';
 import { react } from './react.js';
 
 /**
  * `react` plus Next's own rules and the App Router's constraints.
  *
- * The `eslint-config-next` import specifier is whatever ADR-0020's spike
- * measured — the package has moved it between majors, and guessing produces a
- * config that silently contributes nothing.
+ * Two entry points, measured by ADR-0021's spike: `eslint-config-next/flat`
+ * does not exist and throws ERR_PACKAGE_PATH_NOT_EXPORTED. Both default-export
+ * arrays of config objects.
+ *
+ * The `settings` block LAST is load-bearing, not cosmetic. `eslint-config-next`
+ * sets `react.version: 'detect'`, and eslint-plugin-react's detect path calls
+ * `context.getFilename()` — removed in ESLint 10 — so ESLint exits 2 before
+ * linting anything. Overriding it after the shared config is what makes the
+ * React rules run at all. The version string must track apps/web's react pin.
+ * See ADR-0021 obligation 3, and the fixture in Step 2 that proves the rules
+ * still report rather than merely that the config loads.
  */
-export const next = ({ tsconfigRootDir, project }) => [
+export const next = ({ tsconfigRootDir, project, reactVersion }) => [
   ...react({ tsconfigRootDir, project }),
-  ...(Array.isArray(nextPlugin) ? nextPlugin : [nextPlugin]),
+  ...coreWebVitals,
+  ...typescript,
+  { settings: { react: { version: reactVersion } } },
 ];
 ```
 
@@ -688,7 +763,7 @@ export const clientEnv: ClientEnv = ClientEnvSchema.parse({
 
 - [ ] **Step 5: Write the package files**
 
-`apps/web/package.json` — versions from ADR-0020:
+`apps/web/package.json` — versions from ADR-0021:
 
 ```json
 {
@@ -742,7 +817,14 @@ export const clientEnv: ClientEnv = ClientEnvSchema.parse({
 import { next } from '@metrika/eslint-config';
 
 export default [
-  ...next({ tsconfigRootDir: import.meta.dirname, project: './tsconfig.json' }),
+  ...next({
+    tsconfigRootDir: import.meta.dirname,
+    project: './tsconfig.json',
+    // Must equal the `react` pin in this package.json. `eslint-config-next`
+    // sets 'detect', whose code path calls an ESLint 9 API that ESLint 10
+    // removed — ESLint exits 2 before linting a single file. See ADR-0021.
+    reactVersion: '<pin>',
+  }),
   {
     // The one sanctioned process.env reader, per CLAUDE.md. Everything else in
     // the app takes configuration through the exports of this module.
@@ -898,7 +980,7 @@ pnpm --filter @metrika/web test:unit; echo "EXIT=$?"
 
 Expected: **non-zero** — no `.next/static/css` directory.
 
-- [ ] **Step 3: Add Tailwind at ADR-0020's pins**
+- [ ] **Step 3: Add Tailwind at ADR-0021's pins**
 
 ```bash
 pnpm --filter @metrika/web add -D tailwindcss@<pin> @tailwindcss/postcss@<pin>
@@ -1771,6 +1853,6 @@ git commit -m "ci(web): run build, lint, typecheck and e2e for apps/web"
 
 Three things this plan deliberately leaves to measurement rather than assertion, because guessing them is how the last plan lost time:
 
-1. **Every version is ADR-0020's to decide.** If Task 1's spike fails on `next-intl` or `eslint-config-next`, the fallback is the previous Next major — not "work around it". Record the failure and take the fallback; that is what the fallback is for.
+1. **Every version is ADR-0021's to decide.** If Task 1's spike fails on `next-intl` or `eslint-config-next`, the fallback is the previous Next major — not "work around it". Record the failure and take the fallback; that is what the fallback is for.
 2. **The formatting assertions in Task 5 are shapes, not glyphs.** ICU's `es-CO` output is a measurement. Correct the separator, never the digits.
 3. **Three tests in this plan can pass while the thing they guard is broken**, and each has a named mutation that proves otherwise: the Tailwind build test (a stale `.next`), the tagline e2e assertion (a hardcoded string), and the boundary fixtures (flat-config clobbering, which has already happened once in this repo). Run those mutations; do not reason about them.
