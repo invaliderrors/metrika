@@ -9,6 +9,26 @@ import { DATABASE_PACKAGE_ROOT } from './database-root.js';
 
 export const TEST_HEALTH_DEEP_TOKEN = 'integration-health-deep-token';
 
+/** Every environment key {@link bootApiForTest} writes, and therefore restores. */
+const ENV_KEYS = ['DATABASE_URL', 'HEALTH_DEEP_TOKEN', 'NODE_ENV'] as const;
+type EnvKey = (typeof ENV_KEYS)[number];
+
+/**
+ * Bracket notation, not dot: `process.env` is an index signature and the shared
+ * tsconfig sets `noPropertyAccessFromIndexSignature`, so `process.env.NODE_ENV`
+ * is TS4111.
+ *
+ * The `undefined` branch is not defensive padding. Node stores the STRING
+ * "undefined" when a `process.env` key is assigned `undefined`, so restoring a
+ * key that was absent has to delete it — assigning the captured value back
+ * would leave `NODE_ENV="undefined"` behind, which `parseEnv` then rejects as
+ * an invalid enum member.
+ */
+function setEnv(key: EnvKey, value: string | undefined): void {
+  if (value === undefined) Reflect.deleteProperty(process.env, key);
+  else process.env[key] = value;
+}
+
 export async function startTestDatabase(): Promise<DatabaseHandle> {
   return startDatabase({ databasePackageRoot: DATABASE_PACKAGE_ROOT });
 }
@@ -61,15 +81,31 @@ const openApps = new Set<() => Promise<void>>();
  */
 export async function bootApiForTest(overrides?: BootApiOverrides): Promise<BootedApi> {
   const handle = await startTestDatabase();
-  // Bracket notation, not dot: `process.env` is an index signature and the
-  // shared tsconfig sets `noPropertyAccessFromIndexSignature`, so `tsc`
-  // rejects `process.env.DATABASE_URL` with TS4111.
-  process.env['DATABASE_URL'] = overrides?.DATABASE_URL ?? handle.applicationUrl;
-  process.env['HEALTH_DEEP_TOKEN'] = overrides?.HEALTH_DEEP_TOKEN ?? TEST_HEALTH_DEEP_TOKEN;
-  process.env['NODE_ENV'] = overrides?.NODE_ENV ?? 'test';
 
-  const app = await createApiApp();
-  await app.listen({ port: 0, host: '127.0.0.1' });
+  // The ambient environment is restored once the app has read it, so the
+  // fixture leaves no trace: without this, the lifecycle suite's probe
+  // DATABASE_URL outlives its test and the next suite to read the ambient value
+  // silently gets a URL that belongs to a closed app. Safe to restore this
+  // early because everything that reads configuration — `loadEnv()` in the
+  // ConfigModule factory, and PrismaService's constructor — has already run by
+  // the time `createApiApp()` resolves. `app.listen()` reads none of it.
+  const restore = new Map<EnvKey, string | undefined>(
+    ENV_KEYS.map((key): [EnvKey, string | undefined] => [key, process.env[key]]),
+  );
+
+  setEnv('DATABASE_URL', overrides?.DATABASE_URL ?? handle.applicationUrl);
+  setEnv('HEALTH_DEEP_TOKEN', overrides?.HEALTH_DEEP_TOKEN ?? TEST_HEALTH_DEEP_TOKEN);
+  setEnv('NODE_ENV', overrides?.NODE_ENV ?? 'test');
+
+  let app: NestFastifyApplication;
+  try {
+    app = await createApiApp();
+    await app.listen({ port: 0, host: '127.0.0.1' });
+  } finally {
+    // `finally`, so a boot that throws — a DI break, EADDRINUSE — does not
+    // strand the override in the environment for every suite that follows.
+    for (const [key, value] of restore) setEnv(key, value);
+  }
 
   // Annotated rather than inferred: the body names `close`, and inference over
   // a self-referential initialiser is circular (TS7022).
@@ -92,10 +128,39 @@ export async function bootApiForTest(overrides?: BootApiOverrides): Promise<Boot
  * idempotent (MEASURED: a second call on an already-closed app resolves
  * without throwing), so a suite that closes its own app AND relies on this
  * backstop is not doing anything unsafe.
+ *
+ * Every step runs even when an earlier one throws. This is MEASURED, not
+ * defensive: with a bare `for (…) { await close(); }` and one rejecting
+ * closer registered first, the app registered after it stayed reachable over
+ * HTTP and `stopHarnessDatabase()` never ran at all. The leak this registry
+ * exists to prevent reappeared in precisely the situation where cleanup
+ * matters most. With the loop below, the same probe closed the survivor and
+ * still reached the harness.
+ *
+ * Failures are collected and rethrown together rather than letting the first
+ * one win, matching `withDatabase` in packages/testing/src/database.ts; a
+ * single failure is rethrown as itself, so the common case keeps its original
+ * stack.
  */
 export async function stopDatabase(): Promise<void> {
+  const failures: unknown[] = [];
+
   for (const close of [...openApps]) {
-    await close();
+    try {
+      await close();
+    } catch (error: unknown) {
+      failures.push(error);
+    }
   }
-  await stopHarnessDatabase();
+
+  try {
+    await stopHarnessDatabase();
+  } catch (error: unknown) {
+    failures.push(error);
+  }
+
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, 'stopDatabase: more than one cleanup step failed');
+  }
 }

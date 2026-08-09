@@ -88,6 +88,13 @@ describe('application boot', () => {
     // "prefix applied, health excluded" from "no prefix exists at all".
     // Task 12a adds the first non-excluded route; assert it over HTTP then.
     const config = app.get(ApplicationConfig);
+    // The literal, pinned exactly once. Every other prefix assertion in this
+    // file derives its value from API_PREFIX, so they all move together when
+    // the constant changes and none of them notices — MEASURED: flipping it to
+    // 'api/v2' left the suite at exit 0. `api/v1` is a PUBLISHED URL contract;
+    // changing it silently breaks every client, so one assertion has to hold
+    // the value rather than the constant.
+    expect(API_PREFIX).toBe('api/v1');
     expect(config.getGlobalPrefix()).toBe(API_PREFIX);
     expect(config.getGlobalPrefixOptions().exclude?.map((route) => route.path)).toEqual([
       'health/live',
@@ -116,12 +123,14 @@ describe('application boot', () => {
       const response = await fetch(`${booted.baseUrl}/health/live`);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ status: 'ok', environment: 'production' });
+
+      // The override reached the app but not the rest of the run: the fixture
+      // restores what it overrode, so no later suite inherits a NODE_ENV it
+      // never asked for. The app keeps serving 'production' because EnvService
+      // captured it at construction.
+      expect(process.env['NODE_ENV']).toBe(previous);
     } finally {
       await booted.close();
-      // Assigning `undefined` to a process.env key stores the STRING
-      // "undefined" in Node, so an absent original has to be deleted instead.
-      if (previous === undefined) Reflect.deleteProperty(process.env, 'NODE_ENV');
-      else process.env['NODE_ENV'] = previous;
     }
   });
 
@@ -136,8 +145,14 @@ describe('application boot', () => {
 
     expect(await lifecycleBackendCount(observer)).toBe(0);
 
+    const ambientDatabaseUrl = process.env['DATABASE_URL'];
     const subject = await bootApiForTest({ DATABASE_URL: probeUrl.toString() });
     try {
+      // The probe URL does not outlive its boot. Left in the ambient
+      // environment it would point every later suite that reads DATABASE_URL
+      // at a connection belonging to an app this test is about to close.
+      expect(process.env['DATABASE_URL']).toBe(ambientDatabaseUrl);
+
       // Nothing has queried `subject`. Prisma connects LAZILY, on first query,
       // so a backend can exist at this point only because onModuleInit called
       // $connect(). MEASURED: with $connect() removed this count is 0, while
