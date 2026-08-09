@@ -155,7 +155,7 @@ export const ApiErrorResponse = z.object({
 | `VALIDATION_FAILED`, `INVALID_PRINT_CONFIGURATION`, `UNSUPPORTED_FILE_FORMAT`                | 400  |
 | `UNAUTHENTICATED`                                                                            | 401  |
 | `INSUFFICIENT_PERMISSIONS`                                                                   | 403  |
-| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND`                                                         | 404  |
+| `MODEL_NOT_FOUND`, `QUOTE_NOT_FOUND`, `ORDER_NOT_FOUND`                                      | 404  |
 | `INVALID_STATE_TRANSITION`, `QUOTE_SUPERSEDED`, `IDEMPOTENCY_KEY_REUSED`                     | 409  |
 | `QUOTE_EXPIRED`                                                                              | 410  |
 | `FILE_TOO_LARGE`, `MODEL_TOO_COMPLEX`                                                        | 413  |

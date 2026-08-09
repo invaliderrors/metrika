@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module.js';
+import { DomainExceptionFilter } from './shared/errors/domain-exception.filter.js';
 import { RequestContextMiddleware } from './shared/request-context/request-context.middleware.js';
 
 export const API_PREFIX = 'api/v1';
@@ -14,6 +15,7 @@ export const API_PREFIX = 'api/v1';
 export async function createApiApp(): Promise<NestFastifyApplication> {
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
   app.setGlobalPrefix(API_PREFIX, { exclude: ['health/live', 'health/ready', 'health/deep'] });
+  app.useGlobalFilters(new DomainExceptionFilter());
 
   // The request id is established here, at the adapter, rather than through a
   // module with `consumer.apply(...).forRoutes('{*splat}')` — which is the
