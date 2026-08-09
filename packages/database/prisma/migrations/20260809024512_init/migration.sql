@@ -37,6 +37,13 @@ ALTER TABLE "RlsProbe" ENABLE ROW LEVEL SECURITY;
 -- is the role `prisma migrate` and any psql session connect as locally. Without
 -- FORCE the policy below is invisible to exactly the connection a developer
 -- uses to convince themselves RLS works.
+-- Caveat for the local docker-compose stack specifically: POSTGRES_USER
+-- (`metrika`, see infra/docker/docker-compose.yml) is created a superuser by
+-- the postgres image's own entrypoint, and superusers bypass RLS regardless
+-- of FORCE. The statement below is still correct and load-bearing for every
+-- non-superuser owner — production's role, provisioned by Terraform per
+-- Plan 0D, is not a superuser — but do not expect FORCE to visibly change
+-- behaviour when poking at the local stack as `metrika` via psql.
 ALTER TABLE "RlsProbe" FORCE ROW LEVEL SECURITY;
 
 -- WITH CHECK as well as USING: USING filters what a statement can SEE, WITH
