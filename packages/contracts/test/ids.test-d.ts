@@ -5,131 +5,74 @@ import type {
   ModelVersionId,
   OrderId,
   OrganizationId,
-  PrinterProfileVersionId,
   PrintJobId,
+  PrinterProfileVersionId,
   ProjectId,
   QuoteId,
   SliceJobId,
   UserId,
 } from '../src/index.js';
 
-describe('branded IDs are nominally distinct', () => {
-  it('does not let a ProjectId satisfy ModelId', () => {
-    expectTypeOf<ProjectId>().not.toEqualTypeOf<ModelId>();
-  });
+/**
+ * The complete 55-pair distinctness matrix, in 11 assertions.
+ *
+ * The previous version of this file asserted a declaration-order ring
+ * (UserId≠OrganizationId, OrganizationId≠ProjectId, …). A ring catches an
+ * ADJACENT collision only: `export const UserId = brandedUuid('QuoteId')`
+ * left every ring assertion true and all 172 tests green at 100% coverage.
+ *
+ * `AssignableMember<U, T>` distributes over the union `U` and yields `true`
+ * if ANY single member is assignable to `T`, `never` otherwise. Asserting the
+ * result is `never` therefore fails on one collision anywhere in the matrix,
+ * not just on a neighbouring one.
+ *
+ * These are raw type-level assertions rather than `expectTypeOf`, because a
+ * `type X = Expect<...>` is checked by BOTH `pnpm typecheck` (tsconfig.json
+ * includes test/**) and `vitest --typecheck`. An `expectTypeOf` call is only
+ * checked by the latter.
+ */
+interface IdMap {
+  UserId: UserId;
+  OrganizationId: OrganizationId;
+  ProjectId: ProjectId;
+  ModelId: ModelId;
+  ModelVersionId: ModelVersionId;
+  QuoteId: QuoteId;
+  OrderId: OrderId;
+  SliceJobId: SliceJobId;
+  PrintJobId: PrintJobId;
+  MaterialId: MaterialId;
+  PrinterProfileVersionId: PrinterProfileVersionId;
+}
 
-  it('does not let a bare string satisfy ModelId', () => {
-    expectTypeOf<string>().not.toEqualTypeOf<ModelId>();
-  });
+type OtherIds<K extends keyof IdMap> = IdMap[Exclude<keyof IdMap, K>];
 
-  it('lets a ModelId be used as a string', () => {
+type AssignableMember<U, T> = U extends unknown ? (U extends T ? true : never) : never;
+
+type Expect<T extends true> = T;
+
+type NoCollision<K extends keyof IdMap> = [AssignableMember<OtherIds<K>, IdMap[K]>] extends [never]
+  ? true
+  : false;
+
+type _UserIdIsUnique = Expect<NoCollision<'UserId'>>;
+type _OrganizationIdIsUnique = Expect<NoCollision<'OrganizationId'>>;
+type _ProjectIdIsUnique = Expect<NoCollision<'ProjectId'>>;
+type _ModelIdIsUnique = Expect<NoCollision<'ModelId'>>;
+type _ModelVersionIdIsUnique = Expect<NoCollision<'ModelVersionId'>>;
+type _QuoteIdIsUnique = Expect<NoCollision<'QuoteId'>>;
+type _OrderIdIsUnique = Expect<NoCollision<'OrderId'>>;
+type _SliceJobIdIsUnique = Expect<NoCollision<'SliceJobId'>>;
+type _PrintJobIdIsUnique = Expect<NoCollision<'PrintJobId'>>;
+type _MaterialIdIsUnique = Expect<NoCollision<'MaterialId'>>;
+type _PrinterProfileVersionIdIsUnique = Expect<NoCollision<'PrinterProfileVersionId'>>;
+
+describe('branded IDs', () => {
+  it('lets a ModelId be used wherever a string is expected', () => {
     expectTypeOf<ModelId>().toExtend<string>();
   });
 
-  // --- Every one of the eleven IDs, individually ---
-  //
-  // Each ID must be distinct from a bare `string` on its own: comparing two
-  // still-branded siblings pairwise would pass even if BOTH had silently lost
-  // their brand (two plain strings still "equal" each other), so the
-  // per-brand-vs-`string` check is what actually catches a brand quietly
-  // degrading to unbranded.
-
-  it('does not let UserId satisfy a bare string', () => {
-    expectTypeOf<UserId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let OrganizationId satisfy a bare string', () => {
-    expectTypeOf<OrganizationId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let ProjectId satisfy a bare string', () => {
-    expectTypeOf<ProjectId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let ModelId satisfy a bare string', () => {
-    expectTypeOf<ModelId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let ModelVersionId satisfy a bare string', () => {
-    expectTypeOf<ModelVersionId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let QuoteId satisfy a bare string', () => {
-    expectTypeOf<QuoteId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let OrderId satisfy a bare string', () => {
-    expectTypeOf<OrderId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let SliceJobId satisfy a bare string', () => {
-    expectTypeOf<SliceJobId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let PrintJobId satisfy a bare string', () => {
-    expectTypeOf<PrintJobId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let MaterialId satisfy a bare string', () => {
-    expectTypeOf<MaterialId>().not.toEqualTypeOf<string>();
-  });
-
-  it('does not let PrinterProfileVersionId satisfy a bare string', () => {
-    expectTypeOf<PrinterProfileVersionId>().not.toEqualTypeOf<string>();
-  });
-
-  // --- Every one of the eleven IDs, against at least one sibling ---
-  //
-  // A ring over all eleven brands, in declaration order from src/ids.ts, so
-  // every ID is asserted distinct from its neighbour and the ring closes back
-  // to the first. This is what catches two IDs sharing a brand — e.g.
-  // `PrintJobId = brandedUuid('SliceJobId')` — which the "vs bare string"
-  // checks above cannot: both sides are still branded there, just with the
-  // same brand, so they are NOT "just a string" and those checks pass right
-  // past the collision. SliceJobId and PrintJobId are adjacent in src/ids.ts,
-  // so this ring includes that exact pair.
-
-  it('does not let UserId satisfy OrganizationId', () => {
-    expectTypeOf<UserId>().not.toEqualTypeOf<OrganizationId>();
-  });
-
-  it('does not let OrganizationId satisfy ProjectId', () => {
-    expectTypeOf<OrganizationId>().not.toEqualTypeOf<ProjectId>();
-  });
-
-  it('does not let ProjectId satisfy ModelId', () => {
-    expectTypeOf<ProjectId>().not.toEqualTypeOf<ModelId>();
-  });
-
-  it('does not let ModelId satisfy ModelVersionId', () => {
-    expectTypeOf<ModelId>().not.toEqualTypeOf<ModelVersionId>();
-  });
-
-  it('does not let ModelVersionId satisfy QuoteId', () => {
-    expectTypeOf<ModelVersionId>().not.toEqualTypeOf<QuoteId>();
-  });
-
-  it('does not let QuoteId satisfy OrderId', () => {
-    expectTypeOf<QuoteId>().not.toEqualTypeOf<OrderId>();
-  });
-
-  it('does not let OrderId satisfy SliceJobId', () => {
-    expectTypeOf<OrderId>().not.toEqualTypeOf<SliceJobId>();
-  });
-
-  it('does not let SliceJobId satisfy PrintJobId', () => {
-    expectTypeOf<SliceJobId>().not.toEqualTypeOf<PrintJobId>();
-  });
-
-  it('does not let PrintJobId satisfy MaterialId', () => {
-    expectTypeOf<PrintJobId>().not.toEqualTypeOf<MaterialId>();
-  });
-
-  it('does not let MaterialId satisfy PrinterProfileVersionId', () => {
-    expectTypeOf<MaterialId>().not.toEqualTypeOf<PrinterProfileVersionId>();
-  });
-
-  it('does not let PrinterProfileVersionId satisfy UserId — closes the ring', () => {
-    expectTypeOf<PrinterProfileVersionId>().not.toEqualTypeOf<UserId>();
+  it('does not let a bare string satisfy ModelId', () => {
+    expectTypeOf<string>().not.toExtend<ModelId>();
   });
 });
