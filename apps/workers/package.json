@@ -7,6 +7,7 @@
     "format": "uv run --locked --all-packages ruff format .",
     "format:check": "uv run --locked --all-packages ruff format --check .",
     "typecheck": "uv run --locked --all-packages mypy .",
-    "test:unit": "uv run --locked --all-packages pytest"
+    "test:unit": "uv run --locked --all-packages pytest",
+    "test:integration": "uv run --locked --all-packages pytest -m integration"
   }
 }

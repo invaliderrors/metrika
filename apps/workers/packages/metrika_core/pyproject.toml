@@ -1,0 +1,38 @@
+[project]
+name = "metrika-core"
+version = "0.0.0"
+# Restated rather than inherited: a uv workspace member resolves its own
+# `requires-python`, and a member that quietly widened it would let the shared
+# lock resolve a package the root's own bound was chosen to exclude. ADR-0027
+# has the measurements — `numpy@2.5.2` forecloses 3.11 downward and
+# `trimesh@5.0.0` would install on 3.14 with no warning at all.
+requires-python = "==3.12.*"
+# Exact `==`, every one from ADR-0027's measured table, and hand-written:
+# `uv add` writes `>=` floors instead, and
+# `packages/typescript-config/test/dependency-pins.test.ts` fails the build on
+# one. `boto3-stubs[s3]` is NOT here — it is a dev dependency of the workspace
+# root, where `mypy` and `ruff` live, because it is a type-checking artefact and
+# not something a running worker imports.
+dependencies = [
+  "boto3==1.43.67",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.15.0",
+  "structlog==26.1.0",
+]
+
+[build-system]
+# Pinned exactly, for the same reason every other requirement here is: the build
+# backend decides what the wheel contains, and
+# `dependency-pins.test.ts` grades `[build-system] requires` alongside the rest.
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# src layout, so the installed package is what the tests import — never the
+# working directory shadowing it.
+packages = ["src/metrika_core"]
+
+# DELIBERATELY NO `[tool.ruff]` AND NO `ruff.toml`. ruff resolves configuration
+# from the nearest ancestor manifest, so a section here would silently narrow the
+# rule set for this subtree only; `tests/test_toolchain.py` fails the build on
+# one. The workspace has one rule set, in apps/workers/pyproject.toml.

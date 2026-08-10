@@ -81,6 +81,18 @@ select = [
 ]
 ignore = []
 
+[tool.ruff.lint.isort]
+# The workspace's own distributions, so their imports sort into the first-party
+# block rather than beside `boto3`. ruff infers first-party from `src`, which
+# defaults to the directory holding this file — and every member lives under
+# `packages/<name>/src/`, so nothing is inferred and EVERY internal import would
+# otherwise be filed as third-party. Measured: without this, `I001` demanded
+# `from metrika_core.logging import …` be grouped with `import structlog`.
+#
+# A member added later and not listed here fails `I001` loudly rather than being
+# silently misfiled, which is why this is an explicit list and not a glob.
+known-first-party = ["metrika_core"]
+
 [tool.ruff.lint.per-file-ignores]
 # assert is the point of a test file; S101 bans it everywhere else.
 #
@@ -90,12 +102,33 @@ ignore = []
 # through `PATH`, because reproducing what a developer runs IS the assertion.
 # Hard-coding an absolute interpreter path would make the test pass on one
 # machine. Every other `S` rule, S603 included, still applies to test files.
-"tests/**" = ["S101", "S607"]
+#
+# `**/tests/**`, NOT `tests/**`. MEASURED when the first member package arrived:
+# ruff resolves a per-file-ignores pattern containing a slash against the path
+# relative to THIS file's directory, so `tests/**` covered
+# `apps/workers/tests/` and silently covered nothing else — every `assert` in
+# `packages/metrika_core/tests/` was an S101 error. A pattern that matches
+# fewer files than it reads as is the failure mode this repository keeps
+# meeting; here it failed loudly, which is the good version of it.
+"**/tests/**" = ["S101", "S607"]
 
 [tool.mypy]
 strict = true
 python_version = "3.12"
 warn_unreachable = true
+# Not optional, and not a convenience. MEASURED on mypy 2.3.0 and
+# pydantic-settings 2.15.0: without it, mypy reads pydantic's
+# `dataclass_transform` and synthesises `__init__` with every field REQUIRED, so
+# `WorkerSettings()` — the only way a settings class is ever constructed, since
+# the values come from the environment — is `Missing named argument
+# "s3_bucket"`. The plugin special-cases `BaseSettings` and makes those
+# arguments optional, which is the whole reason it special-cases it.
+#
+# The alternative was a `# type: ignore[call-arg]` at every construction site,
+# i.e. suppressing the type checker at exactly the point where a settings class
+# is used. `pydantic` is a dependency of every member that has one, so the
+# plugin is always importable here.
+plugins = ["pydantic.mypy"]
 # The Python half of "no `any`, no exceptions". `strict` alone still permits a
 # hand-written `Any` annotation, which is the same escape hatch `@ts-ignore` is
 # on the other side and is banned for the same reason.
@@ -107,6 +140,19 @@ warn_unreachable = true
 # narrow the schema, or relax this to `disallow_any_expr = false` reasoning, or
 # per-module-override the generated package — but not a reason to discover it
 # there without warning.
+#
+# AND IT IS WORSE THAN THAT, measured by Task 3 on mypy 2.3.0: this flag reports
+# `Explicit "Any" is not allowed [explicit-any]` on the CLASS LINE of EVERY
+# pydantic model, including `class S(BaseModel): pass` with no annotation of its
+# own anywhere. The `Any` is in the `__init__` mypy synthesises from pydantic's
+# `dataclass_transform`, not in the checked file, and `plugins =
+# ["pydantic.mypy"]` above does not remove it. `metrika_core.settings` carries
+# one justified `# type: ignore[explicit-any]` for it, which `warn_unused_ignores`
+# will report the day mypy stops attributing a synthesised member to our source.
+#
+# That does NOT scale to Task 4, and Task 4 should not discover it either: a
+# GENERATED model cannot carry a hand-written suppression, so the choice there
+# is a `[[tool.mypy.overrides]]` on the generated package or dropping this flag.
 disallow_any_explicit = true
 # A suppression must name what it suppresses. `# type: ignore` bare is the
 # `@ts-ignore` of this side; with a code it is `@ts-expect-error`, which at
@@ -135,10 +181,36 @@ enable_error_code = ["ignore-without-code"]
 # `mypy --strict` reports `import-untyped` and the whole S3 surface degrades to
 # unchecked `Any` — in the one module the workers use to reach storage.
 # ADR-0027 obligation 3.
+# `testcontainers` is NOT in ADR-0027's table — that table covers what the six
+# tasks install to RUN the workers, and this runs a test. It is here rather than
+# mocked for the reason `packages/testing` exists on the Node side: a mocked S3
+# client proves `metrika_core.storage` calls a method, and the only thing that
+# module does is be a boundary. It ships `py.typed`, so `mypy --strict` checks
+# the test that uses it rather than degrading to `Any` (checked before adding),
+# and `requires_python >=3.10` covers 3.12. No extras: the `minio` extra pulls
+# the `minio` client package, and these tests reach MinIO through `boto3`
+# specifically, because `boto3` is what a worker will use.
 dev = [
   "ruff==0.16.2",
   "mypy==2.3.0",
   "pytest==9.1.1",
   "pytest-asyncio==1.4.0",
   "boto3-stubs[s3]==1.43.67",
+  "testcontainers==4.15.0",
 ]
+
+[tool.pytest.ini_options]
+# `pnpm verify` must stay runnable with no Docker daemon. That is a promise this
+# repository already makes out loud — `packages/testing/src/docker.ts` tells a
+# developer "Unit tests (`pnpm test:unit`) do not need Docker and are
+# unaffected" — and `metrika_core`'s storage suite starts a real MinIO
+# container, so it is marked and deselected here rather than left to fail
+# confusingly on a laptop with Docker closed.
+#
+# `-m` is `store`, so the `-m integration` in this package's `test:integration`
+# script overrides this rather than combining with it. The two selections are
+# complementary by construction: everything is either integration or not.
+markers = [
+  "integration: needs a Docker daemon; run via `pnpm --filter @metrika/workers run test:integration`",
+]
+addopts = "-m 'not integration'"
