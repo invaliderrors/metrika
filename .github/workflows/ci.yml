@@ -104,6 +104,20 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # `verify` is the only job that reaches apps/workers. Its four steps —
+      # format:check, lint, typecheck, test:unit — all run through turbo, and
+      # apps/workers defines every one of them as a `uv run …` shim. The other
+      # three jobs run `build` and `test:integration`, which that package does
+      # not define, so turbo skips it there and they need no uv.
+      #
+      # Pinned to the version in ADR-0027, like every other tool here. uv
+      # provisions its own CPython from .python-version, so there is
+      # deliberately no actions/setup-python step — a second interpreter
+      # source is a second thing to drift.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: '0.12.3'
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
