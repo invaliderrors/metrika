@@ -22,13 +22,13 @@ _Residual:_ a `LIKELY` inference that is wrong and is not questioned by the cust
 
 **P: High · I: High**
 
-PrusaSlicer's estimates are good for simple parts and can be materially off for complex ones. Pricing against them means margin erodes silently — there is no error, no alert, just a business that is less profitable than its spreadsheet says.
+The slicer's estimates are good for simple parts and can be materially off for complex ones. Pricing against them means margin erodes silently — there is no error, no alert, just a business that is less profitable than its spreadsheet says.
 
 _Mitigation:_ `ManufacturingJob.actualPrintSeconds` and `actualMassG` captured on every completed job; a scheduled calibration job comparing actuals to estimates by printer profile version, material and complexity band; an alert when median deviation exceeds 15%; corrections applied by publishing a new pricing rule set version. **Phase 11**, with the columns existing from Phase 10.
 
 _Residual:_ the first ~50 orders are priced against an uncalibrated model. Treat them explicitly as a calibration exercise and set the initial margin component conservatively.
 
-### R3 — PrusaSlicer AGPL obligations
+### R3 — Slicer AGPL obligations
 
 **P: Medium · I: High**
 

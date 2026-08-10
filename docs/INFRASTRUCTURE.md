@@ -78,7 +78,7 @@ Runtime task definition adds: `readonlyRootFilesystem: true`, a `tmpfs` scratch 
 
 ### Slicer worker
 
-Same shape, plus the PrusaSlicer binary installed by checksum-verified download, and `infra/docker/slicer/PROVENANCE.md` recording the upstream version, source URL, image digest and an unmodified-binary attestation — see [SLICING.md](./SLICING.md#3-licensing--an-open-launch-blocking-question).
+Same shape, plus the OrcaSlicer binary extracted from a checksum-verified AppImage, and `infra/docker/slicer/PROVENANCE.md` recording the upstream version, source URL, image digest and an unmodified-binary attestation — see [SLICING.md](./SLICING.md#3-licensing--an-open-launch-blocking-question).
 
 ---
 

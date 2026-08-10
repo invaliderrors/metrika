@@ -26,7 +26,7 @@
 | Unit ambiguity detection + confirmation                            |  ●  |     |     |        |
 | Print configuration with curated presets                           |  ●  |     |     |        |
 | Advanced parameter overrides (admin)                               |     |  ●  |     |        |
-| Real slicing (PrusaSlicer) + content-addressed cache               |  ●  |     |     |        |
+| Real slicing (OrcaSlicer) + content-addressed cache                |  ●  |     |     |        |
 | Versioned pricing engine + trace                                   |  ●  |     |     |        |
 | Admin pricing management + publish preview diff                    |  ●  |     |     |        |
 | Promotions, customer-specific pricing                              |     |  ●  |     |        |

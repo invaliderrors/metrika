@@ -2,8 +2,6 @@
 
 **Status:** Accepted · **Date:** 2026-08-09 · **Scopes:** the `@types/node` row of [ADR-0021](./0021-next-major-and-frontend-stack.md)'s "Registry state" table, and the version named in its obligation 1. ADR-0021's other pins, its remaining three obligations, and its fallback stand unchanged.
 
-> **On the number.** 0022 is [`0022-orcaslicer.md`](./0022-orcaslicer.md), written on the parallel `docs/orcaslicer` branch and not yet merged; 0023 is [`0023-eslint-plugin-resolution.md`](./0023-eslint-plugin-resolution.md). The gap at 0022 is that branch, not a mistake.
-
 ## Context
 
 ADR-0021 measured the frontend stack against the npm registry on 2026-08-09 and pinned each package at its latest published version. For fifteen of the sixteen rows that was the right rule. For `@types/node` it was not, and the ADR states `26.2.0` in three places:

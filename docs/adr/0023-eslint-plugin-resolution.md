@@ -2,8 +2,6 @@
 
 **Status:** Accepted · **Date:** 2026-08-09 · **Scopes:** the "Install `eslint-plugin-react` / `-react-hooks` / `-jsx-a11y` directly" bullet in [ADR-0021](./0021-next-major-and-frontend-stack.md)'s Alternatives section, and the corresponding sentence in its "Registry state" table caption. Everything else in ADR-0021 — the pins, the four obligations, the fallback — stands unchanged.
 
-> **On the number.** 0022 is [`0022-orcaslicer.md`](./0022-orcaslicer.md), written on the parallel `docs/orcaslicer` branch and not yet merged. The gap here is that branch, not a mistake.
-
 ## Context
 
 ADR-0021 rejected declaring the three ESLint plugins directly, and stated the reason as a general fact about pnpm:

@@ -13,7 +13,7 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 | [0005](./0005-prisma.md)                        | Prisma as ORM, confined to the persistence layer                                         | Accepted                              |
 | [0006](./0006-temporal.md)                      | Temporal Cloud for durable workflows                                                     | Accepted                              |
 | [0007](./0007-python-workers.md)                | Python for both geometry and slicing workers; workers have no database access            | Accepted                              |
-| [0008](./0008-prusaslicer.md)                   | PrusaSlicer CLI behind a `SlicerEngine` port                                             | Accepted, pending legal review        |
+| [0008](./0008-prusaslicer.md)                   | PrusaSlicer CLI behind a `SlicerEngine` port                                             | Superseded by ADR-0022                |
 | [0009](./0009-ts-rest-contracts.md)             | Zod as the single source of truth, delivered via ts-rest                                 | Superseded by ADR-0019                |
 | [0010](./0010-rest-and-sse.md)                  | REST over GraphQL; SSE over WebSockets until printer telemetry                           | Accepted                              |
 | [0011](./0011-outbox-not-kafka.md)              | Transactional outbox in Postgres, no message broker                                      | Accepted                              |
@@ -27,10 +27,7 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 | [0019](./0019-nestjs-zod-contracts.md)          | Zod as the single source of truth, delivered via `nestjs-zod`                            | Accepted, supersedes ADR-0009         |
 | [0020](./0020-internal-package-build-output.md) | Internal packages `apps/api` depends on emit compiled `dist/`, not source-only `exports` | Accepted, supersedes part of ADR-0001 |
 | [0021](./0021-next-major-and-frontend-stack.md) | Next.js 16 and the pinned frontend stack, gated on a measured spike                      | Accepted                              |
+| [0022](./0022-orcaslicer.md)                    | OrcaSlicer CLI behind the `SlicerEngine` port                                            | Accepted, supersedes ADR-0008         |
 | [0023](./0023-eslint-plugin-resolution.md)      | An ESLint plugin is declared where it is imported, and nowhere else                      | Accepted, scopes part of ADR-0021     |
 | [0024](./0024-types-node-pin.md)                | `@types/node` tracks the Node major in `.nvmrc`, not the registry's latest               | Accepted, scopes part of ADR-0021     |
 | [0025](./0025-radix-umbrella.md)                | `radix-ui` umbrella over `@radix-ui/react-slot`, because the shadcn registry emits it    | Accepted                              |
-
-**0022 is not missing.** It is `0022-orcaslicer.md`, written on the parallel
-`docs/orcaslicer` branch and not yet merged. The row appears when that branch
-does.
