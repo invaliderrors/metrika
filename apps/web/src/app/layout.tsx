@@ -26,9 +26,30 @@ import './globals.css';
  * ORIGIN, and normalising through `URL` also means a value that is not a
  * parseable URL fails here rather than emitting a hint browsers silently
  * ignore. The Zod schema already requires an `http(s)://` prefix; this is the
- * part it cannot check.
+ * part it cannot check — `http://` on its own satisfies that regex and is not a
+ * URL.
+ *
+ * The rethrow is what makes that second failure USABLE. `new URL('http://')`
+ * throws `TypeError [ERR_INVALID_URL]: Invalid URL`, which names neither the
+ * offending value nor the variable it came from; inside `next build` it surfaces
+ * as a failure to collect page data for `/` with no clue which of the
+ * environment's keys is wrong. Every other environment failure in this app
+ * arrives through `EnvValidationError` naming the key, and this one has no
+ * business being the exception.
  */
-const API_ORIGIN = new URL(clientEnv.NEXT_PUBLIC_API_BASE_URL).origin;
+function apiOriginFrom(value: string): string {
+  try {
+    return new URL(value).origin;
+  } catch (cause) {
+    throw new Error(
+      `NEXT_PUBLIC_API_BASE_URL is not a parseable URL: ${JSON.stringify(value)}. ` +
+        'It needs a host, not just a scheme — http://localhost:3001, not http://.',
+      { cause },
+    );
+  }
+}
+
+const API_ORIGIN = apiOriginFrom(clientEnv.NEXT_PUBLIC_API_BASE_URL);
 
 /**
  * Title and description come from the catalogue, so the browser tab and every

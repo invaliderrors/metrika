@@ -20,47 +20,78 @@ concurrency:
 # workspace, and both would start believing a stale build-info the moment one
 # is restored.
 
+# WORKFLOW-LEVEL, so that a job added later INHERITS these rather than
+# rediscovering their absence as a build failure. Every one of them was
+# per-job and identical across all three; that is a default nobody chose,
+# and the next job to be added is where it bites.
+#
+# That is not hypothetical. Plan 0B-2 Task 8 adds a `web` job, and its draft set
+# the two NEXT_PUBLIC_ keys on its E2E step only — which would have died one
+# step earlier, at Build, with a ZodError about environment configuration in a
+# job whose subject is Playwright. Hoisting is what makes that failure
+# impossible rather than merely documented.
+#
+# A job that needs a DIFFERENT value overrides it with its own `env:` block;
+# job-level wins over workflow-level. Nothing needs that today.
+#
+# Every measurement that used to live in the three per-job blocks is preserved
+# below, consolidated rather than triplicated. Leaving three copies of a comment
+# beside a variable none of them still sets would read as if they did.
+env:
+  # ── DATABASE_ADMIN_URL ────────────────────────────────────────────────────
+  # packages/database's `build` runs `prisma generate`, and schema.prisma's
+  # datasource is `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is what
+  # `--env-file-if-exists` in the root db:* scripts is for — so if anything
+  # resolves that variable, the value has to come from here.
+  #
+  # MEASURED on Prisma 6.19.3, from a clean clone with the variable unset:
+  # `pnpm build` exits 0 and generates the client without complaint, so
+  # `generate` does NOT resolve the datasource url. This is therefore not
+  # load-bearing today. It is set anyway, because every other Prisma subcommand
+  # (`migrate`, `validate`, `studio`) does resolve it, the failure mode when one
+  # is added is an unhelpful `Environment variable not found:
+  # DATABASE_ADMIN_URL`, and a URL nothing connects to costs nothing. Do not
+  # read this as proof the build needs it.
+  #
+  # Nothing in the `integration` job connects to it either: the Testcontainers
+  # harness runs `prisma migrate deploy` against the real, container-derived URL,
+  # which it passes explicitly. The `openapi` job has no Postgres at all —
+  # `emit-openapi.ts` never calls `app.init()`, so no lifecycle hook fires and
+  # `PrismaService.$connect()` is never reached; the variables its own step sets
+  # have to be present and well-formed, not reachable.
+  DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+
+  # ── NEXT_PUBLIC_* ─────────────────────────────────────────────────────────
+  # UNLIKE the variable above, these two ARE load-bearing.
+  #
+  # `apps/web/src/config/env.ts` parses `clientEnv` at module scope and
+  # `src/app/layout.tsx` imports it, so `next build` resolves both keys while
+  # collecting page data. MEASURED, with them unset: exit 1, "Failed to collect
+  # page data for /", a ZodError naming both. That is the intended behaviour — a
+  # misconfigured deployment must fail at build rather than on a user's first
+  # render — which makes supplying them here part of the contract rather than a
+  # workaround.
+  #
+  # Every job here needs them, and not only through its own `pnpm build` step:
+  # MEASURED, `turbo run test:unit` and `turbo run test:integration` each
+  # schedule `@metrika/web#build`, because both declare
+  # `dependsOn: ["^build", "build"]`.
+  #
+  # Supplied here rather than through a `.env` file because CI has none:
+  # `pnpm build` is `node --env-file-if-exists=.env …`, the `-if-exists` half is
+  # what makes a missing file fine, and a real environment variable wins over the
+  # file anyway. So CI and a developer's `pnpm build` take the same path with
+  # different sources.
+  #
+  # NOT SECRETS, and they never can be: `NEXT_PUBLIC_` values are compiled into
+  # the JavaScript every visitor downloads. See the warning in `.env.example`
+  # before adding a third key here.
+  NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
+  NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
+
 jobs:
   verify:
     runs-on: ubuntu-latest
-    env:
-      # packages/database's `build` runs `prisma generate`, and schema.prisma's
-      # datasource is `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is
-      # what `--env-file-if-exists` in the root db:* scripts is for — so if
-      # anything resolves that variable, the value has to come from here.
-      #
-      # MEASURED on Prisma 6.19.3, from a clean clone with the variable unset:
-      # `pnpm build` exits 0 and generates the client without complaint, so
-      # `generate` does NOT resolve the datasource url. This block is therefore
-      # not load-bearing today. It is set anyway, in all three jobs, because
-      # every other Prisma subcommand (`migrate`, `validate`, `studio`) does
-      # resolve it, the failure mode when one is added is an unhelpful
-      # `Environment variable not found: DATABASE_ADMIN_URL`, and a URL nothing
-      # connects to costs nothing. Do not read this as proof the build needs it.
-      DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
-
-      # UNLIKE the variable above, these two ARE load-bearing, and every job
-      # that runs `pnpm build` needs them.
-      #
-      # `apps/web/src/config/env.ts` parses `clientEnv` at module scope and
-      # `src/app/layout.tsx` imports it, so `next build` resolves both keys
-      # while collecting page data. MEASURED, with them unset: exit 1,
-      # "Failed to collect page data for /", a ZodError naming both. That is the
-      # intended behaviour — a misconfigured deployment must fail at build
-      # rather than on a user's first render — which makes supplying them here
-      # part of the contract rather than a workaround.
-      #
-      # Set at the job level rather than through a `.env` file because CI has
-      # none: `pnpm build` is `node --env-file-if-exists=.env …`, the
-      # `-if-exists` half is what makes a missing file fine, and a real
-      # environment variable wins over the file anyway. So this job and a
-      # developer's `pnpm build` take the same path with different sources.
-      #
-      # NOT SECRETS, and they never can be: `NEXT_PUBLIC_` values are compiled
-      # into the JavaScript every visitor downloads. See the warning in
-      # `.env.example` before adding a third key here.
-      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
-      NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
     steps:
       - uses: actions/checkout@v4
 
@@ -211,21 +242,12 @@ jobs:
   # and `test:unit` are all green for every one of them.
   integration:
     runs-on: ubuntu-latest
-    env:
-      # Same variable, same reasoning as the `verify` job above — read the note
-      # there before assuming this is what makes the build work. Note also that
-      # nothing in this job connects to it: the Testcontainers harness runs
-      # `prisma migrate deploy` with the real, container-derived URL, which it
-      # passes explicitly.
-      DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
-      # Load-bearing here too, for the reason spelled out in the `verify` job.
-      # MEASURED: `turbo run test:integration` schedules `@metrika/web#build`
-      # (`test:integration` declares `dependsOn: ["^build", "build"]`, and turbo
-      # materialises the task for every package), so this job fails on the web
-      # build before it reaches a container if these are absent — not only on
-      # the `pnpm build` step above.
-      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
-      NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
+    # No `env:` block. `DATABASE_ADMIN_URL` and both `NEXT_PUBLIC_` keys are
+    # inherited from the workflow-level block at the top of this file, where the
+    # measurements behind each of them live — including the one specific to this
+    # job: `turbo run test:integration` schedules `@metrika/web#build`, so an
+    # absent `NEXT_PUBLIC_*` fails this job on the web build before it ever
+    # reaches a container, not only on the `pnpm build` step below.
     steps:
       - uses: actions/checkout@v4
 
@@ -253,13 +275,10 @@ jobs:
 
   openapi:
     runs-on: ubuntu-latest
-    env:
-      # Same variable, same reasoning as the `verify` job — see the note there.
-      DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
-      # Same two, same reasoning: this job runs `pnpm build`, which builds
-      # apps/web, which now resolves both keys.
-      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
-      NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
+    # No `env:` block — inherited from the workflow-level one, same as
+    # `integration`. The step-level `env:` further down is a different thing and
+    # deliberately stays there: `DATABASE_URL` and `HEALTH_DEEP_TOKEN` are needed
+    # by exactly one step, and scoping them to it is what says so.
     steps:
       - uses: actions/checkout@v4
 

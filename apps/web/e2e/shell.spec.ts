@@ -53,8 +53,21 @@ const API_ORIGIN = 'http://127.0.0.1:3001';
  * next-intl renders a message's own key path when the message is missing, so
  * `app.tagline` appearing in the page body is the signature of a catalogue that
  * did not resolve. Bounded so it cannot fire on prose.
+ *
+ * The namespace alternation is DERIVED from the catalogue, not written out.
+ * Hardcoding `(?:app|shell)` would leave a third namespace silently uncovered —
+ * the assertion would keep passing while saying nothing about it, which is the
+ * failure shape this whole file is trying to avoid.
+ *
+ * Read off `rawCatalogue` rather than `messages`, and that distinction is the
+ * whole point: Zod strips unknown keys, so `Object.keys(messages)` can only ever
+ * return the two namespaces `Catalogue` declares — exactly the hardcoding this
+ * is meant to remove. `Catalogue.parse` above has already guaranteed at least
+ * `app` and `shell`, so the alternation cannot be empty (an empty group would
+ * match any `.word` and fail the page for no reason).
  */
-const RAW_MESSAGE_KEY = /\b(?:app|shell)\.[a-zA-Z][\w-]*/;
+const NAMESPACES = Object.keys(z.record(z.string(), z.unknown()).parse(rawCatalogue));
+const RAW_MESSAGE_KEY = new RegExp(String.raw`\b(?:${NAMESPACES.join('|')})\.[a-zA-Z][\w-]*`);
 
 test('the shell renders the heading from the catalogue', async ({ page }) => {
   await page.goto('/');

@@ -136,3 +136,85 @@ describe('message catalogues', () => {
     expect(empties).toEqual([]);
   });
 });
+
+/** The value at a dotted path, or `undefined` if the path does not resolve. */
+function valueAt(path: string, catalogue: unknown): unknown {
+  return path
+    .split('.')
+    .reduce<unknown>(
+      (acc, k) =>
+        typeof acc === 'object' && acc !== null ? (acc as Record<string, unknown>)[k] : undefined,
+      catalogue,
+    );
+}
+
+/**
+ * Short values are skipped, and the threshold is the whole design of this check.
+ *
+ * `app.name` is `"Metrika"`. Seven characters, and a word that legitimately
+ * appears in package names, comments and identifiers — matching on it would fail
+ * the build over prose rather than over a duplicated string. This is the same
+ * trade `test/tailwind-build.test.ts` reasons about when it picks `p-[13px]`
+ * over `italic` for its sentinel: a check that fires on ordinary English is a
+ * check that gets deleted.
+ *
+ * MEASURED at the time of writing: the string `Metrika` appears NOWHERE under
+ * `src/`, so the filter is not covering up a present collision — it is
+ * insurance against a future one. State the cost plainly: a hardcoded copy of a
+ * value shorter than this is invisible here. Both current offenders of interest
+ * are far above it (`shell.skipToContent` is 19 characters,
+ * `app.tagline` is 68).
+ */
+const MIN_LITERAL_LENGTH = 12;
+
+/**
+ * THE HOLE THAT NO BROWSER ASSERTION CAN CLOSE.
+ *
+ * `e2e/shell.spec.ts` compares the rendered DOM against this catalogue, which
+ * catches the copy and the catalogue disagreeing. What it cannot catch — and
+ * what no end-to-end test ever could — is `{t('tagline')}` replaced by the same
+ * sentence typed into `page.tsx`: the two produce byte-identical DOM, so a
+ * browser has nothing to look at. MEASURED: that exact mutation leaves all seven
+ * Playwright tests green.
+ *
+ * It is undetectable by a BROWSER. It is not undetectable. next-intl's whole
+ * value is that copy lives in one place, and a literal under `src/` that also
+ * appears in the catalogue is a second place — visible to anything that reads
+ * the text, which this file already does. MEASURED against that same mutation:
+ * this test reports
+ * `src/app/page.tsx :: app.tagline :: Cotizaciones de manufactura para …`.
+ *
+ * Comments are stripped first, for the reason the header of this file gives: a
+ * doc comment quoting a piece of copy on purpose is not a second source for it.
+ * Both catalogues are scanned, not just the shipped one — a hardcoded English
+ * string is the same defect, and the two files carry the same key set anyway.
+ */
+describe('the shipped copy', () => {
+  const shipped = [esCO, enUS].flatMap((catalogue) =>
+    keyPaths(catalogue)
+      .map((path) => ({ path, value: valueAt(path, catalogue) }))
+      .filter((entry): entry is { path: string; value: string } => typeof entry.value === 'string')
+      .filter(({ value }) => value.length >= MIN_LITERAL_LENGTH),
+  );
+
+  it('has values long enough to check, so a raised threshold cannot make this vacuous', () => {
+    // A threshold above every value in the catalogues would empty `shipped` and
+    // turn the assertion below into `[] === []`. This is what notices.
+    expect(shipped.map(({ path }) => path)).toContain('app.tagline');
+    expect(shipped.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('never appears as a literal under src/, which would be a second source for it', () => {
+    const offenders = filesUnder(SRC, ['.ts', '.tsx']).flatMap((file) => {
+      const source = withoutComments(readFileSync(file, 'utf8'));
+      return shipped
+        .filter(({ value }) => source.includes(value))
+        .map(({ path, value }) => `${file} :: ${path} :: ${value}`);
+    });
+
+    expect(
+      offenders,
+      'this copy is in the catalogue too — render it with t() instead of duplicating it',
+    ).toEqual([]);
+  });
+});
