@@ -19,25 +19,39 @@ const WEB_ROOT = new URL('..', import.meta.url);
  * returning this shape, every assertion below fails loudly instead of quietly
  * comparing `undefined` against the expected value.
  */
-async function resolvedConfig(): Promise<Record<string, unknown>> {
+async function resolvedConfig(file = 'src/app/page.tsx'): Promise<Record<string, unknown>> {
   const eslint = new ESLint({ cwd: WEB_ROOT.pathname });
-  const config: unknown = await eslint.calculateConfigForFile('src/app/page.tsx');
+  const config: unknown = await eslint.calculateConfigForFile(file);
   if (typeof config !== 'object' || config === null) {
     throw new Error('calculateConfigForFile did not return a config object');
   }
   return config as Record<string, unknown>;
 }
 
-async function resolvedSeverity(ruleId: string): Promise<unknown> {
-  const rules: unknown = (await resolvedConfig())['rules'];
+/**
+ * `Array.isArray` narrows `unknown` to `any[]`, which is an unsafe return the
+ * moment the array is handed back rather than immediately indexed. This guard
+ * lands on `unknown[]` instead, so the elements stay unknown until Zod parses
+ * them — no cast, and nothing to justify to the linter.
+ */
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+async function resolvedRule(ruleId: string, file?: string): Promise<unknown[]> {
+  const rules: unknown = (await resolvedConfig(file))['rules'];
   if (typeof rules !== 'object' || rules === null) {
     throw new Error('calculateConfigForFile returned a non-object rules map');
   }
   const entry = (rules as Record<string, unknown>)[ruleId];
-  if (!Array.isArray(entry)) {
+  if (!isUnknownArray(entry)) {
     throw new Error(`${ruleId} did not resolve to a rule entry — it resolved to ${String(entry)}`);
   }
-  return entry[0];
+  return entry;
+}
+
+async function resolvedSeverity(ruleId: string): Promise<unknown> {
+  return (await resolvedRule(ruleId))[0];
 }
 
 /**
@@ -65,6 +79,86 @@ describe('apps/web eslint composition', () => {
 
   it('keeps no-unused-expressions an error', async () => {
     expect(await resolvedSeverity('@typescript-eslint/no-unused-expressions')).toBe(2);
+  });
+});
+
+const RestrictedImportOptions = z.object({
+  paths: z.array(z.object({ name: z.string() })),
+  patterns: z.array(
+    z.object({ group: z.array(z.string()).optional(), regex: z.string().optional() }),
+  ),
+});
+const RestrictedSyntaxOptions = z.array(z.object({ selector: z.string() }));
+
+/**
+ * The three boundary zones, asserted on THIS config rather than on the fixture
+ * config in packages/eslint-config.
+ *
+ * The fixtures there prove the rules reject what they should. They cannot prove
+ * this file still enables them: all three profiles collide on rule ids —
+ * `webBoundary`/`featureBoundary` on `no-restricted-imports`,
+ * `webBoundary`/`serverActionBoundary` on `no-restricted-syntax` — and flat
+ * config REPLACES a rule's options wholesale when a later entry supplies
+ * options. Reorder the three spreads in `eslint.config.js`, or delete one, and
+ * the fixture suite stays green while apps/web quietly loses a control. That
+ * exact failure has happened in this repo: a second `no-restricted-imports`
+ * block in apps/api silently dropped the earlier `@prisma/client` ban, with no
+ * error and no warning.
+ *
+ * Read off `calculateConfigForFile`, which runs ESLint's own merge without
+ * linting anything, so these assert the merged OUTCOME rather than the source
+ * order — a future refactor that reaches the same outcome differently stays
+ * green, and one that does not goes red. Zod because a resolved config is
+ * external data (`calculateConfigForFile` is typed `any`).
+ */
+describe('apps/web boundary zones survive the flat-config merge', () => {
+  it('bans the server-only packages everywhere in the app', async () => {
+    const [, options] = await resolvedRule('no-restricted-imports');
+    const names = RestrictedImportOptions.parse(options).paths.map((p) => p.name);
+
+    expect(names).toContain('@metrika/database');
+    expect(names).toContain('@metrika/pricing-engine');
+  });
+
+  it("carries BOTH the dynamic-import selectors and the 'use server' selector on an app file", async () => {
+    const [, ...options] = await resolvedRule('no-restricted-syntax');
+    const selectors = RestrictedSyntaxOptions.parse(options).map((o) => o.selector);
+
+    // Two ImportExpression selectors, not one: a template-literal specifier is
+    // a TemplateLiteral rather than a Literal, so the literal-only selector
+    // lints `import(`@metrika/database`)` clean on its own.
+    expect(selectors.filter((s) => s.startsWith('ImportExpression'))).toHaveLength(2);
+    expect(selectors.some((s) => s.includes("'use server'"))).toBe(true);
+  });
+
+  it("keeps the dynamic-import ban inside a sanctioned actions.ts, and drops only 'use server'", async () => {
+    const [, ...options] = await resolvedRule(
+      'no-restricted-syntax',
+      'src/app/settings/actions.ts',
+    );
+    const selectors = RestrictedSyntaxOptions.parse(options).map((o) => o.selector);
+
+    // The ADR-0015 exemption is expressed as a non-match, not as
+    // `'no-restricted-syntax': 'off'`. Written the other way it would take the
+    // dynamic-import ban down with it, in the one kind of file that runs on the
+    // server and can reach the database.
+    expect(selectors.filter((s) => s.startsWith('ImportExpression'))).toHaveLength(2);
+    expect(selectors.some((s) => s.includes("'use server'"))).toBe(false);
+  });
+
+  it('carries BOTH the package ban and the cross-feature ban inside src/features', async () => {
+    // The clobber assertion proper. `featureBoundary` wins the merge here
+    // because it is composed last and matches src/features/**, so its entry has
+    // to re-declare the package bans — and it is src/features/** where nearly
+    // all of this app eventually lives.
+    const [, options] = await resolvedRule(
+      'no-restricted-imports',
+      'src/features/models/components/ModelCard.tsx',
+    );
+    const parsed = RestrictedImportOptions.parse(options);
+
+    expect(parsed.paths.map((p) => p.name)).toContain('@metrika/database');
+    expect(parsed.patterns.some((p) => p.regex !== undefined)).toBe(true);
   });
 });
 
