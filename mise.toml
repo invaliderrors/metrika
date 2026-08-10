@@ -1,3 +1,14 @@
 [tools]
 node = "24"
 python = "3.12"
+# The one exact pin in this file, deliberately. `node` and `python` float their
+# major here because the exact patch lives in a file the ecosystem's own tools
+# already read — `.nvmrc` at 24.19.0, `.python-version` at 3.12.13. `uv` has no
+# such companion file, so its version has to be carried here or nowhere.
+#
+# "Nowhere" is not hypothetical: ADR-0027's spike found `uv` reachable ONLY
+# through a global `~/.config/mise/config.toml` carrying `uv = "latest"` — an
+# unpinned, per-machine version no checkout reproduces and no reviewer ever saw.
+# A project-scoped entry is what makes `uv.lock` reproducible on a second
+# machine. CI installs the same version via `astral-sh/setup-uv`.
+uv = "0.12.3"

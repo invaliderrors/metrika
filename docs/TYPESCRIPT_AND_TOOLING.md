@@ -298,7 +298,7 @@ Every suppression must carry a justification, enforced mechanically:
 
 `--report-unused-disable-directives` is on, and a CI script fails on any `eslint-disable` or `@ts-expect-error` without a `--` justification. `@ts-ignore` is banned outright — `@ts-expect-error` at least fails when the underlying error disappears.
 
-There is no warning tier; a rule is either worth enforcing or it is off. `--max-warnings=0` lives in the root `lint` script (`turbo run lint -- --max-warnings=0`), and CI's `Lint` step is a bare `pnpm lint`, so the local gate and the CI gate are the same command — see §7.
+There is no warning tier; a rule is either worth enforcing or it is off. `--max-warnings=0` lives in the root `lint` script, and CI's `Lint` step is a bare `pnpm lint`, so the local gate and the CI gate are the same command — see §7, which also explains why that script is now two `turbo run lint` invocations rather than one (the flag is an ESLint flag, and `ruff` exits 2 on it).
 
 ---
 
@@ -320,7 +320,9 @@ The version is pinned **exactly** (not `^`), because a Prettier patch release th
 
 The reason it is a test and not a convention: this repository has twice shipped a version outside a peer range and lost a whole class of checking silently — `typescript-eslint`'s type-aware rules once, and `eslint-plugin-react`'s under ESLint 10. A range is how that happens without anyone choosing it.
 
-Python: `ruff format` + `ruff check` with an equivalently strict rule set, and `mypy --strict` on `apps/workers`. The Python side gets the same treatment as TypeScript — an untyped worker is exactly as capable of producing a wrong price.
+Python: `ruff format` + `ruff check` with an equivalently strict rule set, and `mypy --strict` on `apps/workers`. The Python side gets the same treatment as TypeScript — an untyped worker is exactly as capable of producing a wrong price. Both live in `apps/workers/pyproject.toml`: ruff selects `E F I N UP B A C4 SIM ARG PTH RUF ASYNC S` (the Node side runs typescript-eslint's strict and stylistic sets plus type-aware rules; this is the closest equivalent ruff offers), and `[tool.mypy]` carries `strict`, `warn_unreachable` and `disallow_any_explicit` — the last being the Python half of "no `any`, no exceptions", since `strict` alone still permits a hand-written one.
+
+**And the pin gate covers `pyproject.toml` too.** `uv add` writes `>=` ranges rather than pins, so the same test walks every `pyproject.toml` in the repository and fails on `>=`, `~=`, `!=`, a wildcard, a comma-joined range or a bare name; `[project] requires-python` is deliberately exempt, because it is the interpreter range and `==3.12.*` is its correct shape. Two non-vacuity tests guard the small TOML reader, for the reason the YAML one is guarded: a reader that quietly matches nothing is indistinguishable from a repository with nothing to check. `uv.lock` is committed and installs run `--frozen` — see [ADR-0027](./adr/0027-python-toolchain.md), where a bare `uv sync` re-resolving the whole table is named as the Python-side twin of a lockfile-less `pnpm install`.
 
 ---
 
@@ -360,9 +362,12 @@ This keeps the inner loop free of a build step everywhere it safely can: editing
 
 ```
 .nvmrc            24.x  (pinned to the exact LTS patch)
-.python-version   3.12.x
+.python-version   3.12.x   (root, and again in apps/workers — uv reads the nearest one)
+mise.toml         node = "24", python = "3.12", uv = "0.12.3"
 package.json      "packageManager": "pnpm@x.y.z", "engines": { "node": ">=24 <25" }
 ```
+
+**`uv` is the one exact version in `mise.toml`, and the asymmetry is deliberate.** `node` and `python` float their major there because the exact patch lives in a file the ecosystem's own tools already read; `uv` has no companion file, so the version is carried in `mise.toml` or nowhere. "Nowhere" is what [ADR-0027](./adr/0027-python-toolchain.md)'s spike actually found — `uv` reachable only through a global `~/.config/mise/config.toml` at `latest`, an unpinned per-machine version no checkout reproduces. CI installs the same version through `astral-sh/setup-uv` and needs no `actions/setup-python` step at all: `uv` provisions its own CPython from `.python-version`.
 
 **Node is pinned to 24 (Krypton), not 22.** Resolved from nodejs.org's release schedule: v24 is **Active LTS**, v22 has moved to **Maintenance LTS**, and v26 is **Current** — production must not run a Current release. Revisit this pin once v26 reaches Active LTS.
 
@@ -383,7 +388,7 @@ The root manifest, as it stands:
   "preinstall": "node scripts/check-node-version.mjs",
   "build": "node --env-file-if-exists=.env scripts/turbo.mjs run build",
   "dev": "node --env-file-if-exists=.env scripts/turbo.mjs run dev",
-  "lint": "turbo run lint -- --max-warnings=0",
+  "lint": "turbo run lint --filter=!@metrika/workers -- --max-warnings=0 && turbo run lint --filter=@metrika/workers",
   "lint:fix": "turbo run lint -- --fix",
   "typecheck": "turbo run typecheck",
   "test:unit": "node --env-file-if-exists=.env scripts/turbo.mjs run test:unit",
@@ -396,21 +401,23 @@ The root manifest, as it stands:
   "db:deploy": "node --env-file-if-exists=.env scripts/prisma.mjs migrate deploy",
   "db:reset": "node --env-file-if-exists=.env scripts/prisma.mjs migrate reset --force",
   "db:studio": "node --env-file-if-exists=.env scripts/prisma.mjs studio",
-  "format": "prettier --write .",
-  "format:check": "prettier --check .",
+  "format": "prettier --write . && turbo run format",
+  "format:check": "prettier --check . && turbo run format:check",
   "verify": "pnpm format:check && pnpm build && pnpm lint && pnpm typecheck && pnpm test:unit",
   "ci": "pnpm verify",
 }
 ```
 
-Four of them are not the bare `turbo run <task>` they look like they should be, and each deviation is load-bearing:
+Six of them are not the bare `turbo run <task>` they look like they should be, and each deviation is load-bearing:
 
 - **`verify` runs `build`, as its second step.** It is not `format:check + lint + typecheck + test:unit`; anything describing it that way is out of date. `lint` and `typecheck` both `dependsOn: ["^build"]`, so a workspace dependency that does not compile has to fail as a build rather than as a confusing downstream type error — and `apps/web`'s `next build` is the only gate that sees a missing `NEXT_PUBLIC_` key, an unresolvable `@metrika/contracts` import, or a Tailwind sheet that emits nothing.
 - **`build`, `dev`, `test:unit` and `test:integration` go through `scripts/turbo.mjs` under `node --env-file-if-exists=.env`.** `apps/web/src/app/layout.tsx` imports `clientEnv`, which parses `NEXT_PUBLIC_*` at module scope, and all four of those tasks schedule `@metrika/web#build`. Without the root `.env` loaded into the process they fail on a missing variable. The wrapper is `spawnSync` plus `process.exit(status ?? 1)`: it forwards its arguments unchanged and swallows nothing, including a signal-killed child. `--env-file-if-exists` cannot be passed to `next build` directly — Next propagates its exec argv into `NODE_OPTIONS` for its workers, and Node rejects the flag there.
 - **`lint` carries `--max-warnings=0` itself.** CI's `Lint` step is a bare `pnpm lint`, so a developer's `pnpm verify` and CI run the identical command. The flag used to live only in the workflow, which made `pnpm verify` systematically weaker than CI: every warning-severity rule was invisible locally, and that bit twice during Plan 0B-2 alone. Two places to change is how the two drift apart.
+- **`lint` is two `turbo run lint` invocations, split on `@metrika/workers`.** Turbo forwards everything after `--` to _every_ task it schedules, and `--max-warnings=0` is an ESLint flag: MEASURED, `uv run ruff check . --max-warnings=0` exits **2** with `unexpected argument '--max-warnings' found`, so a single invocation cannot cover both languages. The flag stays in the root script rather than moving into each package's own `lint` script — seven copies of it is seven chances to forget one, and a forgotten copy fails _silently_, by making warnings invisible in that package. `lint:fix` needs no split, because `--fix` is valid for `eslint` and `ruff` alike.
+- **`format` and `format:check` are Prettier at the root _plus_ `turbo run format[:check]`.** Prettier owns every language it can parse and runs once over the whole tree; the turbo half exists for the languages it cannot, which today means `ruff format` in `apps/workers` and nothing else. It is a turbo task rather than `pnpm --filter @metrika/workers run format:check` for a measured reason: `pnpm --filter <no-match> run <script>` exits **0**, so a package rename would delete the Python half of `format:check` from `pnpm verify` in silence. `turbo run` exits **1** on a filter that matches nothing.
 - **`db:*` go through `scripts/prisma.mjs`** rather than `pnpm --filter @metrika/database …`, for the same environment reason plus one more: they pass `--schema` explicitly, because a bare `pnpm exec prisma` inside `packages/database` cannot find `DATABASE_ADMIN_URL`. `db:reset` is the destructive one.
 
-**Not yet created**, and named here so their absence is not mistaken for an omission: `test:e2e` (a package script only — `pnpm --filter @metrika/web test:e2e`; a root one would put a chromium download in everyone's inner loop), `db:seed` and `contracts:emit` (Plan 0B-3), and the `ruff` half of `format`/`format:check` (there is no `apps/workers` to format yet). There is no aggregate `test` script either; `test:unit` and `test:integration` are run by name, and only the second one needs Docker.
+**Not yet created**, and named here so their absence is not mistaken for an omission: `test:e2e` (a package script only — `pnpm --filter @metrika/web test:e2e`; a root one would put a chromium download in everyone's inner loop), and `db:seed` and `contracts:emit` (Plan 0B-3). The `ruff` half of `format`/`format:check` used to be on this list and no longer is: `apps/workers` exists, and all five of `lint`, `typecheck`, `test:unit`, `format` and `format:check` reach it. There is no aggregate `test` script either; `test:unit` and `test:integration` are run by name, and only the second one needs Docker.
 
 ---
 

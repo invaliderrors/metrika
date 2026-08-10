@@ -3,7 +3,7 @@
 > Target: clone to a working end-to-end quote flow in five commands, verified by CI on
 > a clean checkout. **Not yet reachable** — there is no quote flow to run: `apps/api` is
 > a health-probe skeleton, `apps/web` is a one-page localised shell that calls no API,
-> and `apps/workers` does not exist. What is reachable today is a clean clone to a
+> and `apps/workers` is a toolchain with no workers in it yet. What is reachable today is a clean clone to a
 > running API with a migrated database and a web shell that renders, and CI verifies
 > that across four jobs (`verify`, `integration`, `web`, `openapi`). See §2.
 
@@ -11,14 +11,14 @@
 
 ## 1. Prerequisites
 
-| Tool   | Version                | Install                                                                  |
-| ------ | ---------------------- | ------------------------------------------------------------------------ |
-| mise   | latest                 | `curl https://mise.run \| sh` — manages Node and Python from `mise.toml` |
-| Node   | from `.nvmrc`          | `mise install`                                                           |
-| Python | from `.python-version` | `mise install`                                                           |
-| pnpm   | from `packageManager`  | `corepack enable`                                                        |
-| uv     | latest                 | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                       |
-| Docker | 24+                    | Docker Desktop or OrbStack                                               |
+| Tool   | Version                | Install                                                                      |
+| ------ | ---------------------- | ---------------------------------------------------------------------------- |
+| mise   | latest                 | `curl https://mise.run \| sh` — manages Node, Python and uv from `mise.toml` |
+| Node   | from `.nvmrc`          | `mise install`                                                               |
+| Python | from `.python-version` | `mise install`                                                               |
+| pnpm   | from `packageManager`  | `corepack enable`                                                            |
+| uv     | from `mise.toml`       | `mise install`                                                               |
+| Docker | 24+                    | Docker Desktop or OrbStack                                                   |
 
 **Docker is not optional.** It runs the local stack (`pnpm infra:up`) _and_ every
 integration test: `pnpm test:integration` starts its own Postgres through
@@ -28,6 +28,8 @@ change to `packages/database` or `apps/api` cannot be verified without it.
 
 `mise` is recommended over nvm + pyenv because a polyglot repository with two version managers has two ways to be subtly wrong. `.nvmrc` and `.python-version` are committed anyway so nobody is forced to adopt it.
 
+**`uv` is no longer a `curl | sh` install**, and the change is not cosmetic: [ADR-0027](./adr/0027-python-toolchain.md)'s spike found `uv` on that machine reachable only through a _global_ `~/.config/mise/config.toml` carrying `uv = "latest"` — an unpinned, unreviewed, per-machine version that no checkout reproduces. `mise.toml` now pins it exactly (`uv = "0.12.3"`), which is what makes `uv.lock` mean the same thing on a second machine. Without `mise` on `PATH`, `pnpm lint`, `pnpm typecheck`, `pnpm test:unit`, `pnpm format` and `pnpm format:check` all fail in `apps/workers` with `uv: command not found`; a project-local install of the same version works too, but a global `latest` is the thing to avoid.
+
 ---
 
 ## 2. Getting running
@@ -36,7 +38,7 @@ Working today, in this order — every line below runs on a fresh clone:
 
 ```bash
 git clone git@github.com:<org>/metrika.git && cd metrika
-mise install                    # Node + Python at the pinned versions
+mise install                    # Node + Python + uv at the pinned versions
 pnpm install --frozen-lockfile  # workspace dependencies
 cp .env.example .env            # every value works out of the box for local dev
                                 # `.env` is the ONLY local environment file — see §8
