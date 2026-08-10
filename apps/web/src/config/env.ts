@@ -66,10 +66,14 @@ export function loadServerEnv(): ServerEnv {
  * `undefined` in the browser. A loop over a key list would be tidier and would
  * silently ship a broken client bundle.
  *
- * Note the phrasing above avoids writing the computed form out. That is not
- * squeamishness: `test/env-inlining.test.ts` greps THIS FILE's text for it, and
- * a regex over source cannot tell a comment from code. Describing the banned
- * form in prose is the cost of a check cheap enough to actually run.
+ * `test/env-inlining.test.ts` is what holds that. It is a WHITELIST, not a list
+ * of banned shapes: it strips comments, removes the three sanctioned reads
+ * (`process.env.NEXT_PUBLIC_API_BASE_URL`,
+ * `process.env.NEXT_PUBLIC_DEFAULT_LOCALE` and the server half's
+ * `parseServerEnv(process.env)`) and requires that no `process.env` remains
+ * anywhere in this module. So every indirection above is caught by construction
+ * rather than by a regex per shape — including the alias, which a per-shape
+ * check missed. Adding a key means adding a line to that list.
  *
  * The two accesses below compile only because `./process-env.d.ts` declares
  * these keys on `NodeJS.ProcessEnv`; without it `noPropertyAccessFromIndexSignature`
