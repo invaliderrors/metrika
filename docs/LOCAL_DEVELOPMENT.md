@@ -2,9 +2,10 @@
 
 > Target: clone to a working end-to-end quote flow in five commands, verified by CI on
 > a clean checkout. **Not yet reachable** — there is no quote flow to run: `apps/api` is
-> a health-probe skeleton and `apps/web` and `apps/workers` do not exist. What is
-> reachable today is a clean clone to a running API with a migrated database, and CI
-> verifies that across three jobs (`verify`, `integration`, `openapi`). See §2.
+> a health-probe skeleton, `apps/web` is a one-page localised shell that calls no API,
+> and `apps/workers` does not exist. What is reachable today is a clean clone to a
+> running API with a migrated database and a web shell that renders, and CI verifies
+> that across four jobs (`verify`, `integration`, `web`, `openapi`). See §2.
 
 ---
 
@@ -42,19 +43,29 @@ cp .env.example .env            # every value works out of the box for local dev
 
 pnpm infra:up                   # postgres, redis, minio, mailpit — waits for healthy
 pnpm db:deploy                  # apply committed migrations (prisma migrate deploy)
-pnpm --filter @metrika/api dev  # the API, on API_PORT (3001 by default)
+pnpm dev                        # every runtime that exists: apps/api on API_PORT
+                                # (3001) and apps/web on 3000. One at a time:
+                                #   pnpm --filter @metrika/api dev
+                                #   pnpm --filter @metrika/web dev
 
 pnpm verify                     # the pre-push gate
 pnpm test:integration           # Testcontainers; needs Docker, not `infra:up`
 ```
 
-`pnpm db:seed` and a `pnpm dev` that starts every runtime at once do not exist
-yet. `pnpm db:migrate` (`prisma migrate dev`) is for authoring a new migration;
-`pnpm db:deploy` is what a fresh clone wants.
+`pnpm dev` covers the two Node runtimes; the Python workers join it in Plan
+0B-3. `pnpm db:seed` does not exist yet. `pnpm db:migrate`
+(`prisma migrate dev`) is for authoring a new migration; `pnpm db:deploy` is
+what a fresh clone wants.
+
+`WEB_PORT` is in `.env` but does **not** reach `pnpm dev`: `apps/web`'s scripts
+expand it in the shell (`next dev --port ${WEB_PORT:-3000}`), and turbo's strict
+env mode drops any variable a task does not declare — measured, a task sees both
+`NEXT_PUBLIC_` keys and not `WEB_PORT`. Export it in your shell to move the port,
+or add it to `turbo.json`'s `dev` task.
 
 | Service       | URL                        | Notes                                                                    |
 | ------------- | -------------------------- | ------------------------------------------------------------------------ |
-| Web           | http://localhost:3000      | Plan 0B-2 — `apps/web` does not exist yet                                |
+| Web           | http://localhost:3000      | The localised shell — one page, no API calls yet                         |
 | API           | http://localhost:3001      | `/health/{live,ready,deep}` and `/api/v1/openapi.json` today             |
 | API docs      | http://localhost:3001/docs | Scalar — not mounted yet                                                 |
 | Temporal UI   | http://localhost:8233      | Plan 0B-3 — not in `docker-compose.yml` yet                              |
@@ -132,8 +143,9 @@ Plus a `READY` quote, an `ACCEPTED` quote with an order in `AWAITING_PAYMENT`, a
 ## 5. Everyday commands
 
 ```bash
-pnpm --filter @metrika/api dev # the only runtime that exists yet
+pnpm dev                       # apps/api + apps/web
 pnpm verify                    # format:check + build + lint + typecheck + unit — the pre-push gate
+pnpm build                     # tsc -b per package + next build, topological through Turbo
 
 pnpm test:unit                 # fast
 pnpm test:integration          # Testcontainers; Docker must be running
@@ -159,7 +171,31 @@ explicitly. `cd packages/database && pnpm exec prisma migrate deploy` fails with
 `Environment variable not found: DATABASE_ADMIN_URL` — Prisma's dotenv search
 looks beside the schema and in the cwd, and never reaches the repository root.
 
-The Playwright suite exists and is **package-scoped**, not a root script:
+**`pnpm build`, `pnpm dev`, `pnpm test:unit` and `pnpm test:integration` load the
+root `.env`**, through `scripts/turbo.mjs` (`node --env-file-if-exists=.env`).
+All four can end up running `next build` or `next dev` — the two test tasks
+because they declare `dependsOn: ["^build", "build"]`, which schedules
+`@metrika/web#build` — and `src/app/layout.tsx` imports `clientEnv`, which parses
+at module scope. So a missing `NEXT_PUBLIC_` key fails the **build**, by name —
+measured, with both unset:
+
+```
+Error: Failed to collect configuration for /_not-found
+  [cause]: Error [ZodError]: [
+    { "path": ["NEXT_PUBLIC_API_BASE_URL"],    "message": "Invalid input: expected string, received undefined" },
+    { "path": ["NEXT_PUBLIC_DEFAULT_LOCALE"], "message": "Invalid option: expected one of \"es-CO\"|\"en-US\"" }
+  ]
+      at module evaluation (src/config/env.ts:95:53)
+      at module evaluation (src/app/layout.tsx:104:1)
+```
+
+That is the intended behaviour, not a papercut — a misconfigured deployment must
+fail at build rather than on a visitor's first render. `cp .env.example .env`
+supplies both. CI has no `.env` and sets them at the workflow level instead;
+`--env-file-if-exists` is what makes the absent file fine, and a real environment
+variable wins over the file, so both paths behave identically.
+
+The Playwright suite is **package-scoped**, not a root script:
 
 ```bash
 pnpm --filter @metrika/web exec playwright install chromium   # once, per machine
@@ -176,9 +212,19 @@ One thing to know before trusting a red-to-green cycle: `reuseExistingServer` is
 on outside CI, so a `pnpm dev` you forgot about on port 3000 will be used
 as-is and will serve an old build. If a change does not show up, kill that first.
 
-There is deliberately no root `pnpm test:e2e`, because it would pull a browser
-download into `pnpm verify`. The cost of that choice is real and worth stating
-plainly: **no CI job runs this suite yet**, so today it is a local gate only.
+There is deliberately no root `pnpm test:e2e`: it would put a browser download in
+the path of `pnpm verify`, which is what everyone runs before every push. CI pays
+that cost instead — the **`web` job** installs chromium
+(`playwright install --with-deps chromium`) and runs this suite on every pull
+request, after a full `pnpm build`.
+
+That `pnpm build` is load-bearing there, and worth knowing locally too:
+Playwright's `webServer` runs apps/web's OWN `pnpm build`, a bare `next build`,
+which builds that package and nothing else. On a tree that has never been built,
+`test:e2e` therefore dies inside `webServer.command` with
+`src/lib/formatting/money.ts(1,38): error TS2307: Cannot find module
+'@metrika/contracts'`, and Playwright reports only "Process from
+config.webServer was not able to start". Run `pnpm build` from the root first.
 
 `pnpm contracts:emit` and `pnpm db:seed` arrive in Plan 0B-3.
 
@@ -227,10 +273,11 @@ started with `node --env-file=.env`. A second file would be a second way to be
 wrong.
 
 `.env.example` is committed with working local defaults for every key, and
-**`apps/api/test/env-example.test.ts` asserts it is a superset of what the Zod
-schema requires** — so a fresh clone can never fail with an unexplained
-missing-variable error. It is a unit test, so it runs in `pnpm verify`; letting
-`.env.example` drift fails the build rather than the next new clone.
+**both apps assert it is a superset of what their Zod schema requires** —
+`apps/api/test/env-example.test.ts` and `apps/web/test/env-example.test.ts` — so
+a fresh clone can never fail with an unexplained missing-variable error. They are
+unit tests, so they run in `pnpm verify`; letting `.env.example` drift fails the
+build rather than the next new clone.
 
 ```bash
 # .env.example (excerpt) — see the file itself for the authoritative list
@@ -245,6 +292,14 @@ HEALTH_DEEP_TOKEN=local-health-deep-token
 DATABASE_URL=postgresql://metrika_app:metrika_app@localhost:5432/metrika_dev?schema=public
 DATABASE_ADMIN_URL=postgresql://metrika:metrika@localhost:5432/metrika_dev?schema=public
 
+# --- Web ---
+# WEB_PORT is expanded in the shell by apps/web's own scripts, so it moves the
+# port only when it is exported; see §2. Both NEXT_PUBLIC_ keys are read at
+# module scope and are what `next build` fails without.
+WEB_PORT=3000
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+NEXT_PUBLIC_DEFAULT_LOCALE=es-CO
+
 # Present in docker compose, wired up in later plans
 REDIS_URL=redis://localhost:6379
 S3_ENDPOINT=http://localhost:9000
@@ -253,4 +308,4 @@ S3_FORCE_PATH_STYLE=true
 SMTP_URL=smtp://localhost:1025
 ```
 
-Configuration is read in exactly one file today (`apps/api/src/config/env.ts`); `apps/web/src/config/env.ts` joins it in Plan 0B-2. Each is a Zod schema parsed at startup. A missing or malformed value crashes the process immediately with a readable list of what is wrong — never a mysterious `undefined` three layers into a request. A lint rule forbids `process.env` everywhere else.
+Configuration is read in exactly two files — `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts`, both of which now exist. Each is a Zod schema parsed at startup. A missing or malformed value crashes the process immediately with a readable list of what is wrong — never a mysterious `undefined` three layers into a request. A lint rule forbids `process.env` everywhere else; `apps/web/playwright.config.ts` carries the single narrow exemption, documented in the file and in `apps/web/eslint.config.js`, because a Playwright config has to load with no environment at all.

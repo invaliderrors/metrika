@@ -67,7 +67,9 @@ env:
   # `apps/web/src/config/env.ts` parses `clientEnv` at module scope and
   # `src/app/layout.tsx` imports it, so `next build` resolves both keys while
   # collecting page data. MEASURED, with them unset: exit 1, "Failed to collect
-  # page data for /", a ZodError naming both. That is the intended behaviour — a
+  # page data for" whichever route a worker reaches first (`/` or `/_not-found`
+  # — both import the layout, and page data is collected in parallel), with a
+  # ZodError naming both keys. That is the intended behaviour — a
   # misconfigured deployment must fail at build rather than on a user's first
   # render — which makes supplying them here part of the contract rather than a
   # workaround.
@@ -272,6 +274,74 @@ jobs:
       # Docker daemon, so packages/testing's preflight passes.
       - name: Integration tests
         run: pnpm test:integration
+
+  # A separate job for the same reason `integration` is one: everything it proves
+  # is invisible to `verify`. `next-intl` resolving a catalogue, the stylesheet
+  # actually loading rather than merely being referenced, the skip link being the
+  # first focusable node, and `clientEnv` reaching the rendered document are all
+  # properties of a page in a real browser — `format:check`, `lint`, `typecheck`
+  # and `test:unit` are green for every one of them. Until this job existed the
+  # suite ran nowhere but a developer's machine, which is a gate with a half-life.
+  #
+  # Not a step in `verify`, and not a root `pnpm test:e2e`, because it downloads a
+  # browser. `pnpm verify` is what a developer runs before every push; a chromium
+  # download does not belong in it. See `docs/LOCAL_DEVELOPMENT.md` §5.
+  web:
+    runs-on: ubuntu-latest
+    # No `env:` block — inherited from the workflow-level one, same as
+    # `integration` and `openapi`. For THIS job the placement is the whole point:
+    # `src/app/layout.tsx` imports `clientEnv`, which parses at module scope, so
+    # both `NEXT_PUBLIC_` keys are resolved by the `Build` step below. Setting
+    # them on the `E2E` step instead — which is where a draft of this job put
+    # them — kills the job one step earlier with "Failed to collect page data for
+    # /" and a ZodError, in a job whose subject is Playwright.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Load-bearing, not a warm-up for the build Playwright runs for itself.
+      # `webServer.command` in playwright.config.ts is apps/web's OWN `pnpm
+      # build` — a bare `next build` — which builds that package and nothing
+      # else, while `src/lib/formatting/money.ts` imports the VALUE `toBigInt`
+      # from `@metrika/contracts`, whose `exports` map points at `dist/`.
+      # MEASURED from a clean clone with this step skipped: `test:e2e` dies in
+      # `webServer.command` before a browser is ever launched — `next build`
+      # compiles, then fails its TypeScript phase with
+      # `src/lib/formatting/money.ts(1,38): error TS2307: Cannot find module
+      # '@metrika/contracts'`, and Playwright reports only "Process from
+      # config.webServer was not able to start". This step is the topological
+      # turbo run that produces that `dist/`.
+      #
+      # See the cache warning at the top of this file before adding `.turbo`
+      # caching to speed this up.
+      - name: Build
+        run: pnpm build
+
+      # Chromium only: playwright.config.ts declares no `projects`, so the suite
+      # runs on the default chromium project and firefox/webkit would be two more
+      # downloads nothing executes. `--with-deps` adds the system libraries
+      # chromium needs on ubuntu-latest, which the browser binary alone does not
+      # bring.
+      - name: Install Playwright browsers
+        run: pnpm --filter @metrika/web exec playwright install --with-deps chromium
+
+      # No "start the server" step and nothing to poll for readiness: Playwright's
+      # `webServer` builds and starts the app itself and waits on
+      # http://127.0.0.1:3000. `CI` is set by GitHub Actions, which is what turns
+      # `reuseExistingServer` off (so this can never grade an already-running
+      # build) and `forbidOnly` on (so a stray `test.only` fails rather than
+      # silently reducing the suite to one case).
+      - name: E2E
+        run: pnpm --filter @metrika/web test:e2e
 
   openapi:
     runs-on: ubuntu-latest

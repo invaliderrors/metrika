@@ -4,11 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0A and Plan 0B-1 are complete: the monorepo and quality gates,
+Phase 0A, Plan 0B-1 and Plan 0B-2 are complete: the monorepo and quality gates,
 `packages/contracts`, `packages/database` (Prisma + RLS + soft delete),
-`packages/testing` (Testcontainers Postgres) and `apps/api` (NestJS on Fastify,
-health probes, OpenAPI 3.1) exist and are tested. `apps/web` and `apps/workers`
-do not exist yet — Plans 0B-2 and 0B-3 build them.
+`packages/testing` (Testcontainers Postgres), `apps/api` (NestJS on Fastify,
+health probes, OpenAPI 3.1) and `apps/web` (Next.js App Router, Tailwind v4,
+shadcn primitives, `next-intl` on `es-CO`, a Playwright smoke suite) exist and
+are tested.
+
+`apps/web` is a **shell**, and the gap matters when reading the frontend rules
+below: one static page, no data fetching, no route groups, and none of
+`packages/api-client`, `packages/ui`, TanStack Query, either Zustand store or
+the viewer. The ESLint boundary zones that will fence them (`webBoundary`,
+`serverActionBoundary`, `featureBoundary`) do exist and are fixture-tested.
+`apps/workers` does not exist yet — Plan 0B-3 builds it.
 
 Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
 which phase and which sub-plan the work belongs to.
@@ -20,33 +28,38 @@ The blueprint is the source of truth. If a request conflicts with it, say so and
 ## Commands
 
 Working today: `verify` (format:check + build + lint + typecheck + test:unit),
-`build`, `test:integration` (Docker required), `infra:up`/`infra:down`/`infra:reset`,
+`build`, `dev`, `test:integration` (Docker required), `infra:up`/`infra:down`/`infra:reset`,
 `db:generate`/`db:migrate`/`db:deploy`/`db:reset`/`db:studio` (all from the
 repository root — they load the root `.env` and pass `--schema` explicitly; a
 bare `pnpm exec prisma` inside `packages/database` cannot find
-`DATABASE_ADMIN_URL`), and `pnpm --filter @metrika/api dev`.
-Not yet created (Plans 0B-2/0B-3): `dev` across all runtimes, `test:e2e`,
-`db:seed`, `contracts:emit`.
+`DATABASE_ADMIN_URL`).
+`test:e2e` exists as a **package** script only, deliberately: a root one would
+put a chromium download in everyone's inner loop. Run it as
+`pnpm --filter @metrika/web test:e2e`.
+Not yet created (Plan 0B-3): `db:seed`, `contracts:emit`, and the Python half of
+`dev`.
 
 ```bash
 pnpm verify                    # format:check + build + lint + typecheck + test:unit — the gate to run before claiming done
 pnpm build                     # tsc -b per package + next build, topological through Turbo; loads the root .env, because next build inlines NEXT_PUBLIC_* into the bundle
+pnpm dev                       # every dev task in the workspace: apps/api (tsc --watch + node --watch) and apps/web (next dev on :3000). Python workers join in Plan 0B-3
 pnpm lint                      # eslint --max-warnings=0 across the workspace
 pnpm typecheck                 # tsc -b --force (the --force is load-bearing; see .github/workflows/ci.yml)
 pnpm test:unit
 pnpm test:integration          # Testcontainers; Docker must be running
 pnpm infra:up | infra:down | infra:reset   # postgres, redis, minio, mailpit
 pnpm db:generate | db:migrate | db:deploy | db:reset | db:studio
-pnpm --filter @metrika/api dev # the only runtime that exists yet
+pnpm --filter @metrika/web test:e2e        # Playwright; builds and starts apps/web itself on 127.0.0.1:3000
 pnpm --filter @metrika/api openapi:emit    # regenerate apps/api/openapi/openapi.json; CI fails if this produces a diff
 ```
 
-Single test: `pnpm --filter @metrika/api test:unit -- <pattern>` (Vitest).
+Single test: `pnpm --filter <package> test:unit -- <pattern>` (Vitest).
 Local infrastructure: `pnpm infra:up` (postgres, redis, minio, mailpit — `temporal` and `temporal-ui` land in Plan 0B-3). See [`docs/LOCAL_DEVELOPMENT.md`](./docs/LOCAL_DEVELOPMENT.md).
 
-CI runs three jobs on every pull request: `verify` (the gates above plus the two
+CI runs four jobs on every pull request: `verify` (the gates above plus the two
 suppression greps), `integration` (`pnpm test:integration` against
-Testcontainers), and `openapi` (re-emits the document and fails on a diff).
+Testcontainers), `web` (`pnpm build`, then the Playwright suite in chromium) and
+`openapi` (re-emits the document and fails on a diff).
 
 ## Architecture in one paragraph
 
@@ -105,7 +118,7 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
   flag or a second client.
 - `process.env` may only be read in `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts`.
 - `packages/contracts` imports nothing but `zod`. `packages/pricing-engine` imports only contracts + `decimal.js` — no framework, no I/O, no `Date`, no `Math.random`.
-- `apps/web` must not import `packages/database` or `packages/pricing-engine`. Prices are computed server-side; a client-side recomputation is a second source of truth.
+- `apps/web` must not import `packages/database`, `packages/pricing-engine` or `@prisma/client` — enforced by `webBoundary`/`featureBoundary`, static and dynamic `import()` both. Prices are computed server-side; a client-side recomputation is a second source of truth.
 - Workers never touch Postgres. They receive activity args, read/write S3 under scoped IAM, return structured results.
 
 **Authorization**
@@ -123,8 +136,15 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
 
 **Frontend**
 
+_Nothing in this block has code behind it yet — `apps/web` is Plan 0B-2's shell,
+with no data fetching and no features. These are the rules the features are
+built to, not descriptions of the tree. Two of them already have their lint zone
+in place: `serverActionBoundary` (`'use server'` is legal only in
+`src/app/**/actions.ts` and `src/lib/session/**`) and `featureBoundary`
+(no `../<other-feature>/{components,hooks,schemas,lib}/` deep import)._
+
 - Server state lives in TanStack Query and is never mirrored into Zustand. SSE events write into the query cache via `setQueryData` — one cache, one read path.
-- Exactly two Zustand stores exist (`viewerStore`, `uploadStore`), both feature-scoped. There is no `useAppStore`.
+- There will be exactly two Zustand stores (`viewerStore`, `uploadStore`), both feature-scoped — neither exists yet. There is no `useAppStore`.
 - Server Actions are for cookies, the SSE relay, and Vercel-side form posts only. **No domain mutations.** See [ADR-0015](./docs/adr/0015-server-actions.md).
 - Upload progress is real bytes. Never fake a progress bar.
 
