@@ -293,8 +293,8 @@ jobs:
     # `src/app/layout.tsx` imports `clientEnv`, which parses at module scope, so
     # both `NEXT_PUBLIC_` keys are resolved by the `Build` step below. Setting
     # them on the `E2E` step instead — which is where a draft of this job put
-    # them — kills the job one step earlier with "Failed to collect page data for
-    # /" and a ZodError, in a job whose subject is Playwright.
+    # them — kills the job one step earlier with "Failed to collect page data
+    # for" a route and a ZodError, in a job whose subject is Playwright.
     steps:
       - uses: actions/checkout@v4
 
