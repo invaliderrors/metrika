@@ -8,12 +8,13 @@ import {
 
 // Bound to a name rather than `export default [...]` directly. MEASURED:
 // `eslint-config-next` enables `import/no-anonymous-default-export`, which
-// reports an anonymous array literal as a WARNING on this very file. `pnpm
-// verify` runs `turbo run lint` with no `--max-warnings` and would stay green;
-// CI runs `pnpm lint -- --max-warnings=0` and would not. Same locally-invisible
-// shape as the ordering hazard documented below. apps/api's config can and does
-// export the array directly — it never loads eslint-config-next, so the rule
-// is not enabled there.
+// reports an anonymous array literal as a WARNING on this very file. The root
+// `lint` script is `turbo run lint -- --max-warnings=0` and CI's Lint step is a
+// bare `pnpm lint`, so both gates run the same command and that warning fails
+// both. It was locally invisible only while the flag lived in the workflow
+// alone — see the ordering hazard documented below, which is the same shape.
+// apps/api's config can and does export the array directly — it never loads
+// eslint-config-next, so the rule is not enabled there.
 const config = [
   // ORDER IS LOAD-BEARING, and `next()` alone is not enough.
   //
@@ -31,9 +32,14 @@ const config = [
   // preserves typeChecked()'s `^_` ignore patterns either way — but putting it
   // last still downgrades that rule and `no-unused-expressions` from error to
   // warn, and re-enables `no-unexpected-multiline` against
-  // eslint-config-prettier. The downgrade is INVISIBLE LOCALLY: `pnpm verify`
-  // runs `turbo run lint` with no `--max-warnings`, while CI passes
-  // `--max-warnings=0`. See the ordering fixture in packages/eslint-config.
+  // eslint-config-prettier. That downgrade used to be invisible locally, while
+  // `--max-warnings=0` lived only in CI's Lint step; the root `lint` script
+  // carries the flag now and CI runs a bare `pnpm lint`, so both gates report
+  // it. Order still matters, because `--max-warnings=0` only bites once some
+  // file actually trips one of those rules, whereas the resolved severity is
+  // wrong the moment these spreads are swapped. `test/eslint-order.test.ts`
+  // asserts that severity directly; see also the ordering fixture in
+  // packages/eslint-config.
   ...next({
     // Must equal the `react` pin in this package.json. `eslint-config-next`
     // sets 'detect', whose code path calls an ESLint 9 API that ESLint 10

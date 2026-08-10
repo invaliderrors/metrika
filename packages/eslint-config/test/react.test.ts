@@ -153,10 +153,13 @@ describe('the next profile, against ADR-0021 obligation 3', () => {
  * `^_` ignore patterns survive either order. What does not survive is the
  * severity: composed last, `next()` downgrades both rules from error to warn.
  *
- * That is invisible where it is introduced. `pnpm verify` runs
- * `turbo run lint` with no `--max-warnings`; CI runs
- * `pnpm lint -- --max-warnings=0`. A rule silently downgraded to `warn` is
- * green locally and red only in CI.
+ * That used to be invisible where it is introduced: `pnpm verify` ran
+ * `turbo run lint` with no `--max-warnings` while CI passed
+ * `--max-warnings=0`, so a rule silently downgraded to `warn` was green locally
+ * and red only in CI. The root `lint` script carries `--max-warnings=0` itself
+ * now and CI's Lint step is a bare `pnpm lint`, so the two gates agree. The
+ * downgrade still only surfaces once some file trips one of these rules, which
+ * is why this test reads the resolved severity instead of linting anything.
  */
 describe('composing next() with typeChecked()', () => {
   const rule = '@typescript-eslint/no-unused-vars';

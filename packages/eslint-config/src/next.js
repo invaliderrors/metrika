@@ -75,10 +75,15 @@ const withoutPluginRegistrations = (entry) => {
  *   - re-enable `no-unexpected-multiline`, which `eslint-config-prettier`
  *     turns off.
  *
- * A downgrade to `warn` is the dangerous one, because the two gates disagree:
- * `pnpm verify` runs `turbo run lint` with no `--max-warnings`, while CI runs
- * `pnpm lint -- --max-warnings=0`. The regression is green locally and red only
- * in CI. So: compose `typeChecked()` AFTER `next()`, never before.
+ * A downgrade to `warn` used to be the dangerous one, because the two gates
+ * disagreed: `pnpm verify` ran `turbo run lint` with no `--max-warnings` while
+ * CI passed `--max-warnings=0`, so the regression was green locally and red
+ * only in CI. The flag lives in the root `lint` script now
+ * (`turbo run lint -- --max-warnings=0`) and CI's Lint step is a bare
+ * `pnpm lint`, so both gates run the same command. What is left is narrower but
+ * still real: `--max-warnings=0` only bites once some file actually trips one of
+ * these rules, while the resolved severity is wrong from the moment the order is
+ * swapped. So: compose `typeChecked()` AFTER `next()`, never before.
  * test/react.test.ts pins the resolved severity in both orders.
  *
  * `reactVersion` must equal apps/web's `react` pin. It is required rather than
