@@ -152,6 +152,22 @@ Both are genuinely valuable and genuinely hard, and both are seductive.
 
 _Mitigation:_ explicitly classified V2 in [ROADMAP.md](./ROADMAP.md); the schema already models N parts per order item so neither requires a migration later; the definition of done for Phase 13 is a working single-part flow, not a feature list.
 
+### R20 — `eslint-plugin-react` is unmaintained and outside its ESLint peer range
+
+**P: Medium · I: Medium** — _found by the Plan 0B-2 Task 1 spike; workaround measured and in place._
+
+R12's shape, one layer down: a dependency nobody chose directly, unmaintained, peer-excluded from the pinned major, working only via a workaround.
+
+_What was measured:_ `eslint-plugin-react@7.37.5` declares `eslint: "^3 || … || ^9.7"`, excluding the pinned `10.8.0`, and has had no publish since 2025-04-03. `eslint-config-next` sets `settings.react.version = 'detect'`; the plugin implements detection through `context.getFilename()`, removed in ESLint 10, and ESLint exits **2** — `Error while loading rule 'react/display-name'`. Pinning `settings.react.version` to a literal after the shared config restores it fully: all 15 reportable `react/*` rules fire, `react/jsx-uses-vars` included. Every other legacy-API call in the plugin is feature-guarded except `react/jsx-filename-extension` and `react/forward-ref-uses-ref`, neither of which `eslint-config-next` enables — latent, not active. This is **not** avoided by pinning Next 15: `eslint-config-next@15.5.23` carries the same `eslint-plugin-react@^7.37.0` and the same `'detect'`. See [ADR-0021](./adr/0021-next-major-and-frontend-stack.md).
+
+_Triggers to watch for:_ a `react/*` rule ceasing to report — which is why Plan 0B-2 Task 2 ships a fixture asserting `react/jsx-key` reports, rather than asserting the config loads; enabling either latent rule while widening the rule set; or the next ESLint major, which will remove more of what the plugin still calls.
+
+_Mitigation, and the measured escape hatch:_ the override is one config entry and is guarded by the fixture. If the plugin breaks harder, drop it and build the flat config from `@next/eslint-plugin-next` — measured working under ESLint 10, emitting `@next/next/no-img-element`, and declaring **no peer dependencies at all**, so it cannot fall out of range. That trades the `react/*`, `jsx-a11y` and `import` rules for a config we own.
+
+_Correction, measured in Plan 0B-2 Task 2 and recorded in [ADR-0023](./adr/0023-eslint-plugin-resolution.md):_ ADR-0021 and an earlier draft of this entry said the three plugins "cannot be pinned directly, because `eslint-config-next` `require`s its own copies, so a direct declaration installs something the config never loads." The discriminator is a **version or peer-context divergence**, not the act of declaring. `packages/eslint-config/src/react.js` imports all three by name — it has to, and pnpm's isolated `node_modules` makes a transitive import impossible (`ERR_MODULE_NOT_FOUND`, measured) — and at the pinned versions under the same `eslint@10.8.0` both resolution paths `realpath` to one store entry. The original warning holds for `apps/web`, which imports none of the three.
+
+_The part of that which is a coincidence, not a guarantee:_ the same-copy property holds **only because the declared pins currently sit inside `eslint-config-next@16.3.0`'s ranges**, and nothing enforces that. Forcing a divergence (`eslint-plugin-react@7.36.1` against its `^7.37.0`) was measured to produce two store entries. That would be worse here than the manifest-lints-nothing case ADR-0021 described: because `next()` strips `react()`'s plugin registrations, every `react/*` rule **implementation** under `next()` comes from `eslint-config-next`'s copy while the declared pins contribute only the rule-name lists — so a divergence means `apps/web` linting with one version's implementations against another version's rule list, while a standalone `react()` consumer keeps using the declared copy. Two linters from one manifest, no error. `packages/eslint-config/test/react.test.ts` asserts the two resolutions are the same file, for all three plugins, which is what turns this from a note into a control. **Reassess at the end of Phase 0B-2, and on any ESLint major.**
+
 ---
 
 ## Phase 0B-1 follow-up

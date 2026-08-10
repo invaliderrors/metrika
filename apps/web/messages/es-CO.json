@@ -1,0 +1,9 @@
+{
+  "app": {
+    "name": "Metrika",
+    "tagline": "Cotizaciones de manufactura para modelos arquitectónicos impresos en 3D"
+  },
+  "shell": {
+    "skipToContent": "Saltar al contenido"
+  }
+}

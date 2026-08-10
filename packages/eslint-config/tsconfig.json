@@ -1,11 +1,42 @@
 {
   "extends": "@metrika/typescript-config/node.json",
-  "compilerOptions": { "noEmit": true },
+  "compilerOptions": {
+    "noEmit": true,
+    // test/react.test.ts imports test/eslint.{react,next}.config.js as modules
+    // rather than handing ESLint a config path, because those two profiles are
+    // built by calling a function and the fixture has to pass its arguments.
+    // Without allowJs that import is TS7016. `checkJs` stays off: src/**/*.js
+    // are ESLint config factories whose own imports (eslint-plugin-react and
+    // friends) ship no types, so checking them would report on third-party
+    // shape rather than on anything this package controls — `pnpm lint` is what
+    // governs those files.
+    "allowJs": true
+  },
   // test/fixtures/**: deliberately invalid or forbidden-import fixtures used
   // by test/rules.test.ts through its own nested ESLint configs
   // (test/eslint.config.js, test/eslint.boundaries.config.js), which point
   // at test/tsconfig.json — not this one. They are exercised, just not by
   // this program: including them here would mean type-checking input that
   // exists specifically to be rejected.
-  "include": ["test/rules.test.ts"]
+  //
+  // src/**/*.js and the two fixture configs are listed because `composite`
+  // requires every file in the program to be listed, and `allowJs` pulls them
+  // in through test/react.test.ts's imports (TS6307 otherwise). The other
+  // test/eslint.*.config.js files are deliberately absent: nothing in this
+  // program imports them, they are handed to ESLint as paths.
+  "include": [
+    "src/**/*.js",
+    "test/eslint.react.config.js",
+    "test/eslint.next.config.js",
+    "test/eslint.next-typechecked.config.js",
+    "test/eslint.typechecked-next.config.js",
+    "test/eslint.web-boundaries.config.js",
+    "test/rules.test.ts",
+    "test/react.test.ts",
+    "test/web-boundaries.test.ts",
+    // Listed because eslint.config.js lints `**/*.ts` with `project:
+    // './tsconfig.json'`, so a .ts file absent from this program is a lint
+    // error about project membership rather than about its contents.
+    "vitest.config.ts"
+  ]
 }

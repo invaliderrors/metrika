@@ -1,0 +1,56 @@
+/**
+ * The locale list, and NOTHING ELSE THAT RUNS. This module must stay free of
+ * imports from `../config/env`, and that is a build constraint rather than a
+ * preference.
+ *
+ * `config/env.ts` imports THIS file, so an import back the other way is a
+ * cycle. That is the whole of the constraint now, and it is worth recording why
+ * it used to be stated differently.
+ *
+ * The original reason was that `config/env.ts` parses `clientEnv` at module
+ * scope, so importing it from anything the App Router reaches drags the parse
+ * into `next build` — MEASURED at the time: "Failed to collect page data for /"
+ * and a ZodError naming both `NEXT_PUBLIC_` keys, because a bare `next build`
+ * has no environment. That consequence is now DELIBERATE and lives in
+ * `src/app/layout.tsx`, which imports `clientEnv` precisely so a misconfigured
+ * deployment fails at build; `pnpm build` loads the root `.env` and `turbo.json`
+ * declares both keys, which is what makes it pass. So avoiding the parse is no
+ * longer a reason for anything.
+ *
+ * The direction still holds on its own merits: a locale list is not environment
+ * configuration, it is a domain constant that the environment schema happens to
+ * validate against. It belongs at the bottom of the dependency graph, and
+ * `config/env.ts` imports it in that direction.
+ *
+ * `config/env.ts` re-exports both names, so its own API is unchanged and either
+ * import path is correct.
+ */
+export const SUPPORTED_LOCALES = ['es-CO', 'en-US'] as const;
+export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+
+/**
+ * `es-CO` is the only locale with real copy at MVP. `en-US` exists so the
+ * catalogue structure is exercised from day one — retrofitting message
+ * extraction across a built UI is far more expensive than this tax.
+ *
+ * A literal, not `clientEnv.NEXT_PUBLIC_DEFAULT_LOCALE`. That key configures
+ * which locale a DEPLOYMENT serves; this constant is the fallback the
+ * catalogues are guaranteed to be complete for. Reading the env here would also
+ * reintroduce the import this file's header exists to forbid.
+ */
+export const DEFAULT_LOCALE: SupportedLocale = 'es-CO';
+
+/**
+ * PINNED, not inferred. `next-intl` falls back to the runtime's own zone when
+ * `timeZone` is absent, so the same instant renders as a different wall clock
+ * depending on where the code runs: this machine infers `America/Bogota`, a CI
+ * runner and a serverless region both infer `UTC`, and server and client would
+ * then disagree inside one page. Nothing formats a date yet, which is exactly
+ * why this is cheap to fix now — the first `<time>` element would otherwise
+ * ship the bug already in place and blame the component.
+ *
+ * Bogotá because that is where the operators and the customers are. When
+ * per-tenant time zones exist this becomes the fallback for a request that has
+ * no tenant yet, not a value to delete.
+ */
+export const DEFAULT_TIME_ZONE = 'America/Bogota';

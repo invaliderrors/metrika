@@ -4,9 +4,12 @@ Digital manufacturing platform for professional 3D printing. Upload a 3D model, 
 
 Initial market: Colombia (`es-CO`, COP). Initial customers: architects and architecture studios. The architecture is internationalisation-ready and does not hardcode Colombia-specific business rules in the domain.
 
-> **Status: Phase 0A complete.** The monorepo, quality-gate config packages
-> (`packages/typescript-config`, `packages/eslint-config`) and `packages/contracts`
-> exist and are tested. `apps/` and the remaining `packages/*` do not exist yet. The
+> **Status: Phase 0A and Plans 0B-1 / 0B-2 complete.** The monorepo, the
+> quality-gate config packages (`packages/typescript-config`,
+> `packages/eslint-config`), `packages/contracts`, `packages/database`,
+> `packages/testing`, `apps/api` (a health-probe skeleton) and `apps/web` (a
+> one-page localised shell) exist and are tested. `apps/workers` and the
+> remaining `packages/*` do not exist yet — see "Shape" below for the split. The
 > complete engineering plan lives in [`docs/`](./docs/) and is intended to be
 > executable without re-deriving fundamental decisions.
 
@@ -46,9 +49,10 @@ packages/       contracts · pricing-engine · api-client · database · ui · p
 infra/          terraform · docker
 ```
 
-That is the target shape. Built so far: `apps/api`, and `packages/contracts`,
-`packages/database`, `packages/testing`, `packages/eslint-config`,
-`packages/typescript-config` and `infra/docker`.
+That is the target shape. Built so far: `apps/api`, `apps/web` (a one-page
+localised shell — no `(admin)` group, no data fetching), and
+`packages/contracts`, `packages/database`, `packages/testing`,
+`packages/eslint-config`, `packages/typescript-config` and `infra/docker`.
 
 Orchestrated by **Temporal Cloud**. Storage in **S3**. Data in **PostgreSQL** with row-level security.
 
@@ -58,23 +62,24 @@ Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zusta
 
 ## Quick start
 
-Working today, on a fresh clone — `apps/api` is a health-probe skeleton and
-`apps/web` and `apps/workers` do not exist yet:
+Working today, on a fresh clone — `apps/api` is a health-probe skeleton,
+`apps/web` is a one-page localised shell, and `apps/workers` does not exist yet:
 
 ```bash
 pnpm install --frozen-lockfile
 cp .env.example .env            # `.env` is the ONLY local environment file
 pnpm infra:up                   # postgres, redis, minio, mailpit
 pnpm db:deploy
-pnpm --filter @metrika/api dev  # then GET localhost:3001/health/live
+pnpm dev                        # api on :3001 (GET /health/live) and web on :3000
 
 pnpm verify                     # format:check + build + lint + typecheck + unit
 pnpm test:integration           # Testcontainers; Docker must be running
+pnpm --filter @metrika/web test:e2e   # Playwright; builds and starts apps/web itself
 ```
 
-`pnpm db:seed` and a `pnpm dev` that starts every runtime at once do not exist
-yet. CI runs three jobs on every pull request: `verify`, `integration` and
-`openapi`.
+`pnpm db:seed` does not exist yet, and `pnpm dev` does not yet start the Python
+workers. CI runs four jobs on every pull request: `verify`, `integration`, `web`
+and `openapi`.
 
 See [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md).
 

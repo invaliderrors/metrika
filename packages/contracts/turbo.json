@@ -1,0 +1,15 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The only `test:unit` in the workspace that emits anything: this package
+    // runs `vitest run --coverage` with 100% thresholds (ADR/CLAUDE.md require
+    // it for the pure kernels), which writes `coverage/`. Every other package
+    // runs bare `vitest run` and produces no output, so the declaration belongs
+    // here rather than on the shared task in the root turbo.json — where it
+    // made turbo warn about five packages that were behaving correctly.
+    "test:unit": {
+      "outputs": ["coverage/**"]
+    }
+  }
+}

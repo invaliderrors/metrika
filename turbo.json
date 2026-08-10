@@ -4,7 +4,39 @@
     "db:generate": { "cache": false },
     "build": {
       "dependsOn": ["^build", "db:generate"],
-      "outputs": ["dist/**", "tsconfig.build.tsbuildinfo"]
+      // `next build` INLINES these two into the browser bundle, so they are
+      // build inputs in the strictest sense: the same source with a different
+      // NEXT_PUBLIC_API_BASE_URL produces a different artefact, and a cache hit
+      // across that change would ship a bundle pointing at the wrong API.
+      //
+      // Not strictly required today. MEASURED on turbo 2.10.8: `@metrika/web#build`
+      // is framework-inferred as `nextjs` (`--dry=json` reports
+      // `framework: 'nextjs'`), which already forwards and hashes `NEXT_PUBLIC_*`
+      // with nothing declared here — flipping a value yields two stable distinct
+      // hashes, each a cache hit on return. That inference is upstream behaviour
+      // this repo does not control, and if it ever narrows, the failure is a
+      // silent stale-cache hit rather than an error. Declaring it makes the
+      // dependency ours.
+      //
+      // `scripts/turbo.mjs` is what puts the values in the environment for
+      // `pnpm build`; this key is what makes turbo respect them.
+      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE"],
+      "outputs": [
+        "dist/**",
+        "tsconfig.build.tsbuildinfo",
+        // apps/web is the first package whose build output is not `dist/`.
+        // Adding it is not tidiness: MEASURED, with `.next` undeclared,
+        // `rm -rf apps/web/.next && pnpm build` reports
+        // "cache hit, replaying logs", exits 0, and leaves NO `.next` — turbo
+        // restores only what a task declares. `next start` and Playwright then
+        // fail against a build that a green `pnpm build` said had succeeded.
+        //
+        // `.next/cache` is excluded: it is Next's own incremental cache, it is
+        // the bulk of the directory, and it is an input to the next build
+        // rather than a product of this one.
+        ".next/**",
+        "!.next/cache/**"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^build", "db:generate"],
@@ -16,12 +48,47 @@
     },
     "test:unit": {
       "dependsOn": ["^build", "build"],
-      "outputs": ["coverage/**"]
+      // No `outputs` here. `packages/contracts` is the ONLY package whose
+      // test:unit emits anything (`vitest run --coverage`); the other five run
+      // bare `vitest run`. Declaring `coverage/**` for every package made turbo
+      // print `WARNING no output files found for task <pkg>#test:unit` on five
+      // of six on every single `pnpm verify` — measured — and a warning that is
+      // always present is a warning nobody reads. The declaration now lives in
+      // packages/contracts/turbo.json, where the output actually exists.
+      "outputs": []
     },
     "test:integration": {
       "dependsOn": ["^build", "build"],
       "cache": false
     },
-    "dev": { "cache": false, "persistent": true }
+    // The same two keys as `build`, for a DIFFERENT reason, since `cache: false`
+    // makes hashing moot here.
+    //
+    // `next dev` now RESOLVES both: `src/app/layout.tsx` imports `clientEnv`,
+    // which parses at module scope, so a dev server that cannot see them 500s on
+    // the first request instead of rendering. Turbo runs in strict env mode
+    // (`--dry=json` reports `envMode: strict` with nothing configured), and
+    // strict mode filters a task's environment down to what is declared plus
+    // turbo's own defaults.
+    //
+    // MEASURED, and the measurement is the reason this reads "belt and braces"
+    // rather than "required": a throwaway task in apps/web declaring NO env, run
+    // with the root `.env` loaded, saw `NEXT_PUBLIC_API_BASE_URL` and
+    // `NEXT_PUBLIC_DEFAULT_LOCALE` but NOT `WEB_PORT` and not an arbitrary
+    // marker variable. So strict mode does drop undeclared variables outright —
+    // it is not only a hashing concern — and `NEXT_PUBLIC_*` survives it purely
+    // through turbo's `nextjs` framework inference. That is the same upstream
+    // behaviour the `build` task above declines to depend on, for the same
+    // reason: if the inference ever narrows, an undeclared `dev` breaks at
+    // runtime with a ZodError that looks like an application bug.
+    //
+    // `pnpm dev` goes through `scripts/turbo.mjs` for the same reason `pnpm
+    // build` does — that is what puts the root `.env` into turbo's own
+    // environment; this key is what keeps it reaching the task.
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE"]
+    }
   }
 }

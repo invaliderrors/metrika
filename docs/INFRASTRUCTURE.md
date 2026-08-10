@@ -178,14 +178,18 @@ infra/terraform/
 `.github/workflows/ci.yml` — **what runs today**, on every pull request and on
 pushes to `main`:
 
-| Job           | Runs                                                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `verify`      | `pnpm install --frozen-lockfile` · `format:check` · `build` · `lint` (`--max-warnings=0`) · `typecheck` · `test:unit` · the two suppression greps |
-| `integration` | `pnpm build` then `pnpm test:integration` — Testcontainers starts its own Postgres, so there is no `services:` block and no `docker compose up`   |
-| `openapi`     | `pnpm --filter @metrika/api openapi:emit` then `git diff --exit-code -- apps/api/openapi/openapi.json`                                            |
+| Job           | Runs                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `verify`      | `pnpm install --frozen-lockfile` · `format:check` · `build` · `lint` (`--max-warnings=0`) · `typecheck` · `test:unit` · the two suppression greps            |
+| `integration` | `pnpm build` then `pnpm test:integration` — Testcontainers starts its own Postgres, so there is no `services:` block and no `docker compose up`              |
+| `web`         | `pnpm build` · `playwright install --with-deps chromium` · `pnpm --filter @metrika/web test:e2e` — Playwright's `webServer` builds and starts the app itself |
+| `openapi`     | `pnpm --filter @metrika/api openapi:emit` then `git diff --exit-code -- apps/api/openapi/openapi.json`                                                       |
 
-The three jobs are independent and run in parallel; each does its own install
-and build, because nothing is shared between GitHub Actions jobs.
+The four jobs are independent and run in parallel; each does its own install
+and build, because nothing is shared between GitHub Actions jobs. The two
+`NEXT_PUBLIC_` keys and `DATABASE_ADMIN_URL` are set once at the **workflow**
+level rather than per job, so a job added later inherits them instead of
+rediscovering their absence as a build failure.
 
 `integration` is a separate job rather than a step in `verify` because
 everything it proves is invisible to `verify`'s gates: an `import type` on an
@@ -194,6 +198,16 @@ import guard, an RLS policy that stops isolating a tenant, a probe that answers
 200 while its dependency is down, a stack trace escaping the exception filter.
 `format:check`, `lint`, `typecheck` and `test:unit` are green for every one of
 them.
+
+`web` is separate for the same reason plus one of its own. What it proves —
+`next-intl` resolving a catalogue, the stylesheet loading rather than merely
+being referenced, the skip link being the first focusable node, `clientEnv`
+reaching the rendered document — needs a real browser, and it needs a browser
+**download**: keeping that out of `pnpm verify` is why there is no root
+`test:e2e` script. Its `pnpm build` step is not redundant with the build
+Playwright runs: `webServer.command` is `apps/web`'s own `next build`, which
+does not build `@metrika/contracts`, and without the workspace build the job
+fails with `TS2307: Cannot find module '@metrika/contracts'`.
 
 **Turborepo remote caching is deliberately off, and `.turbo` is deliberately not
 cached between runs.** No tsconfig in this repository declares project
@@ -207,8 +221,9 @@ before adding a cache step.
 
 **Growing into this table** as the runtimes that need them land: `ruff` and
 `mypy --strict` and the Python test job (Plan 0B-3), `contracts:emit` with its
-own diff gate (Plan 0B-3), Playwright `e2e` (Plan 0B-2), Redis/MinIO/Temporal
-Testcontainers (with their harnesses), per-package coverage gates, container
+own diff gate (Plan 0B-3), Redis/MinIO/Temporal
+Testcontainers (with their harnesses), per-package coverage gates, bundle-size
+budgets for `web` (Phase 4), container
 builds, and `security` (`pnpm audit`, gitleaks, Trivy, CodeQL — Plan 0D).
 `main`-only deployment — push images to ECR, `terraform apply` to staging,
 `prisma migrate deploy`, ECS rolling deploy, smoke tests, then a **manual

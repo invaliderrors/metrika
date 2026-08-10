@@ -1,0 +1,81 @@
+/*
+ * `source('../')` scopes Tailwind's automatic content detection to `src/`.
+ *
+ * This is not an optimisation. MEASURED on tailwindcss@4.3.3: the default
+ * unscoped `@import 'tailwindcss'` scans the whole package — `test/` included —
+ * so a class name merely MENTIONED in a test assertion is emitted as a real
+ * utility. `test/tailwind-build.test.ts` greps this stylesheet for `.p-8`, and
+ * with detection unscoped that assertion passed against a `page.tsx` carrying no
+ * className at all: the test was an input to the thing it tested. Scoped to
+ * `src/`, the emitted sheet is derived from the application and nothing else.
+ */
+@import 'tailwindcss' source('../');
+
+/*
+ * Design tokens. Every colour the UI uses is named here; components reference
+ * the token, never a raw hex. Restyling is then one edit in one file, which is
+ * the whole reason shadcn is copy-in rather than a dependency.
+ *
+ * THESE ARE THE ONLY COLOUR TOKENS. `shadcn init` appends a second, complete set
+ * of its own to this file (`--background`, `--foreground`, `--primary`,
+ * `--secondary`, `--accent`, `--destructive`, `--border`, `--ring`, the five
+ * `--chart-*`, the eight `--sidebar-*`, plus an `@theme inline` block mapping
+ * them into Tailwind's `--color-*` namespace) and it was removed by hand. Two of
+ * its entries — `--color-muted` and `--color-muted-foreground` — collide with the
+ * names below and, being later in the file, silently WON: `bg-muted` resolved to
+ * shadcn's neutral grey rather than to the token declared here. That collision is
+ * the whole reason the reconciliation is done by hand rather than by accepting
+ * the generator's output.
+ *
+ * CONSEQUENCE FOR THE NEXT `shadcn add`: components come out of the registry
+ * written against those names, so a freshly added component will reference
+ * `bg-primary`, `text-destructive` or `border-border`, none of which exist here.
+ * Rename them to the tokens below as part of adding the component — do not
+ * re-add the generator's palette to make them resolve.
+ */
+@theme {
+  --color-brand: oklch(0.55 0.18 255);
+  --color-brand-foreground: oklch(0.98 0 0);
+  --color-surface: oklch(1 0 0);
+  --color-surface-foreground: oklch(0.21 0.02 260);
+  --color-muted: oklch(0.96 0.005 260);
+  --color-muted-foreground: oklch(0.5 0.02 260);
+  --color-danger: oklch(0.58 0.21 27);
+  --radius-card: 0.75rem;
+}
+
+/*
+ * The dark scheme overrides the four tokens that differ, as PLAIN CUSTOM
+ * PROPERTIES — not as a nested `@theme`.
+ *
+ * MEASURED on tailwindcss@4.3.3: a `@theme` block written inside
+ * `@media (prefers-color-scheme: dark)` is HOISTED OUT OF THE MEDIA QUERY. The
+ * emitted sheet then carries `--color-surface:#0f141d` on a bare `:root` with no
+ * `prefers-color-scheme` rule anywhere in it — the dark values overwrite the
+ * light ones unconditionally and the light theme ceases to exist. Deleting the
+ * nested block and rebuilding gives `--color-surface:#fff`, which is what
+ * isolates the cause. Nothing warns; `next build` exits 0 either way. That
+ * silent inversion is why `test/tailwind-build.test.ts` asserts that a
+ * `prefers-color-scheme:dark` rule setting `--color-surface` exists at all.
+ *
+ * Overriding the variable directly is not a workaround, it is how Tailwind 4
+ * theming works: `@theme` exists to register a token so utilities like
+ * `bg-surface` are generated, and those utilities compile to
+ * `background-color: var(--color-surface)`. Re-pointing that variable under a
+ * media query is the supported way to make them scheme-aware. This block is
+ * unlayered, so it beats `@layer theme` regardless of source order.
+ *
+ * Scheme-driven, not class-driven. `shadcn init` also wrote
+ * `@custom-variant dark (&:is(.dark *))` and a `.dark { … }` palette; that is a
+ * second, incompatible dark-mode mechanism and it was removed with the rest. If
+ * a user-facing theme toggle is ever needed, it replaces this block rather than
+ * joining it.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: oklch(0.19 0.02 260);
+    --color-surface-foreground: oklch(0.97 0 0);
+    --color-muted: oklch(0.27 0.02 260);
+    --color-muted-foreground: oklch(0.72 0.02 260);
+  }
+}

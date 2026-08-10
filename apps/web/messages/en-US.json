@@ -1,0 +1,9 @@
+{
+  "app": {
+    "name": "Metrika",
+    "tagline": "Manufacturing quotes for 3D-printed architectural models"
+  },
+  "shell": {
+    "skipToContent": "Skip to content"
+  }
+}

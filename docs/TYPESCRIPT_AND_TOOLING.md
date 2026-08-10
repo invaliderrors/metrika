@@ -182,18 +182,30 @@ Used in the pure kernels (`pricing-engine`, policies, state transitions) where f
 
 Flat config. `packages/eslint-config` exports composable profiles:
 
-```ts
-// packages/eslint-config/src/index.ts
+```js
+// packages/eslint-config/src/index.js
 export { base } from './base.js';
 export { typeChecked } from './type-checked.js';
+export { nest } from './nest.js';
 export { react } from './react.js';
 export { next } from './next.js';
-export { nest } from './nest.js';
-export { workflows } from './workflows.js';   // Temporal determinism
 export { test } from './test.js';
-export { script } from './script.js';
-export { boundaries } from './boundaries.js';
+export {
+  contractsBoundary,
+  featureBoundary,
+  prismaBoundary,
+  prismaImportBoundary,
+  rawSqlBan,
+  serverActionBoundary,
+  webBoundary,
+} from './boundaries.js';
 ```
+
+The package is JavaScript with JSDoc types, not TypeScript — a config package that had to be built before it could lint anything would have to be built before `pnpm lint` could run, which is a bootstrap problem with no upside.
+
+The boundaries are **seven named exports, not one `boundaries` profile**, and that is deliberate: a consumer composes exactly the zones its own layout has. `prismaBoundary` is the two-half composition `apps/api` uses (`prismaImportBoundary` + `rawSqlBan`); `packages/database` needs the raw-SQL half without the import half, and reaching for it as `prismaBoundary.slice(1)` is precisely the silent swap the split exists to prevent. `webBoundary`, `serverActionBoundary` and `featureBoundary` are `apps/web`'s three zones and are composed in that order — see the block comment above `webBoundary` in `src/boundaries.js` for why the order is load-bearing.
+
+A `workflows` profile (Temporal determinism, per the rule in CLAUDE.md) is **target state** and arrives with `apps/api/src/workflows`. There is no `script` profile.
 
 ### Type-checked rules
 
@@ -241,36 +253,40 @@ export { boundaries } from './boundaries.js';
 
 ### Boundary enforcement
 
-```js
-// packages/eslint-config/src/boundaries.ts
-'no-restricted-imports': ['error', { zones: [
-  { target: './packages/contracts/**',      from: './packages/!(contracts)/**',
-    message: 'contracts is the root of the dependency graph and may import only zod' },
-  { target: './packages/pricing-engine/**', from: ['@nestjs/*', '@prisma/client', 'node:*'],
-    message: 'pricing-engine must stay pure — no framework, no I/O' },
-  { target: './packages/ui/**',             from: ['./packages/api-client/**', './packages/database/**'],
-    message: 'ui is a design system; feature components belong in apps/web/src/features' },
-  { target: './apps/web/**',                from: ['./packages/database/**', './packages/pricing-engine/**'],
-    message: 'no Prisma in the browser; prices are computed server-side only' },
-  { target: './apps/api/src/!(infrastructure)/**', from: ['@prisma/client'],
-    message: 'Prisma access goes through infrastructure/persistence' },
-  { target: './apps/api/src/workflows/**',  from: ['@prisma/client', 'node:*', '**/infrastructure/**'],
-    message: 'workflow code must be deterministic — do I/O in activities' },
-]}],
+A boundary is a profile a package opts into, and its scoping is the flat-config `files`/`ignores` inside the profile itself. There is no central map of zones: `no-restricted-imports` has no such option, and the globs in a profile are resolved relative to the `eslint.config.js` that spreads it. A package whose layout differs composes its own `ignores` rather than widening a shared one.
 
+```js
+// packages/eslint-config/src/boundaries.js — contractsBoundary, abridged
+'no-restricted-imports': ['error', { patterns: [{
+  // Anything that is not exactly "zod" and not a relative path. A `group: ['*']`
+  // would also match relative imports and forbid the package importing itself.
+  regex: '^(?!zod$|\\.{1,2}/).*',
+  message: 'packages/contracts may import only "zod" and relative modules — see docs/ARCHITECTURE.md §7',
+}]}],
+```
+
+| Export                 | Composed by                     | Forbids                                                                                                                                                       |
+| ---------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contractsBoundary`    | `packages/contracts`            | anything but `zod` and relative modules — statically, dynamically (`import()`, including the template-literal form), and the Node globals that need no import |
+| `prismaImportBoundary` | `apps/api`                      | `@prisma/client` and `@metrika/database`, bare and by subpath, outside `src/infrastructure/persistence/**` — ADR-0005                                         |
+| `rawSqlBan`            | `apps/api`, `packages/database` | `$queryRawUnsafe` / `$executeRawUnsafe` — everywhere, persistence included, because neither parameterises                                                     |
+| `prismaBoundary`       | `apps/api`                      | both of the two above, in that composition                                                                                                                    |
+| `webBoundary`          | `apps/web`                      | `@metrika/database`, `@metrika/pricing-engine`, `@prisma/client` — bare, by subpath and dynamically                                                           |
+| `serverActionBoundary` | `apps/web`                      | `'use server'` outside `src/app/**/actions.ts` and `src/lib/session/**` — ADR-0015                                                                            |
+| `featureBoundary`      | `apps/web`                      | reaching into another feature's `components`/`hooks`/`schemas`/`lib` instead of through its `index.ts`                                                        |
+
+The `process.env` ban is not a boundary profile; it is in `base`, so every package composing `base` (directly, or through `typeChecked()` and `nest()`) gets it, and the two sanctioned readers exempt themselves file by file in their own configs:
+
+```js
+// packages/eslint-config/src/base.js
 'no-restricted-properties': ['error',
   { object: 'process', property: 'env',
     message: 'Read configuration from config/env.ts only' }],
-
-'no-restricted-syntax': ['error',
-  { selector: "CallExpression[callee.property.name='$queryRawUnsafe']",
-    message: 'Use tagged-template $queryRaw' },
-  { selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
-    message: 'Banned — XSS risk' },
-],
 ```
 
-Plus `eslint-plugin-import-x` for deterministic import ordering, `eslint-plugin-react-hooks`, `eslint-plugin-jsx-a11y`, and `eslint-plugin-vitest` in the test profile.
+`next()` is the one profile that does not start from `base` — it composes `react()`, which starts from `js.configs.recommended` — so `apps/web` composes `typeChecked()` after it to get the ban back along with the type-aware set. That is measured and documented in `src/next.js`; composing `next()` alone resolves 55 fewer rules than `nest()` does, this one among them.
+
+The React and accessibility rules come from `eslint-plugin-react`, `eslint-plugin-react-hooks` and `eslint-plugin-jsx-a11y`, reached through `eslint-config-next`'s own plugin registrations rather than registered a second time — ESLint 10 rejects two non-identical registrations of one plugin name, and `src/next.js` carries the full reasoning. There is no import-ordering plugin and no Vitest plugin yet; `src/test.js` is where the latter will go.
 
 ### Suppression policy
 
@@ -282,7 +298,7 @@ Every suppression must carry a justification, enforced mechanically:
 
 `--report-unused-disable-directives` is on, and a CI script fails on any `eslint-disable` or `@ts-expect-error` without a `--` justification. `@ts-ignore` is banned outright — `@ts-expect-error` at least fails when the underlying error disappears.
 
-CI runs `eslint . --max-warnings=0`. There is no warning tier; a rule is either worth enforcing or it is off.
+There is no warning tier; a rule is either worth enforcing or it is off. `--max-warnings=0` lives in the root `lint` script (`turbo run lint -- --max-warnings=0`), and CI's `Lint` step is a bare `pnpm lint`, so the local gate and the CI gate are the same command — see §7.
 
 ---
 
@@ -299,6 +315,10 @@ Prettier owns formatting entirely. No ESLint formatting rules; `eslint-config-pr
 ```
 
 The version is pinned **exactly** (not `^`), because a Prettier patch release that changes output turns an unrelated pull request into a thousand-line diff.
+
+**This applies to every dependency in the workspace, and it is enforced rather than asked for.** `packages/typescript-config/test/dependency-pins.test.ts` walks every manifest named by `pnpm-workspace.yaml`'s globs plus the root, and fails on a caret, a tilde, a range, `*` or a dist-tag such as `latest`. `workspace:` and `catalog:` protocols are allowed; `peerDependencies` are excluded, because a peer range is a compatibility statement rather than an install instruction. An unrecognised glob shape throws instead of being skipped, so the gate cannot silently stop covering a package.
+
+The reason it is a test and not a convention: this repository has twice shipped a version outside a peer range and lost a whole class of checking silently — `typescript-eslint`'s type-aware rules once, and `eslint-plugin-react`'s under ESLint 10. A range is how that happens without anyone choosing it.
 
 Python: `ruff format` + `ruff check` with an equivalently strict rule set, and `mypy --strict` on `apps/workers`. The Python side gets the same treatment as TypeScript — an untyped worker is exactly as capable of producing a wrong price.
 
@@ -326,7 +346,7 @@ Internal packages are **source-only, unless `apps/api` depends on them at runtim
 ```
 
 - `apps/api` resolves it exactly as it would resolve a published npm package — through `main`/`types`/`exports` pointing at compiled JavaScript — because that is the only resolution mode a bare-specifier import into already-compiled Node output supports.
-- `apps/web` still consumes it via `transpilePackages` in `next.config.ts`, and Vitest still resolves it natively through the workspace; neither runs compiled output through a bare `node` process, so neither needs `dist/` and neither loses its zero-build inner loop.
+- `apps/web` resolves it the same way, and that is a correction to what [ADR-0020](./adr/0020-internal-package-build-output.md) expected. The ADR assumed Next would keep reading `.ts` source through `transpilePackages`; `apps/web` as built sets none, and `vitest.config.ts` aliases only `@/*`, so both go through the `exports` map above and both need `dist/`. MEASURED on a clean clone with `packages/contracts` unbuilt: `next build` compiles and then fails its TypeScript phase with `src/lib/formatting/money.ts(1,38): error TS2307: Cannot find module '@metrika/contracts'`. Turbo's `dependsOn: ["^build", …]` on `build`, `typecheck`, `lint` and `test:unit` is what keeps the inner loop working anyway; the cost is that `apps/web` no longer has a zero-build inner loop for a contracts edit — `pnpm build` has to have run once.
 - `typecheck` (`tsc -b` over `tsconfig.json`, never emits) and `build` (`tsc -b tsconfig.build.json`, emits to `dist/`) are separate scripts and separate Turbo tasks, so the emitting half is cached and ordered independently. `build`'s Turbo output names `tsconfig.build.tsbuildinfo` exactly, never a `*.tsbuildinfo` glob — a glob would let a `build` cache hit also restore a stale `typecheck` state file and cause `tsc -b` to skip checking silently.
 - Packages with no runtime consumer that executes compiled Node output — `packages/eslint-config`, `packages/typescript-config`, and any future package only `apps/web`/Vitest import — declare no `build` script and stay exactly as ADR-0001 originally described; Turbo skips the (nonexistent) task for them without erroring.
 
@@ -356,30 +376,41 @@ CI reads the same files. A version mismatch between local and CI is not a debugg
 
 ## 7. Root scripts
 
+The root manifest, as it stands:
+
 ```jsonc
 {
-  "dev": "turbo run dev",
-  "build": "turbo run build",
-  "lint": "turbo run lint",
+  "preinstall": "node scripts/check-node-version.mjs",
+  "build": "node --env-file-if-exists=.env scripts/turbo.mjs run build",
+  "dev": "node --env-file-if-exists=.env scripts/turbo.mjs run dev",
+  "lint": "turbo run lint -- --max-warnings=0",
   "lint:fix": "turbo run lint -- --fix",
-  "format": "prettier --write . && ruff format apps/workers",
-  "format:check": "prettier --check . && ruff format --check apps/workers",
   "typecheck": "turbo run typecheck",
-  "test": "turbo run test:unit test:integration",
-  "test:unit": "turbo run test:unit",
-  "test:integration": "turbo run test:integration",
-  "test:e2e": "turbo run test:e2e",
-  "db:migrate": "pnpm --filter @metrika/database migrate:dev",
-  "db:migrate:deploy": "pnpm --filter @metrika/database migrate:deploy",
-  "db:generate": "pnpm --filter @metrika/database generate",
-  "db:seed": "pnpm --filter @metrika/database seed",
-  "db:reset": "pnpm --filter @metrika/database reset",
-  "contracts:emit": "pnpm --filter @metrika/contracts emit:json-schema && pnpm --filter @metrika/contracts emit:pydantic",
-  "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:unit"
+  "test:unit": "node --env-file-if-exists=.env scripts/turbo.mjs run test:unit",
+  "test:integration": "node --env-file-if-exists=.env scripts/turbo.mjs run test:integration",
+  "infra:up": "docker compose -f infra/docker/docker-compose.yml up -d --wait",
+  "infra:down": "docker compose -f infra/docker/docker-compose.yml down",
+  "infra:reset": "docker compose -f infra/docker/docker-compose.yml down -v",
+  "db:generate": "node --env-file-if-exists=.env scripts/prisma.mjs generate",
+  "db:migrate": "node --env-file-if-exists=.env scripts/prisma.mjs migrate dev",
+  "db:deploy": "node --env-file-if-exists=.env scripts/prisma.mjs migrate deploy",
+  "db:reset": "node --env-file-if-exists=.env scripts/prisma.mjs migrate reset --force",
+  "db:studio": "node --env-file-if-exists=.env scripts/prisma.mjs studio",
+  "format": "prettier --write .",
+  "format:check": "prettier --check .",
+  "verify": "pnpm format:check && pnpm build && pnpm lint && pnpm typecheck && pnpm test:unit",
+  "ci": "pnpm verify",
 }
 ```
 
-Every script does exactly what its name says. `db:reset` is the only destructive one and refuses to run when `NODE_ENV=production`. `pnpm verify` is the local pre-push gate and mirrors the CI fast path.
+Four of them are not the bare `turbo run <task>` they look like they should be, and each deviation is load-bearing:
+
+- **`verify` runs `build`, as its second step.** It is not `format:check + lint + typecheck + test:unit`; anything describing it that way is out of date. `lint` and `typecheck` both `dependsOn: ["^build"]`, so a workspace dependency that does not compile has to fail as a build rather than as a confusing downstream type error — and `apps/web`'s `next build` is the only gate that sees a missing `NEXT_PUBLIC_` key, an unresolvable `@metrika/contracts` import, or a Tailwind sheet that emits nothing.
+- **`build`, `dev`, `test:unit` and `test:integration` go through `scripts/turbo.mjs` under `node --env-file-if-exists=.env`.** `apps/web/src/app/layout.tsx` imports `clientEnv`, which parses `NEXT_PUBLIC_*` at module scope, and all four of those tasks schedule `@metrika/web#build`. Without the root `.env` loaded into the process they fail on a missing variable. The wrapper is `spawnSync` plus `process.exit(status ?? 1)`: it forwards its arguments unchanged and swallows nothing, including a signal-killed child. `--env-file-if-exists` cannot be passed to `next build` directly — Next propagates its exec argv into `NODE_OPTIONS` for its workers, and Node rejects the flag there.
+- **`lint` carries `--max-warnings=0` itself.** CI's `Lint` step is a bare `pnpm lint`, so a developer's `pnpm verify` and CI run the identical command. The flag used to live only in the workflow, which made `pnpm verify` systematically weaker than CI: every warning-severity rule was invisible locally, and that bit twice during Plan 0B-2 alone. Two places to change is how the two drift apart.
+- **`db:*` go through `scripts/prisma.mjs`** rather than `pnpm --filter @metrika/database …`, for the same environment reason plus one more: they pass `--schema` explicitly, because a bare `pnpm exec prisma` inside `packages/database` cannot find `DATABASE_ADMIN_URL`. `db:reset` is the destructive one.
+
+**Not yet created**, and named here so their absence is not mistaken for an omission: `test:e2e` (a package script only — `pnpm --filter @metrika/web test:e2e`; a root one would put a chromium download in everyone's inner loop), `db:seed` and `contracts:emit` (Plan 0B-3), and the `ruff` half of `format`/`format:check` (there is no `apps/workers` to format yet). There is no aggregate `test` script either; `test:unit` and `test:integration` are run by name, and only the second one needs Docker.
 
 ---
 

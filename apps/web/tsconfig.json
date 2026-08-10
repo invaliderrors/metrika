@@ -1,0 +1,34 @@
+{
+  "extends": "@metrika/typescript-config/next.json",
+  "compilerOptions": {
+    // The `@/*` alias shadcn requires. `shadcn init` refuses to run without it
+    // ("Could not find valid path aliases or package imports for init") and the
+    // components it copies in import their siblings and `cn` through it, so this
+    // is part of the component vendoring contract rather than a style choice.
+    //
+    // No `baseUrl`: since TypeScript 4.4 a `paths` entry resolves relative to the
+    // directory holding the tsconfig that declares it, and adding `baseUrl` would
+    // additionally make every bare specifier resolvable against `src/`, which
+    // silently shadows node_modules.
+    "paths": { "@/*": ["./src/*"] }
+  },
+  // `e2e/**` and `playwright.config.ts` are named here for two reasons, and the
+  // second one is not obvious. `tsc -b --force` is this package's `typecheck`
+  // script, so an omitted file is simply never type-checked — that is the
+  // obvious half. The other half is ESLint: `eslint.config.js` composes
+  // `typeChecked({ project: './tsconfig.json' })`, and a file outside that
+  // project's `include` makes typescript-eslint abort on it with
+  // "however that TSConfig does not include this file" rather than lint it. So
+  // this list is what puts the Playwright suite inside BOTH gates.
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "test/**/*.ts",
+    "e2e/**/*.ts",
+    "vitest.config.ts",
+    "next.config.ts",
+    "playwright.config.ts",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": ["node_modules", ".next"]
+}

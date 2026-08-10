@@ -94,7 +94,7 @@ This system is being built by a single engineer working with AI coding agents, w
 | --------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Package manager | **pnpm** + workspaces                                                                       | Strict node_modules prevents phantom dependencies — critical when enforcing package boundaries                            | Occasional tooling that assumes hoisting                                                                                                                                                     |
 | Task runner     | **Turborepo**                                                                               | Content-hash caching of lint/typecheck/test/build; remote cache makes CI cheap                                            | Another config surface; cache invalidation subtleties                                                                                                                                        |
-| Frontend        | **Next.js (App Router) + React + TypeScript**                                               | RSC for the data-heavy dashboards, mature ecosystem, Vercel deploy is one less thing to run                               | App Router complexity; the viewer is entirely client-side regardless                                                                                                                         |
+| Frontend        | **Next.js (App Router) + React + TypeScript**                                               | RSC for the data-heavy dashboards, mature ecosystem, Vercel deploy is one less thing to run                               | App Router complexity; the viewer is entirely client-side regardless. Majors and exact pins in [ADR-0021](./adr/0021-next-major-and-frontend-stack.md)                                       |
 | 3D              | **Three.js + React Three Fiber + Drei**                                                     | Declarative scene graph composes with React state; Drei covers controls/helpers                                           | R3F adds a reconciler layer; perf work sometimes needs to drop to imperative Three                                                                                                           |
 | Styling         | **Tailwind + shadcn/ui**                                                                    | shadcn is copy-in, not a dependency — we own and can restyle the components                                               | Copy-in means no upstream fixes; must be maintained                                                                                                                                          |
 | Server state    | **TanStack Query**                                                                          | Caching, dedup, retries, invalidation; SSE updates write into its cache                                                   | Learning curve on cache-key discipline                                                                                                                                                       |
@@ -246,7 +246,9 @@ pnpm-workspace.yaml:  apps/*  packages/*        # apps/workers has a package.jso
 apps/workers/pyproject.toml: [tool.uv.workspace] members = ["packages/*", "geometry", "slicer"]
 ```
 
-**Internal packages are source-only, except the ones `apps/api` depends on at runtime.** `apps/web` still consumes packages via `transpilePackages`, and Vitest still resolves them natively — no build step in either inner loop. But `apps/api` compiles to `dist/main.js` and runs that with a plain `node` process, which cannot resolve a bare-specifier import into `.ts` source; a package it depends on at runtime therefore gets a `build` script (`tsc -b tsconfig.build.json`) emitting `dist/`, and a conditional `exports` map pointing at the compiled output instead of source. This reverses part of [ADR-0001](./adr/0001-monorepo-strategy.md) for exactly that subset of packages — see [ADR-0020](./adr/0020-internal-package-build-output.md) for why the original decision assumed a consumer that transpiles, and what changed. Correctness is preserved by a separate cached `typecheck` task (`tsc -b`, no emit) that must pass in CI. See [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#5-package-builds).
+**Internal packages are source-only, except the ones a consumer resolves through an `exports` map — today `packages/contracts`, and both apps go through it.** `apps/api` compiles to `dist/main.js` and runs that with a plain `node` process, which cannot resolve a bare-specifier import into `.ts` source; a package it depends on at runtime therefore gets a `build` script (`tsc -b tsconfig.build.json`) emitting `dist/`, and a conditional `exports` map pointing at the compiled output instead of source. This reverses part of [ADR-0001](./adr/0001-monorepo-strategy.md) for exactly that subset of packages — see [ADR-0020](./adr/0020-internal-package-build-output.md) for why the original decision assumed a consumer that transpiles, and what changed. Correctness is preserved by a separate cached `typecheck` task (`tsc -b`, no emit) that must pass in CI. See [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#5-package-builds).
+
+`apps/web` was expected to be exempt — ADR-0020 reasoned that Next and Vitest read `.ts` directly, so neither would need `dist/`. It is not: `next.config.ts` sets no `transpilePackages` and `vitest.config.ts` aliases only `@/*`, so both resolve `@metrika/contracts` through the same `exports` map. MEASURED on a clean clone with the package unbuilt, `next build` fails its TypeScript phase with `TS2307: Cannot find module '@metrika/contracts'`. Turbo's `dependsOn` keeps that invisible in normal use; it is why the CI `web` job runs `pnpm build` before Playwright, whose `webServer` runs only `apps/web`'s own `next build`.
 
 **Turborepo pipeline** (`turbo.json`):
 
@@ -271,12 +273,30 @@ The prerequisite is landing project `references`, not a cache token. `.github/wo
 
 ## 6. Complete repository tree
 
-**This is the TARGET tree, not the current one, and nothing checks it.** Most of it does not exist yet: today `apps/` holds only `api`, `packages/` holds `contracts`, `database`, `eslint-config`, `testing` and `typescript-config`, and `infra/` holds only `docker`. `apps/api/src` additionally contains `bootstrap.ts`, `openapi/` and `scripts/`, which are absent below. Read this as the shape the phases are building towards; read `ROADMAP.md` and the repository itself for what is there now.
+**This is the TARGET tree, not the current one, and nothing checks it.** Most of it does not exist yet: today `apps/` holds `api` and `web`, `packages/` holds `contracts`, `database`, `eslint-config`, `testing` and `typescript-config`, and `infra/` holds only `docker`. `apps/api/src` additionally contains `bootstrap.ts`, `openapi/` and `scripts/`, which are absent below. Read this as the shape the phases are building towards; read `ROADMAP.md` and the repository itself for what is there now.
+
+`apps/web` is the entry most likely to be misread off the tree below, because the target shape and the shell that exists share almost nothing. What Plan 0B-2 built, in full:
+
+```
+apps/web/
+├── src/
+│   ├── app/                  layout.tsx · page.tsx · globals.css — one route, no route groups
+│   ├── components/ui/        button.tsx — a local shadcn primitive, NOT packages/ui
+│   ├── config/env.ts         Zod-validated; the only process.env reader
+│   ├── i18n/                 routing.ts (locales, default locale, time zone) · request.ts
+│   └── lib/                  cn.ts · formatting/{money,units}.ts
+├── messages/                 es-CO.json (shipped) · en-US.json (structure only — nothing serves it)
+├── e2e/shell.spec.ts         7 Playwright cases; the `web` CI job runs them
+├── test/                     11 Vitest suites
+└── next.config.ts · playwright.config.ts · postcss.config.mjs · vitest.config.ts · components.json
+```
+
+Everything else shown under `apps/web` below — the `(marketing)`, `(app)` and `(admin)` route groups, `app/api/`, and the whole of `features/` — is target state, as are `packages/api-client`, `packages/pricing-engine`, `packages/ui`, `packages/printer-sdk`, `fixtures/`, `infra/terraform` and `apps/workers`. There is no data fetching in `apps/web` today, no TanStack Query, no Zustand store and no viewer.
 
 ```
 metrika/
 ├── apps/
-│   ├── web/                          # Next.js 15 App Router
+│   ├── web/                          # Next.js 16 App Router (ADR-0021)
 │   │   ├── src/
 │   │   │   ├── app/
 │   │   │   │   ├── (marketing)/            # public, static, es-CO
@@ -403,9 +423,11 @@ The rules, and whether the ESLint zone that enforces each one exists yet. A rule
 | Only `apps/api/src/infrastructure/persistence/**` may import `@prisma/client` or `packages/database` | yes — `prismaImportBoundary`                   | Forces every query through the mapping + authorization layer                                            |
 | No `$queryRawUnsafe` / `$executeRawUnsafe`                                                           | yes — `rawSqlBan`                              | Raw SQL built from application strings is the injection surface RLS cannot cover                        |
 | Only `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts` may read `process.env`            | yes — `no-restricted-properties`               | §54                                                                                                     |
-| `pricing-engine` may not import Nest, Prisma, HTTP, `node:fs`, or reference `Date`/`Math.random`     | not yet — the package does not exist (Phase 2) | Purity is what makes golden-file tests meaningful. Time is injected as `evaluatedAt`                    |
+| `pricing-engine` may not import Nest, Prisma, HTTP, `node:fs`, or reference `Date`/`Math.random`     | not yet — the package does not exist (Phase 7) | Purity is what makes golden-file tests meaningful. Time is injected as `evaluatedAt`                    |
 | `ui` may not import `api-client`, `contracts` or `database`                                          | not yet — the package does not exist           | A design-system component that knows about a `Quote` is a feature component in the wrong place          |
-| `apps/web` may not import `database` or `pricing-engine`                                             | not yet — the app does not exist (Plan 0B-2)   | No Prisma in a browser bundle; no second pricing source of truth                                        |
+| `apps/web` may not import `database`, `pricing-engine` or `@prisma/client`                           | yes — `webBoundary`, static and dynamic        | No Prisma in a browser bundle; no second pricing source of truth                                        |
+| `'use server'` only in `apps/web/src/app/**/actions.ts` and `apps/web/src/lib/session/**`            | yes — `serverActionBoundary`                   | ADR-0015. A Server Action doing domain writes is a second, unauthorized-by-default entry point          |
+| A feature may not deep-import another feature's `components`/`hooks`/`schemas`/`lib`                 | yes — `featureBoundary`                        | §8. Cross-feature imports go through the feature's `index.ts`, or `features/` is only a naming scheme   |
 | `printer-sdk` may not import order/quote domain types                                                | not yet — the package does not exist           | The driver layer must be reusable by a future partner-network implementation                            |
 | Only `apps/api/src/infrastructure/persistence/**` may import `brandUnsafe`                           | not yet — **the helper itself does not exist** | The single controlled place where a DB `string` becomes a branded ID                                    |
 | `apps/*` may not import from another app's `src`                                                     | not yet — there is only one app                | Cross-app sharing goes through a package or it does not happen                                          |
@@ -1021,7 +1043,7 @@ graph LR
     L --> M[deploy production]
 ```
 
-Nothing deploys if any gate fails. The diagram is the target pipeline; `.github/workflows/ci.yml` runs the part of it that exists — `verify` (format, build, lint, typecheck, unit), `integration` (Testcontainers) and `openapi` (emit + `git diff --exit-code`). Turborepo remote caching would make unchanged packages free and is deliberately **off**: see §5 for the measurement, and do not enable it — or add an `actions/cache` step for `.turbo` — before project `references` land.
+Nothing deploys if any gate fails. The diagram is the target pipeline; `.github/workflows/ci.yml` runs the part of it that exists — `verify` (format, build, lint, typecheck, unit), `integration` (Testcontainers), `web` (`pnpm build`, then Playwright against a production build of `apps/web` in chromium) and `openapi` (emit + `git diff --exit-code`). E2E runs on the runner, not on an ephemeral environment: Playwright's `webServer` builds and starts the app itself, and there is nothing deployed for it to point at yet. Turborepo remote caching would make unchanged packages free and is deliberately **off**: see §5 for the measurement, and do not enable it — or add an `actions/cache` step for `.turbo` — before project `references` land.
 
 **Git hooks are deliberately minimal.** `lint-staged` runs Prettier and ESLint on changed files only, plus `commitlint` on the message. Typecheck and tests do **not** run pre-commit — they run in CI, where they can be parallel and cached, and a slow pre-commit hook trains people to use `--no-verify`, which is worse than no hook.
 
@@ -1084,9 +1106,9 @@ pnpm db:deploy && pnpm db:seed
 pnpm dev                  # web, api, and both python workers via turbo
 ```
 
-Reached so far: everything above except `pnpm db:seed` and a `pnpm dev` that
-starts more than `apps/api`. `temporal` and `temporal-ui` join `pnpm infra:up`
-in Plan 0B-3.
+Reached so far: everything above except `pnpm db:seed`. `pnpm dev` now starts
+`apps/api` and `apps/web` together; the Python workers, `temporal` and
+`temporal-ui` all join in Plan 0B-3.
 
 Seeds are deterministic and fixed-UUID: two organizations, five users across every role, three printer profiles, four materials, one published pricing rule set, and a set of models in every processing state — including one stuck at `AWAITING_UNIT_CONFIRMATION`, because that path is easy to forget and hard to reach by hand.
 
@@ -1099,7 +1121,7 @@ Seeds are deterministic and fixed-UUID: two organizations, five users across eve
 This `docs/` tree plus root `README.md`, `CONTRIBUTING.md` and `SECURITY.md`. Rules that keep documentation honest:
 
 - **ADRs are immutable.** A decision is superseded by a new ADR, never edited.
-- **Documentation that can drift silently, will** — so it should be checked mechanically wherever that is possible. One such check exists today: `apps/api/test/env-example.test.ts` asserts that `.env.example` is a superset of what `apps/api`'s Zod schema requires, and it runs in `pnpm verify`. Nothing yet compares §6's repository tree against the actual directory listing, or the environment-variable tables in these documents against the schemas; §6 is labelled target-state for that reason, and `CONTRIBUTING.md` says the same. Both checks are worth building; neither should be described as if it already ran.
+- **Documentation that can drift silently, will** — so it should be checked mechanically wherever that is possible. Two such checks exist today: `apps/api/test/env-example.test.ts` and `apps/web/test/env-example.test.ts` each assert that `.env.example` is a superset of what their app's Zod schema requires, and both run in `pnpm verify`. Nothing yet compares §6's repository tree against the actual directory listing, or the environment-variable tables in these documents against the schemas; §6 is labelled target-state for that reason, and `CONTRIBUTING.md` says the same. Both checks are worth building; neither should be described as if it already ran.
 - Every module directory carries a short `README.md` stating its responsibility and allowed dependencies, so an agent opening that directory has the boundary in context.
 
 ---
