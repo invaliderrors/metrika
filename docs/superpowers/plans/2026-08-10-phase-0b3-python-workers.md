@@ -30,6 +30,27 @@ Copy these values verbatim. Every task's requirements implicitly include this se
   - `tsc -b --force` exit 0 for every Node package
   - `uv run mypy --strict` and `uv run ruff check` exit 0 in `apps/workers`
 
+## What Task 1's spike measured, which Tasks 2–6 must not rediscover
+
+Recorded here because each of these would otherwise cost a task, and three of
+them contradict what a reasonable person would assume.
+
+- **`uv add` writes `>=` ranges, not pins.** The pin table in ADR-0027 is only
+  real because `uv.lock` is committed and every install uses `--frozen`. A task
+  that runs a bare `uv add` has silently widened a dependency.
+- **`temporalio/auto-setup` defaults to Cassandra**, so the naive
+  `docker run temporalio/auto-setup` in the brief does not boot. Task 5's compose
+  service must configure the datastore explicitly.
+- **`datamodel-codegen`'s default output is non-deterministic AND mypy-invalid.**
+  Task 4 commits that output and diffs it in CI, so the flags ADR-0027 recorded
+  are load-bearing, not cosmetic — a timestamp header alone makes the gate
+  permanently red.
+- **A generated model can pass ruff, mypy and pytest collection and still fail
+  to import.** Task 4 needs an assertion that actually imports it.
+- **`boto3` and `botocore` ship no `py.typed`**, so without `boto3-stubs[s3]`
+  every S3 call is `Any` and `mypy --strict` is decorative across the whole
+  storage module. It is a mandatory dependency, not a convenience.
+
 ## Method notes that cost the previous plan real time
 
 - Run a Node package's tests with **that package's own** `./node_modules/.bin/vitest` from inside the package. `node node_modules/vitest/vitest.mjs` from the repo root exits 1 with `MODULE_NOT_FOUND`, which looks exactly like a failing test.
@@ -684,6 +705,8 @@ z.toJSONSchema(Money) →
 The `pattern` and the bounds survive, which is what makes the Python side validate rather than merely deserialise. `docs/ARCHITECTURE.md` describes the chain as `zod-to-json-schema → datamodel-codegen`; correct that sentence in this task's commit, since adding a dependency to `packages/contracts` requires justification and there is none.
 
 **Branding is erased.** Measured: `z.string().uuid().brand('QuoteId')` emits a plain string with `format: "uuid"` and a pattern. Python gets validation, not type identity. Document that where the generated models live.
+
+**The digit class is already fixed, and must stay fixed.** `INTEGER_STRING` in `money.ts` spells `[0-9]`, not `\d`, because Python's `\d` is Unicode-aware while JavaScript's is not — the `\d` form let a generated pydantic model accept `"3\u0665\u0660"`, which Zod rejects and `BigInt` throws on, and read it as `350`. `packages/contracts/test/money.test.ts` guards the source text, since a behavioural test passes against both forms. If a schema you emit here carries any other `\d`, fix it the same way before generating from it.
 
 - [ ] **Step 2: Write the failing emitter test**
 
