@@ -12,12 +12,22 @@
     // silently shadows node_modules.
     "paths": { "@/*": ["./src/*"] }
   },
+  // `e2e/**` and `playwright.config.ts` are named here for two reasons, and the
+  // second one is not obvious. `tsc -b --force` is this package's `typecheck`
+  // script, so an omitted file is simply never type-checked — that is the
+  // obvious half. The other half is ESLint: `eslint.config.js` composes
+  // `typeChecked({ project: './tsconfig.json' })`, and a file outside that
+  // project's `include` makes typescript-eslint abort on it with
+  // "however that TSConfig does not include this file" rather than lint it. So
+  // this list is what puts the Playwright suite inside BOTH gates.
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
     "test/**/*.ts",
+    "e2e/**/*.ts",
     "vitest.config.ts",
     "next.config.ts",
+    "playwright.config.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": ["node_modules", ".next"]

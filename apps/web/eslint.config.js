@@ -46,7 +46,25 @@ const config = [
     files: ['src/config/env.ts'],
     rules: { 'no-restricted-properties': 'off' },
   },
-  { ignores: ['.next/**', 'coverage/**', 'playwright-report/**'] },
+  {
+    // The Playwright config, and ONLY it. `process.env.CI` is what decides
+    // `forbidOnly` and `reuseExistingServer`, and this file cannot get that
+    // through `src/config/env.ts`: that module parses `clientEnv` at import, so
+    // reading one runner flag through it would make `playwright test` refuse to
+    // START unless the two NEXT_PUBLIC_ keys were exported into the shell —
+    // when the entire point of `webServer.env` is that they are supplied to the
+    // server under test instead.
+    //
+    // Scoped to the file rather than to a directory, deliberately. `e2e/**`
+    // stays under the ban: a spec reading the ambient environment is how an
+    // assertion starts depending on the machine it runs on, and everything the
+    // suite needs is either in the config above it or in the shipped catalogue.
+    // apps/api's `test/support.ts` exemption is the precedent for both the
+    // mechanism and the narrowness.
+    files: ['playwright.config.ts'],
+    rules: { 'no-restricted-properties': 'off' },
+  },
+  { ignores: ['.next/**', 'coverage/**', 'playwright-report/**', 'test-results/**'] },
 ];
 
 export default config;

@@ -12,6 +12,14 @@ coverage/
 # build, which this repo's rules require.
 .next/
 next-env.d.ts
+
+# Playwright's own output. `test-results/` holds the traces, screenshots and
+# videos a failed run writes; `playwright-report/` is the HTML reporter's
+# output. Neither is produced by a fully green default run, which is exactly why
+# they are listed before anyone sees them — the first red run is a bad moment to
+# discover the tree went dirty.
+test-results/
+playwright-report/
 .env
 .env.local
 .DS_Store

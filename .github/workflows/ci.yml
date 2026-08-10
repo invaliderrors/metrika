@@ -38,6 +38,29 @@ jobs:
       # `Environment variable not found: DATABASE_ADMIN_URL`, and a URL nothing
       # connects to costs nothing. Do not read this as proof the build needs it.
       DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+
+      # UNLIKE the variable above, these two ARE load-bearing, and every job
+      # that runs `pnpm build` needs them.
+      #
+      # `apps/web/src/config/env.ts` parses `clientEnv` at module scope and
+      # `src/app/layout.tsx` imports it, so `next build` resolves both keys
+      # while collecting page data. MEASURED, with them unset: exit 1,
+      # "Failed to collect page data for /", a ZodError naming both. That is the
+      # intended behaviour — a misconfigured deployment must fail at build
+      # rather than on a user's first render — which makes supplying them here
+      # part of the contract rather than a workaround.
+      #
+      # Set at the job level rather than through a `.env` file because CI has
+      # none: `pnpm build` is `node --env-file-if-exists=.env …`, the
+      # `-if-exists` half is what makes a missing file fine, and a real
+      # environment variable wins over the file anyway. So this job and a
+      # developer's `pnpm build` take the same path with different sources.
+      #
+      # NOT SECRETS, and they never can be: `NEXT_PUBLIC_` values are compiled
+      # into the JavaScript every visitor downloads. See the warning in
+      # `.env.example` before adding a third key here.
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
+      NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
     steps:
       - uses: actions/checkout@v4
 
@@ -195,6 +218,14 @@ jobs:
       # `prisma migrate deploy` with the real, container-derived URL, which it
       # passes explicitly.
       DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+      # Load-bearing here too, for the reason spelled out in the `verify` job.
+      # MEASURED: `turbo run test:integration` schedules `@metrika/web#build`
+      # (`test:integration` declares `dependsOn: ["^build", "build"]`, and turbo
+      # materialises the task for every package), so this job fails on the web
+      # build before it reaches a container if these are absent — not only on
+      # the `pnpm build` step above.
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
+      NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
     steps:
       - uses: actions/checkout@v4
 
@@ -225,6 +256,10 @@ jobs:
     env:
       # Same variable, same reasoning as the `verify` job — see the note there.
       DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+      # Same two, same reasoning: this job runs `pnpm build`, which builds
+      # apps/web, which now resolves both keys.
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
+      NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
     steps:
       - uses: actions/checkout@v4
 

@@ -27,6 +27,7 @@
   "devDependencies": {
     "@metrika/eslint-config": "workspace:*",
     "@metrika/typescript-config": "workspace:*",
+    "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",

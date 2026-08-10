@@ -79,6 +79,18 @@ export function loadServerEnv(): ServerEnv {
  * Parsed at module scope so a misconfigured deployment fails at build, not on
  * a user's first render. `vitest.config.ts` supplies both keys for the same
  * reason: importing this module runs this parse.
+ *
+ * THAT SENTENCE IS ONLY TRUE WHILE SOMETHING THE APP ROUTER REACHES IMPORTS
+ * `clientEnv`, and for a while nothing did. A module-scope parse in a module
+ * nobody imports runs at no scope at all: MEASURED, with both keys unset,
+ * `turbo run build` exited 0 and inlined neither value. `src/app/layout.tsx` is
+ * the importer that closes that — it derives the API origin it preconnects to
+ * from `NEXT_PUBLIC_API_BASE_URL` — and with it in place the same command exits
+ * 1 with this schema's ZodError naming both keys.
+ *
+ * So the guarantee is a property of the import graph, not of this file. If the
+ * layout ever stops consuming the value, restore the guarantee somewhere else
+ * on the same path rather than assuming this comment still holds.
  */
 export const clientEnv: ClientEnv = ClientEnvSchema.parse({
   NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,

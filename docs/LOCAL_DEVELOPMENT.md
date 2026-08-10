@@ -159,8 +159,28 @@ explicitly. `cd packages/database && pnpm exec prisma migrate deploy` fails with
 `Environment variable not found: DATABASE_ADMIN_URL` — Prisma's dotenv search
 looks beside the schema and in the cwd, and never reaches the repository root.
 
-`pnpm test:e2e` (Playwright) arrives in Plan 0B-2; `pnpm contracts:emit` and
-`pnpm db:seed` in Plan 0B-3.
+The Playwright suite exists and is **package-scoped**, not a root script:
+
+```bash
+pnpm --filter @metrika/web exec playwright install chromium   # once, per machine
+pnpm --filter @metrika/web test:e2e
+```
+
+It starts its own server — `pnpm build && pnpm start` in `apps/web`, on
+`127.0.0.1:3000` — rather than assuming one is up, and it supplies the two
+`NEXT_PUBLIC_` keys itself, so no `.env` is needed for it. A production build,
+not `next dev`: dev-mode hydration and CSS delivery differ enough that a green
+dev run says nothing about what ships.
+
+One thing to know before trusting a red-to-green cycle: `reuseExistingServer` is
+on outside CI, so a `pnpm dev` you forgot about on port 3000 will be used
+as-is and will serve an old build. If a change does not show up, kill that first.
+
+There is deliberately no root `pnpm test:e2e`, because it would pull a browser
+download into `pnpm verify`. The cost of that choice is real and worth stating
+plainly: **no CI job runs this suite yet**, so today it is a local gate only.
+
+`pnpm contracts:emit` and `pnpm db:seed` arrive in Plan 0B-3.
 
 ---
 

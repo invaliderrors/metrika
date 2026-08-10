@@ -1,6 +1,14 @@
 #!/usr/bin/env node
-// The entry point for `pnpm build`, and the reason it is not a bare
-// `turbo run build`.
+// The entry point for the four root scripts that can end up running `next
+// build` or `next dev` — `build`, `dev`, `test:unit`, `test:integration` — and
+// the reason none of them is a bare `turbo run <task>`.
+//
+// `test:unit` and `test:integration` are on that list because turbo, not the
+// script, decides: both declare `dependsOn: ["^build", "build"]`, so
+// `@metrika/web#build` is scheduled by each of them. MEASURED, once
+// `src/app/layout.tsx` began importing `clientEnv`: `turbo run test:unit` with
+// no `.env` loaded re-ran the web build as a cache miss and died with the
+// ZodError below, on a tree where `pnpm build` had just succeeded.
 //
 // `next build` inlines every `NEXT_PUBLIC_` value into the browser bundle at
 // BUILD time, and `apps/web/src/config/env.ts` parses them at module scope so a
@@ -30,7 +38,13 @@
 //
 // Generic in its arguments rather than hard-coded to `run build`, so a second
 // task that needs the environment is one word in `package.json` rather than a
-// second script here.
+// second script here. Three more now are, which is what that sentence was for.
+//
+// Note the second gate, which this file cannot satisfy on its own: turbo runs
+// in strict env mode, so putting a variable in turbo's environment is necessary
+// and not sufficient — `turbo.json` has to declare it on the task as well.
+// MEASURED: a task declaring no `env` at all still sees `NEXT_PUBLIC_*` (turbo
+// infers those from the `nextjs` framework) but does NOT see `WEB_PORT`.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -61,6 +61,34 @@
       "dependsOn": ["^build", "build"],
       "cache": false
     },
-    "dev": { "cache": false, "persistent": true }
+    // The same two keys as `build`, for a DIFFERENT reason, since `cache: false`
+    // makes hashing moot here.
+    //
+    // `next dev` now RESOLVES both: `src/app/layout.tsx` imports `clientEnv`,
+    // which parses at module scope, so a dev server that cannot see them 500s on
+    // the first request instead of rendering. Turbo runs in strict env mode
+    // (`--dry=json` reports `envMode: strict` with nothing configured), and
+    // strict mode filters a task's environment down to what is declared plus
+    // turbo's own defaults.
+    //
+    // MEASURED, and the measurement is the reason this reads "belt and braces"
+    // rather than "required": a throwaway task in apps/web declaring NO env, run
+    // with the root `.env` loaded, saw `NEXT_PUBLIC_API_BASE_URL` and
+    // `NEXT_PUBLIC_DEFAULT_LOCALE` but NOT `WEB_PORT` and not an arbitrary
+    // marker variable. So strict mode does drop undeclared variables outright —
+    // it is not only a hashing concern — and `NEXT_PUBLIC_*` survives it purely
+    // through turbo's `nextjs` framework inference. That is the same upstream
+    // behaviour the `build` task above declines to depend on, for the same
+    // reason: if the inference ever narrows, an undeclared `dev` breaks at
+    // runtime with a ZodError that looks like an application bug.
+    //
+    // `pnpm dev` goes through `scripts/turbo.mjs` for the same reason `pnpm
+    // build` does — that is what puts the root `.env` into turbo's own
+    // environment; this key is what keeps it reaching the task.
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE"]
+    }
   }
 }
