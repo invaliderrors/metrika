@@ -104,11 +104,16 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      # `verify` is the only job that reaches apps/workers. Its four steps —
-      # format:check, lint, typecheck, test:unit — all run through turbo, and
-      # apps/workers defines every one of them as a `uv run …` shim. The other
-      # three jobs run `build` and `test:integration`, which that package does
-      # not define, so turbo skips it there and they need no uv.
+      # This job's four gates — format:check, lint, typecheck, test:unit — all
+      # run through turbo, and apps/workers defines every one of them as a
+      # `uv run …` shim.
+      #
+      # It is NO LONGER the only job that reaches apps/workers: Plan 0B-3 Task 3
+      # added a `test:integration` script there (a real MinIO container for
+      # `metrika_core.storage`), so the `integration` job installs uv too. The
+      # split is deliberate — `pnpm verify` must stay runnable with no Docker
+      # daemon, which is what packages/testing tells a developer in the error
+      # they actually read.
       #
       # Pinned to the version in ADR-0027, like every other tool here. uv
       # provisions its own CPython from .python-version, so there is
@@ -303,6 +308,15 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # `apps/workers` declares `test:integration` as a `uv run …` shim
+      # (`metrika_core`'s storage suite, against a real MinIO container), so
+      # `turbo run test:integration` schedules it here and this job needs uv.
+      # Without this step it fails with `uv: command not found`, which looks
+      # nothing like its cause. Same pin and same reasoning as the `verify` job.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: '0.12.3'
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
@@ -311,10 +325,10 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # No `docker compose up` here: Testcontainers starts its own Postgres per
-      # run, which is the point of it — the suite must not depend on a stack a
-      # workflow file happened to bring up. ubuntu-latest ships a running
-      # Docker daemon, so packages/testing's preflight passes.
+      # No `docker compose up` here: Testcontainers starts its own Postgres and
+      # its own MinIO per run, which is the point of it — the suite must not
+      # depend on a stack a workflow file happened to bring up. ubuntu-latest
+      # ships a running Docker daemon, so packages/testing's preflight passes.
       - name: Integration tests
         run: pnpm test:integration
 
