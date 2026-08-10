@@ -215,20 +215,48 @@ jobs:
       #     suppression under a directory named e.g. `foo--bar` would escape the
       #     gate silently. awk strips the `path:lineno:` prefix before testing and
       #     prints the original line, so the report still names the file.
+      #
+      # PYTHON JOINED BOTH STEPS when apps/workers arrived, and this is the only
+      # part of this file Plan 0B-3 Task 2 touched: `docs/TYPESCRIPT_AND_TOOLING.md`
+      # claims the Python side "gets the same treatment", and on suppressions it
+      # had none at all. MEASURED, every one at exit 0 on BOTH `ruff check` and
+      # `mypy --strict` before this change: a first-line `# type: ignore` (which
+      # makes mypy skip the whole file), `# mypy: ignore-errors`, a per-line
+      # `# type: ignore`, and a blanket `# noqa`.
+      #
+      # ruff's `PGH` rules now force a code onto `# noqa` and `# type: ignore`,
+      # and mypy's `ignore-without-code` does the same for the per-line form.
+      # These two steps add the half neither tool can see:
+      #
+      #   - the `--` justification, extended to `noqa` and `type: ignore`. The
+      #     required shape is a SECOND comment — `# type: ignore[return-value]
+      #     # -- upstream stub is wrong` — and that is measured, not stylistic:
+      #     `# type: ignore[return-value] -- reason` makes mypy report
+      #     `Invalid "type: ignore" comment [syntax]` and suppress NOTHING, so
+      #     the Node side's inline form would silently un-suppress here. Both
+      #     tools accept the second-comment form (mypy exit 0, ruff exit 0).
+      #   - `# mypy: ignore-errors` banned outright in the step below, beside
+      #     `@ts-ignore`, because it is the file-wide nuke and it is invisible to
+      #     ruff and to mypy alike — no rule can be made to report it.
+      #
+      # `.venv` is excluded because the `Unit tests` step above creates one, and
+      # a wheel shipping bundled JavaScript would otherwise be graded as ours.
       - name: Reject unjustified suppressions
         run: |
-          if grep -rnE '(eslint-disable|@ts-expect-error)' \
+          if grep -rnE '(eslint-disable|@ts-expect-error|noqa|type:[[:space:]]*ignore)' \
                --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
+               --include='*.py' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
-               --exclude-dir=.next \
+               --exclude-dir=.next --exclude-dir=.venv \
                packages apps 2>/dev/null \
              | awk '{ content = $0; sub(/^[^:]*:[0-9]+:/, "", content); if (content !~ /--/) print }' \
              | grep -q .; then
-            echo "::error::Every eslint-disable / @ts-expect-error needs a '-- <justification>'"
-            grep -rnE '(eslint-disable|@ts-expect-error)' \
+            echo "::error::Every eslint-disable / @ts-expect-error / noqa / type: ignore needs a '-- <justification>'"
+            grep -rnE '(eslint-disable|@ts-expect-error|noqa|type:[[:space:]]*ignore)' \
                --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
+               --include='*.py' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
-               --exclude-dir=.next \
+               --exclude-dir=.next --exclude-dir=.venv \
                packages apps 2>/dev/null \
              | awk '{ content = $0; sub(/^[^:]*:[0-9]+:/, "", content); if (content !~ /--/) print }'
             exit 1
@@ -240,13 +268,14 @@ jobs:
       # makes the `if` false and silently passes a real @ts-ignore). Piping through
       # `grep -q .` makes the `if` depend on whether any content survived — i.e. on the
       # match itself — not on grep's own exit status. Same reasoning as the step above.
-      - name: Reject @ts-ignore
+      - name: Reject @ts-ignore and mypy ignore-errors
         run: |
-          if grep -rn '@ts-ignore' --include='*.ts' --include='*.tsx' --include='*.mjs' \
+          if grep -rnE '(@ts-ignore|mypy:[[:space:]]*ignore-errors)' \
+               --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.py' \
                --exclude-dir=node_modules --exclude-dir=coverage --exclude-dir=dist \
-               --exclude-dir=.next \
+               --exclude-dir=.next --exclude-dir=.venv \
                packages apps 2>/dev/null | grep -q .; then
-            echo "::error::@ts-ignore is banned — use @ts-expect-error with a justification"
+            echo "::error::@ts-ignore and '# mypy: ignore-errors' are banned — use @ts-expect-error or '# type: ignore[code]  # -- why'"
             exit 1
           fi
 

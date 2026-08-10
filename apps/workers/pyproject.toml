@@ -41,7 +41,44 @@ line-length = 100
 # Deliberately broad. The Node side runs typescript-eslint's strict and
 # stylistic sets plus type-aware rules; an equivalently strict Python side is
 # what ADR-0007 promised when it accepted a second toolchain.
-select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "PTH", "RUF", "ASYNC", "S"]
+#
+# The last three are each a specific Node-side rule this repository already
+# enforces, and each was MEASURED passing before it was added:
+#
+#   PGH  suppressions must name a code. PGH003 is the load-bearing one — a bare
+#        `# type: ignore` on line 1 makes mypy skip the ENTIRE FILE and still
+#        exit 0, measured, including with `ignore-without-code` enabled. mypy
+#        cannot see its own blind spot; ruff can. PGH004 is the `# noqa`
+#        equivalent. Together with CI's justification grep this is the Python
+#        half of the `@ts-ignore` ban.
+#   DTZ  `datetime.datetime.now()` without a timezone. ADR-0027 names DTZ005 as
+#        something this project wants; it passed without this.
+#   T20  `print()`, against `no-console: 'error'` on the Node side. A worker
+#        logs through structlog or not at all.
+#
+# Adding rules here is not free — see the codegen warning above `line-length`.
+# Doing it NOW is deliberate: `--formatters ruff-check` runs these over the
+# generated models, and Task 4 has not committed one yet, so this is the last
+# moment a `select` change costs nothing.
+select = [
+  "E",
+  "F",
+  "I",
+  "N",
+  "UP",
+  "B",
+  "A",
+  "C4",
+  "SIM",
+  "ARG",
+  "PTH",
+  "RUF",
+  "ASYNC",
+  "S",
+  "PGH",
+  "DTZ",
+  "T20",
+]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
@@ -62,13 +99,36 @@ warn_unreachable = true
 # The Python half of "no `any`, no exceptions". `strict` alone still permits a
 # hand-written `Any` annotation, which is the same escape hatch `@ts-ignore` is
 # on the other side and is banned for the same reason.
+#
+# KNOWN, and it lands on Task 4 rather than here: this is stricter than the
+# plain `--strict` ADR-0027 measured `datamodel-codegen` against. A schema with
+# `additionalProperties` generates `dict[str, Any]`, which this flag rejects on
+# a model the spike never exercised. That is a real decision for Task 4 —
+# narrow the schema, or relax this to `disallow_any_expr = false` reasoning, or
+# per-module-override the generated package — but not a reason to discover it
+# there without warning.
 disallow_any_explicit = true
+# A suppression must name what it suppresses. `# type: ignore` bare is the
+# `@ts-ignore` of this side; with a code it is `@ts-expect-error`, which at
+# least stops applying when the underlying error goes away.
+#
+# This does NOT cover a file-level `# type: ignore` (line 1 skips the whole file
+# and mypy exits 0 regardless — measured). ruff's PGH003 is what catches that,
+# which is why both gates carry a piece of this rule.
+enable_error_code = ["ignore-without-code"]
 
 [dependency-groups]
 # Exact `==` pins, every one from ADR-0027's measured table. `uv add` writes
-# `>=` ranges instead, so these were written by hand — and `uv.lock` is
-# committed, and CI installs with `--frozen`, because a bare `uv sync`
-# re-resolves and turns every pin here into a decoration.
+# `>=` ranges instead, so these were written by hand.
+#
+# What ENFORCES that, rather than asserting it: every script in `package.json`
+# runs `uv run --locked --all-packages`, and `tests/test_toolchain.py` runs
+# `uv lock --check`. MEASURED, and this is the whole reason both exist: after an
+# edit to this file, a bare `uv run` **re-locks and exits 0** — silently
+# re-resolving the table above — while `--locked` exits 2 and `uv lock --check`
+# exits 1. `--frozen` is the weaker flag: it declines to update the lockfile but
+# says nothing when the lockfile no longer matches this file. ADR-0027
+# obligation 1.
 #
 # `boto3-stubs[s3]` is NOT a convenience. `boto3` and `botocore` are the only
 # packages in this toolchain that ship no `py.typed` marker; without the stubs

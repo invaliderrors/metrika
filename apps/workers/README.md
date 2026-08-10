@@ -22,12 +22,23 @@ cover Python as well as TypeScript. There is one gate, not two.
 ## Running things
 
 ```bash
-uv sync --frozen        # install exactly what uv.lock says, and nothing else
-uv run pytest           # or: pnpm --filter @metrika/workers run test:unit
-uv run ruff check .
-uv run ruff format .
-uv run mypy .
+uv sync --all-packages --frozen        # install exactly what uv.lock says
+uv run --locked --all-packages pytest  # or: pnpm --filter @metrika/workers run test:unit
+uv run --locked --all-packages ruff check .
+uv run --locked --all-packages ruff format .
+uv run --locked --all-packages mypy .
 ```
+
+**Both flags are load-bearing, and both are measured.** `--all-packages` is
+what installs the workspace _members_: at a virtual root, a plain
+`uv sync --frozen` installs only the root's dev group, and `mypy` then reports
+`import-not-found` on member sources — a type checker failing on its own
+workspace, for a reason that looks like a broken import. `--locked` is what
+makes the pin table real: after an edit to `pyproject.toml`, a bare `uv run`
+**re-locks and exits 0**, silently re-resolving every version ADR-0027 pinned,
+while `--locked` exits 2 and `uv lock --check` exits 1. Note `--frozen` is the
+weaker of the two — it declines to update the lockfile, but says nothing when
+the lockfile no longer matches `pyproject.toml`.
 
 `uv` itself is pinned to an exact version in the repository's `mise.toml`, and
 the interpreter comes from `.python-version` (3.12.13) — `uv` provisions its own
@@ -35,16 +46,38 @@ CPython from that file and ignores `mise`'s, which is recorded in ADR-0027 so
 that the next person to debug a version discrepancy knows there are two places
 to look.
 
-## Two things that will bite
+## Three things that will bite
 
 **`uv add` writes `>=` ranges, not pins.** Every requirement in
 `pyproject.toml` is an exact `==`, written by hand, and
 `packages/typescript-config/test/dependency-pins.test.ts` fails the build on
 anything else — in `pyproject.toml` as well as in every `package.json`. After
 `uv add <pkg>`, rewrite the range it left behind to the version it actually
-resolved, and commit `uv.lock` in the same change. Installs use `--frozen`
-precisely so that the lockfile is what decides, and a lockfile nobody refreshed
-on purpose is the one thing that can quietly widen a pin.
+resolved, then run `uv lock` and commit the lockfile in the same change. The
+`--locked` on every script above is what turns that from a convention into an
+error.
+
+The one exception, and it is the shape `uv add` produces inside a workspace: a
+dependency on a sibling member is written bare (`dependencies = ["metrika-core"]`)
+with `[tool.uv.sources] metrika-core = { workspace = true }` beside it, because
+the version comes from the member rather than from an index. The gate exempts a
+name with a `workspace = true` source **in the same file**, exactly as the
+TypeScript half exempts `workspace:*`. Do not widen the pin rule to make one of
+these pass; add the source entry.
+
+**Suppressions must name a code and carry a justification.** `# type: ignore`
+and `# noqa` bare are rejected by ruff's `PGH` rules, and a per-line
+`# type: ignore` without a code by mypy's `ignore-without-code`. The required
+shape is a **second comment**, because the Node side's inline form breaks mypy:
+
+```python
+value = untyped()  # type: ignore[no-any-return]  # -- boto3 stubs lag the runtime
+```
+
+Written as `# type: ignore[no-any-return] -- reason`, mypy reports
+`Invalid "type: ignore" comment` and suppresses nothing. `# mypy: ignore-errors`
+is banned outright, beside `@ts-ignore` — it silences a whole file and neither
+tool can be made to report it.
 
 **The ruff configuration is an input to generated code.** `contracts:emit` runs
 `datamodel-codegen --formatters ruff-format ruff-check`, so the committed

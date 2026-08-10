@@ -274,7 +274,81 @@ function isPythonDependencyArray(table: string, key: string): boolean {
   // uv's pre-PEP-735 spelling. Nothing uses it today; a migration back to it
   // must not fall out of this gate.
   if (table === 'tool.uv' && key === 'dev-dependencies') return true;
+  // PEP 518 build requirements. `uv init --lib` writes `requires =
+  // ["hatchling>=1.26,<2"]`, and every member package Plan 0B-3 adds carries
+  // one — a build backend chosen by a range is as unreviewed as any other
+  // dependency, and it is the one that decides what the wheel contains.
+  if (table === 'build-system' && key === 'requires') return true;
   return false;
+}
+
+interface TomlAssignment {
+  /** Dotted table path, e.g. `tool.uv.sources`. Empty at the top level. */
+  readonly table: string;
+  /** Bare key. Empty when the key was quoted — `stripStrings` lifts those out. */
+  readonly key: string;
+  /** Every string literal on the right-hand side, in order. */
+  readonly strings: readonly string[];
+  /** The right-hand side with its strings removed, for `= { workspace = true }`. */
+  readonly code: string;
+}
+
+/**
+ * Every `key = value` in a TOML file, flattened to (table, key, strings, code).
+ *
+ * One pass serves four questions — what is required, what comes from the
+ * workspace, what each member is called, and what `uv.lock` believes the
+ * membership is — so that four readers cannot drift apart.
+ */
+function readAssignments(file: string): TomlAssignment[] {
+  const found: TomlAssignment[] = [];
+  let table = '';
+  let openKey: string | null = null;
+  let openStrings: string[] = [];
+  let openCode = '';
+  let depth = 0;
+
+  for (const rawLine of readFileSync(file, 'utf8').split('\n')) {
+    const { code, strings } = stripStrings(rawLine);
+    const trimmed = code.trim();
+
+    if (openKey === null) {
+      const header = /^\[{1,2}([^[\]]+)\]{1,2}$/.exec(trimmed);
+      if (header?.[1] !== undefined) {
+        table = header[1].trim();
+        continue;
+      }
+      // The key is allowed to be empty: a quoted key (`"tests/**" = [...]`)
+      // has already been lifted out by `stripStrings`, and such an array still
+      // has to be tracked so its closing bracket is not mistaken for something
+      // else.
+      const assigned = /^([A-Za-z0-9_.-]*)\s*=(.*)$/.exec(trimmed);
+      if (assigned?.[1] === undefined || assigned[2] === undefined) continue;
+      openKey = assigned[1];
+      openStrings = [...strings];
+      openCode = assigned[2];
+      depth = count(assigned[2], '[') - count(assigned[2], ']');
+    } else {
+      openStrings.push(...strings);
+      openCode += ` ${code}`;
+      depth += count(code, '[') - count(code, ']');
+    }
+
+    if (depth <= 0) {
+      found.push({ table, key: openKey, strings: openStrings, code: openCode });
+      openKey = null;
+    }
+  }
+  return found;
+}
+
+function count(haystack: string, character: string): number {
+  return haystack.split(character).length - 1;
+}
+
+/** PEP 503 name normalisation, so `metrika_core` and `metrika-core` are one name. */
+function normalize(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/g, '-');
 }
 
 interface PythonRequirement {
@@ -285,49 +359,59 @@ interface PythonRequirement {
 }
 
 function pythonRequirements(): PythonRequirement[] {
-  const found: PythonRequirement[] = [];
-
-  for (const file of pyprojectPaths()) {
+  return pyprojectPaths().flatMap((file) => {
     const manifest = path.relative(repoRoot, file);
-    let table = '';
-    let arrayKey: string | null = null;
-    let depth = 0;
-
-    for (const rawLine of readFileSync(file, 'utf8').split('\n')) {
-      const { code, strings } = stripStrings(rawLine);
-      const trimmed = code.trim();
-
-      if (arrayKey === null) {
-        const header = /^\[{1,2}([^[\]]+)\]{1,2}$/.exec(trimmed);
-        if (header?.[1] !== undefined) {
-          table = header[1].trim();
-          continue;
-        }
-        // The key is allowed to be empty: a quoted key (`"tests/**" = [...]`)
-        // has already been lifted out by `stripStrings`, and such an array
-        // still has to be tracked so its closing bracket is not mistaken for
-        // something else.
-        const opened = /^([A-Za-z0-9_.-]*)\s*=\s*\[(.*)$/.exec(trimmed);
-        if (opened?.[1] === undefined || opened[2] === undefined) continue;
-        arrayKey = opened[1];
-        depth = 1 + count(opened[2], '[') - count(opened[2], ']');
-      } else {
-        depth += count(code, '[') - count(code, ']');
-      }
-
-      if (isPythonDependencyArray(table, arrayKey)) {
-        for (const requirement of strings) {
-          found.push({ manifest, table, key: arrayKey, requirement });
-        }
-      }
-      if (depth <= 0) arrayKey = null;
-    }
-  }
-  return found;
+    return readAssignments(file)
+      .filter(({ table, key }) => isPythonDependencyArray(table, key))
+      .flatMap(({ table, key, strings }) =>
+        strings.map((requirement) => ({ manifest, table, key, requirement })),
+      );
+  });
 }
 
-function count(haystack: string, character: string): number {
-  return haystack.split(character).length - 1;
+/**
+ * The names in this file that `[tool.uv.sources]` resolves from the workspace
+ * rather than from an index.
+ *
+ * This is what makes the pin rule survive contact with a real uv workspace.
+ * `uv add metrika-core` inside one writes `dependencies = ["metrika-core"]`
+ * with NO version, plus `[tool.uv.sources] metrika-core = { workspace = true }`
+ * — a bare name by design, because the version comes from the member, not from
+ * an index. Graded naively that is the widest range there is; graded correctly
+ * it is the exact analogue of the `workspace:` protocol the TypeScript half
+ * already allows, and it is allowed here for the same reason.
+ *
+ * Both spellings are read, because `uv` writes the first and a human writing it
+ * out longhand writes the second:
+ *
+ *     [tool.uv.sources]
+ *     metrika-core = { workspace = true }
+ *
+ *     [tool.uv.sources.metrika-core]
+ *     workspace = true
+ *
+ * `{ git = … }`, `{ path = … }` and `{ url = … }` sources are deliberately NOT
+ * exempt: those name an external revision, which is exactly the thing a pin is
+ * for.
+ */
+function workspaceSourceNames(file: string): Set<string> {
+  const names = new Set<string>();
+
+  for (const { table, key, code } of readAssignments(file)) {
+    if (table === 'tool.uv.sources' && /workspace\s*=\s*true/.test(code)) {
+      names.add(normalize(key));
+    }
+    const nested = /^tool\.uv\.sources\.(.+)$/.exec(table);
+    if (nested?.[1] !== undefined && key === 'workspace' && /true/.test(code)) {
+      names.add(normalize(nested[1]));
+    }
+  }
+  return names;
+}
+
+function projectName(file: string): string | undefined {
+  return readAssignments(file).find(({ table, key }) => table === 'project' && key === 'name')
+    ?.strings[0];
 }
 
 /**
@@ -361,7 +445,18 @@ describe('python dependency pins', () => {
   });
 
   it('pins every python dependency exactly — no >=, ~=, wildcard or bare name', () => {
+    const sourcedFromWorkspace = new Map(
+      pyprojectPaths().map((file) => [path.relative(repoRoot, file), workspaceSourceNames(file)]),
+    );
+
     const offenders = pythonRequirements()
+      .filter(({ manifest, requirement }) => {
+        // `metrika-core` and `metrika-core[extra]` both resolve through the
+        // same `[tool.uv.sources]` entry, IN THE SAME FILE — a workspace source
+        // declared in one member says nothing about another.
+        const name = normalize(requirement.split(/[[=<>!~;\s]/)[0] ?? requirement);
+        return !sourcedFromWorkspace.get(manifest)?.has(name);
+      })
       .filter(({ requirement }) => !PY_EXACT.test(requirement))
       .map(
         ({ manifest, table, key, requirement }) =>
@@ -371,6 +466,45 @@ describe('python dependency pins', () => {
     expect(
       offenders,
       'pin these exactly; uv writes >= ranges by default, and a floor is a version nobody reviewed',
+    ).toEqual([]);
+  });
+
+  /**
+   * A member `uv` never heard of is not a member — it is a directory of Python
+   * that no gate installs, no `uv.lock` resolves and no `mypy` imports, and
+   * nothing says so. `[tool.uv.workspace] members` matches by glob, so a
+   * mistyped or unlisted directory is silently not a member; `uv lock --check`
+   * is content, because uv is not missing anything it knows about.
+   *
+   * `uv` writes `[manifest] members` into the lockfile only once there is more
+   * than the root package, so an absent section means "the root and nothing
+   * else" — which is why the assertion is written against the member manifests
+   * found on disk rather than against a count.
+   */
+  it('has every member package on disk listed in uv.lock', () => {
+    const workspaceRoot = path.join(repoRoot, 'apps/workers');
+    const lock = path.join(workspaceRoot, 'uv.lock');
+
+    const members = new Set(
+      readAssignments(lock)
+        .filter(({ table, key }) => table === 'manifest' && key === 'members')
+        .flatMap(({ strings }) => strings)
+        .map(normalize),
+    );
+
+    const missing = pyprojectPaths()
+      .filter((file) => file.startsWith(`${workspaceRoot}${path.sep}`))
+      .filter((file) => file !== path.join(workspaceRoot, 'pyproject.toml'))
+      .filter((file) => {
+        const name = projectName(file);
+        return name === undefined || !members.has(normalize(name));
+      })
+      .map((file) => path.relative(repoRoot, file));
+
+    expect(
+      missing,
+      'uv does not know these are members — check the [tool.uv.workspace] members globs, ' +
+        're-run `uv lock`, or if one is deliberately outside the workspace, teach this test why',
     ).toEqual([]);
   });
 });
