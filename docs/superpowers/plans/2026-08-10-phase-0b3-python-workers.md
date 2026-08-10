@@ -779,6 +779,34 @@ cd packages/contracts && ./node_modules/.bin/vitest run json-schema; echo "EXIT=
 
 Expected: **non-zero**, module not found.
 
+- [ ] **Step 3b: Scope `disallow_any_explicit` off for the generated module — and only for it**
+
+`[tool.mypy] disallow_any_explicit = true` fires on the class line of **every**
+pydantic model, including `class S(BaseModel): x: int`. A hand-written model can
+carry a justified suppression; a generated one cannot, and this module is
+byte-diffed in CI so nothing may be added to it by hand.
+
+MEASURED, isolated with `--config-file` so the project config could not leak in:
+
+```
+[mypy] strict = True                                  → exit 0
+[mypy] strict = True, disallow_any_explicit = True    → exit 1  explicit-any
+```
+
+So `--strict` — which is what `CLAUDE.md` and `docs/TYPESCRIPT_AND_TOOLING.md`
+actually commit to — is unaffected. `disallow_any_explicit` is an extra on top,
+and it is the extra that breaks. `plugins = ["pydantic.mypy"]` does **not** fix
+it; that was ADR-0027's guess and it is wrong.
+
+Add a `[[tool.mypy.overrides]]` naming **only** the generated contracts module.
+Do not drop the flag globally: `metrika_core`, `geometry` and `slicer` are where
+humans write code, and an explicit `Any` there is a real smell worth failing on.
+
+**Guard the override**, because an exemption list is exactly the thing that
+widens under time pressure. Assert its module list is exactly the generated
+package — a test that fails if anyone adds `metrika_core.*` to it. Prove it by
+adding one and confirming red.
+
 - [ ] **Step 4: Implement and wire the script**
 
 `scripts/contracts-emit.mjs` drives both halves and mirrors `scripts/prisma.mjs`'s shape. `datamodel-codegen` flags come from ADR-0027's Step 6 measurements — in particular whichever flag makes the output deterministic, because Step 6 asks for that specifically.
