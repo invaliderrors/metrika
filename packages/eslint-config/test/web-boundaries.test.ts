@@ -144,6 +144,11 @@ describe('featureBoundary — the climb depth', () => {
     ],
     // Same feature, alias form: reported on purpose. See the header.
     ['src/features/models/components/ModelCard.tsx', '@/features/models/hooks/use-model'],
+    // From OUTSIDE any feature — the half of ARCHITECTURE.md section 8's charter
+    // the zone could not police while it was scoped to src/features/**.
+    ['src/app/page.tsx', '@/features/quotes/components/QuoteCard'],
+    ['src/app/quotes/page.tsx', '../../features/quotes/hooks/use-quote'],
+    ['src/components/ui/Panel.tsx', '@/features/models/lib/format'],
   ])('rejects %s importing %s', async (file, specifier) => {
     const rules = await lint(`import { X } from '${specifier}';`, file);
     expect(rules).toContain('no-restricted-imports');
@@ -156,6 +161,11 @@ describe('featureBoundary — the climb depth', () => {
     ['src/features/models/hooks/use-model.ts', '../components/ModelCard'],
     ['src/features/models/components/ModelCard.tsx', '@/features/quotes'],
     ['src/features/models/components/ModelCard.tsx', '@/lib/cn'],
+    // Outside a feature, the sanctioned forms stay sanctioned.
+    ['src/app/page.tsx', '@/features/quotes'],
+    ['src/app/page.tsx', '@/lib/formatting'],
+    ['src/app/layout.tsx', '@/config/env'],
+    ['src/components/ui/button.tsx', '@/lib/cn'],
   ])('accepts %s importing %s', async (file, specifier) => {
     const rules = await lint(`import { X } from '${specifier}';`, file);
     expect(rules).toEqual([]);

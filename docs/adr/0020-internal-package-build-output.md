@@ -1,6 +1,6 @@
 # ADR-0020 — Internal packages `apps/api` depends on emit compiled `dist/`, not source-only `exports`
 
-**Status:** Accepted · **Date:** 2026-08-08 · **Supersedes:** the source-only-packages paragraph of [ADR-0001](./0001-monorepo-strategy.md)'s Decision section. The rest of ADR-0001 — pnpm workspaces, Turborepo, the separate uv workspace for Python — stands unchanged.
+**Status:** Accepted · **Date:** 2026-08-08 · **Scoped by** [ADR-0026](./0026-web-consumes-compiled-contracts.md) (this ADR's claim that Next.js is unaffected is wrong — `apps/web` consumes `dist/` too) · **Supersedes:** the source-only-packages paragraph of [ADR-0001](./0001-monorepo-strategy.md)'s Decision section. The rest of ADR-0001 — pnpm workspaces, Turborepo, the separate uv workspace for Python — stands unchanged.
 
 ## Context
 
