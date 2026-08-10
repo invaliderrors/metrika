@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 import {
   addMoney,
@@ -163,5 +165,39 @@ describe('Money', () => {
 
   it('rejects an unlisted currency code', () => {
     expect(Money.safeParse({ amountMinor: '0', currency: 'GBP', exponent: 0 }).success).toBe(false);
+  });
+});
+
+describe('the integer-string pattern crosses the language boundary safely', () => {
+  const source = readFileSync(new URL('../src/money.ts', import.meta.url), 'utf8');
+
+  it('spells its digit class as [0-9], never \\d', () => {
+    // This asserts SOURCE TEXT, which is normally a weak shape — but here it is
+    // the only shape available. `\d` and `[0-9]` are identical in JavaScript,
+    // so every behavioural assertion in this file passes against both. They
+    // differ in Python, where `\d` is Unicode-aware: the pattern is emitted as
+    // JSON Schema and generated into a pydantic model, and the `\d` form makes
+    // that model accept "3٥٠" — which this side rejects and BigInt
+    // throws on — and read it as 350.
+    const pattern = /const INTEGER_STRING = (\/.*\/);/.exec(source)?.[1];
+    expect(pattern).toBeDefined();
+    expect(pattern).not.toContain('\\d');
+    expect(pattern).toContain('[0-9]');
+  });
+
+  it('still rejects the shapes it always rejected', () => {
+    for (const bad of ['3500.00', '+5', '-0', '007', '', ' 350', '1e3']) {
+      expect(Money.safeParse({ amountMinor: bad, currency: 'COP', exponent: 0 }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it('still accepts the shapes it always accepted', () => {
+    for (const good of ['0', '350000', '-350000', '9007199254740993']) {
+      expect(Money.safeParse({ amountMinor: good, currency: 'COP', exponent: 0 }).success).toBe(
+        true,
+      );
+    }
   });
 });
