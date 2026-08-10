@@ -45,8 +45,32 @@ them contradict what a reasonable person would assume.
   Task 4 commits that output and diffs it in CI, so the flags ADR-0027 recorded
   are load-bearing, not cosmetic — a timestamp header alone makes the gate
   permanently red.
-- **A generated model can pass ruff, mypy and pytest collection and still fail
-  to import.** Task 4 needs an assertion that actually imports it.
+- **A generated model can pass ruff, mypy, pytest collection AND import, and
+  still raise on every payload.** A schema carrying both `format: date-time`
+  and a `pattern` — which is exactly what `z.iso.datetime()` emits — generates
+  `Annotated[AwareDatetime, Field(pattern=…)]`: ruff 0, mypy `--strict` 0,
+  import 0, then `TypeError: Unable to apply constraint 'pattern' … for schema
+of type 'datetime'` on the first real payload. Not a `ValidationError` — an
+  uncaught `TypeError`. **Task 4's gate must instantiate and validate, not
+  import.**
+- **Codegen output is a function of the ruff config, not just of time.** Adding
+  `[tool.ruff] line-length` — which Task 2 does — reflows the generated
+  annotations and changes the committed bytes. **Task 2 and Task 4 are
+  coupled**: whoever changes ruff's config regenerates and re-commits, or the
+  CI diff gate goes red on an unrelated PR and gets disabled.
+- **Zod's own built-in patterns carry `\d` and cannot be edited.** `z.e164()`,
+  `z.iso.datetime()`, `z.iso.date()` and `z.iso.time()` all emit it, so
+  `+1٥٠٥٠٥٠٥` is rejected by Zod and accepted by the generated model.
+  ADR-0027 decides this deliberately: the emitter does **not** post-process
+  patterns — rewriting a regex the TypeScript side believes it owns would
+  reintroduce the divergence one layer down while looking like a fix — so
+  **Task 4 carries a Python-side test per emitted built-in format, each with a
+  non-ASCII-digit case**. `z.uuid()` is already safe (explicit `[0-9a-fA-F]`).
+- **`trimesh` needs the `[easy]` extra to export 3MF at all.** The bare pin
+  raises `ModuleNotFoundError: networkx`, then `lxml` — and does so **lazily**:
+  the module imports and the exporter registers, so nothing short of an actual
+  export catches it. Relevant to the geometry phase rather than to this plan's
+  tasks, but the pin table is what that task will copy from.
 - **`boto3` and `botocore` ship no `py.typed`**, so without `boto3-stubs[s3]`
   every S3 call is `Any` and `mypy --strict` is decorative across the whole
   storage module. It is a mandatory dependency, not a convenience.
@@ -761,9 +785,13 @@ Expected: **non-zero**, module not found.
 
 Root `package.json` gains `"contracts:emit"`.
 
-- [ ] **Step 5: Write the Python-side test**
+- [ ] **Step 5: Write the Python-side tests**
 
-`test_generated_contracts.py` asserts the generated `Money` **rejects** `"3500.00"` and accepts `"350000"`, and that an out-of-range exponent is rejected. This is the assertion that proves the pattern crossed the boundary rather than being dropped by codegen.
+`test_generated_contracts.py` must **instantiate and validate**, never merely import — a model that imports cleanly can still raise `TypeError` on every payload (see the traps section).
+
+Cover: the generated `Money` **rejects** `"3500.00"` and accepts `"350000"`; an out-of-range exponent is rejected; and a **non-ASCII-digit case per emitted built-in format**, because Zod's own `\d` patterns cross this boundary unfixed and ADR-0027 decided deliberately not to post-process them. `"3٥٠"` is the canonical probe.
+
+These are the assertions that prove the constraints crossed the boundary rather than being dropped by codegen.
 
 - [ ] **Step 6: Add the CI diff gate**
 
@@ -808,7 +836,9 @@ git commit -m "feat(contracts): emit JSON Schema and generate the pydantic model
 
 The file's header comment already records that ROADMAP 0.10 lists them and that they land here — read it, and update it in this commit so it stops describing a future.
 
-Match the existing services' conventions exactly: **ports bound to `127.0.0.1`**, an image pinned by tag (never `:latest`), and a healthcheck. Read the `postgres` service's healthcheck first — it uses `CMD-SHELL` with an explicit `-h 127.0.0.1` because a bare `pg_isready` passed before the server was actually reachable. Apply the same suspicion here: a healthcheck that passes before Temporal accepts connections makes every dependent test flaky.
+Match the existing services' conventions exactly: **ports bound to `127.0.0.1`**, an image pinned by tag (never `:latest`), and a healthcheck.
+
+**`auto-setup` needs five environment variables, not four.** `DB_PORT` defaults to **3306**, so a Postgres datastore configured without it leaves the container sitting `Up` and looping `Waiting for PostgreSQL` forever — `docker ps` reports it healthy-looking while nothing works, which is a worse failure than the Cassandra default it replaces. ADR-0027 records the full set. Read the `postgres` service's healthcheck first — it uses `CMD-SHELL` with an explicit `-h 127.0.0.1` because a bare `pg_isready` passed before the server was actually reachable. Apply the same suspicion here: a healthcheck that passes before Temporal accepts connections makes every dependent test flaky.
 
 - [ ] **Step 2: Verify it actually comes up, and that the healthcheck means something**
 

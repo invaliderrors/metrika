@@ -192,6 +192,20 @@ _Mitigation:_ declare project `references` in each consumer tsconfig, pointing a
 
 ---
 
+### R21 — `trimesh.volume` returns a plausible wrong number on a non-watertight mesh
+
+**P: High (measured) · I: High**
+
+Measured during the Phase 0B-3 spike, on `trimesh==5.0.0`: given a mesh it itself reports as `is_watertight: False`, `volume` returns **3000.0** where the true volume is **6000.0** — exactly half, with no warning and no exception. A 50% material under-report that looks entirely reasonable, on the number that drives price.
+
+This is the measurement behind [CLAUDE.md](../CLAUDE.md)'s rule that a non-watertight mesh **has no volume** and must return `null` rather than a plausible-looking number, and behind [R2](#r2--print-time-and-material-estimates-drift-from-reality-eroding-margin-invisibly)'s concern about margin eroding invisibly. It is not a hypothetical about a library being imprecise; it is a specific number the library will hand the geometry worker if asked.
+
+_Mitigation:_ watertightness is checked **before** volume is read, and a non-watertight mesh yields `null` — never a computed value. The check belongs in the geometry worker at the point of extraction, not in a caller that might forget. **Phase 3**, with a fixture using a deliberately non-watertight mesh asserting `null` rather than a number, because a test that only exercises watertight meshes cannot see this.
+
+_Residual:_ `is_watertight` is itself a heuristic on degenerate input. That is why the domain model puts volume in a typed column only when exact, and heuristics in JSONB with `{value, method, confidence}`.
+
+---
+
 ## Review cadence
 
 The register is reviewed at the end of every phase. A risk is closed only when its mitigation is implemented **and tested** — not when it is designed. New risks discovered during implementation are added with the same fields, and the top four are re-ranked, because the ranking is the useful part.
