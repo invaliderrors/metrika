@@ -34,11 +34,20 @@ describe('formatMoney', () => {
   });
 
   it('renders a negative amount', () => {
-    expect(formatMoney(cop(-350_000n), 'es-CO')).toContain('-');
+    const formatted = formatMoney(cop(-350_000n), 'es-CO');
+    // The digits, not just the sign. `toContain('-')` alone is satisfied by an
+    // implementation that emits a minus and then the wrong number — including
+    // one that loses the sign on the amount and picks it up from somewhere
+    // else. Exactly one minus, and the same digits the positive case pins.
+    expect(formatted).toContain('-');
+    expect(formatted.match(/-/g)).toHaveLength(1);
+    expect(formatted).toMatch(/3[.\s]500,00/);
   });
 
   it('renders zero without a sign', () => {
-    expect(formatMoney(cop(0n), 'es-CO')).not.toContain('-');
+    const formatted = formatMoney(cop(0n), 'es-CO');
+    expect(formatted).not.toContain('-');
+    expect(formatted).toMatch(/0,00/);
   });
 
   it('is exact beyond Number.MAX_SAFE_INTEGER', () => {
@@ -95,5 +104,23 @@ describe('unit formatting', () => {
 
   it('drops the minutes on a whole number of hours', () => {
     expect(formatDurationS(7_200)).toBe('2 h');
+  });
+
+  /**
+   * The edges, pinned rather than left to fall out of the arithmetic. Both of
+   * these were unasserted and one of them was wrong: `-600` rendered
+   * `"-1 h -10 min"`, because `Math.floor(-10 / 60)` is -1 and `-10 % 60` is
+   * -10, so the hours branch fired with a minus on each component.
+   */
+  it('renders a sub-minute duration at minute resolution, not as seconds', () => {
+    expect(formatDurationS(0)).toBe('0 min');
+    expect(formatDurationS(29)).toBe('0 min');
+    expect(formatDurationS(30)).toBe('1 min');
+  });
+
+  it('applies the sign once on a negative duration', () => {
+    expect(formatDurationS(-600)).toBe('-10 min');
+    expect(formatDurationS(-5_400)).toBe('-1 h 30 min');
+    expect(formatDurationS(-7_200)).toBe('-2 h');
   });
 });
