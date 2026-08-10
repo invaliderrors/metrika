@@ -30,7 +30,7 @@ Not yet created (Plans 0B-2/0B-3): `dev` across all runtimes, `test:e2e`,
 
 ```bash
 pnpm verify                    # format:check + build + lint + typecheck + test:unit — the gate to run before claiming done
-pnpm build                     # tsc -b per package, topological through Turbo
+pnpm build                     # tsc -b per package + next build, topological through Turbo; loads the root .env, because next build inlines NEXT_PUBLIC_* into the bundle
 pnpm lint                      # eslint --max-warnings=0 across the workspace
 pnpm typecheck                 # tsc -b --force (the --force is load-bearing; see .github/workflows/ci.yml)
 pnpm test:unit

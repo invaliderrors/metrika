@@ -8,7 +8,7 @@
   },
   "scripts": {
     "preinstall": "node scripts/check-node-version.mjs",
-    "build": "turbo run build",
+    "build": "node --env-file-if-exists=.env scripts/turbo.mjs run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint -- --max-warnings=0",
     "lint:fix": "turbo run lint -- --fix",

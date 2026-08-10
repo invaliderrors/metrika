@@ -4,6 +4,23 @@
     "db:generate": { "cache": false },
     "build": {
       "dependsOn": ["^build", "db:generate"],
+      // `next build` INLINES these two into the browser bundle, so they are
+      // build inputs in the strictest sense: the same source with a different
+      // NEXT_PUBLIC_API_BASE_URL produces a different artefact, and a cache hit
+      // across that change would ship a bundle pointing at the wrong API.
+      //
+      // Not strictly required today. MEASURED on turbo 2.10.8: `@metrika/web#build`
+      // is framework-inferred as `nextjs` (`--dry=json` reports
+      // `framework: 'nextjs'`), which already forwards and hashes `NEXT_PUBLIC_*`
+      // with nothing declared here — flipping a value yields two stable distinct
+      // hashes, each a cache hit on return. That inference is upstream behaviour
+      // this repo does not control, and if it ever narrows, the failure is a
+      // silent stale-cache hit rather than an error. Declaring it makes the
+      // dependency ours.
+      //
+      // `scripts/turbo.mjs` is what puts the values in the environment for
+      // `pnpm build`; this key is what makes turbo respect them.
+      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE"],
       "outputs": [
         "dist/**",
         "tsconfig.build.tsbuildinfo",
