@@ -6,7 +6,10 @@ export { next } from './next.js';
 export { test } from './test.js';
 export {
   contractsBoundary,
+  featureBoundary,
   prismaBoundary,
   prismaImportBoundary,
   rawSqlBan,
+  serverActionBoundary,
+  webBoundary,
 } from './boundaries.js';

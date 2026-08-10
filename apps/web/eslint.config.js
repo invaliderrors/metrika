@@ -1,4 +1,10 @@
-import { next, typeChecked } from '@metrika/eslint-config';
+import {
+  featureBoundary,
+  next,
+  serverActionBoundary,
+  typeChecked,
+  webBoundary,
+} from '@metrika/eslint-config';
 
 // Bound to a name rather than `export default [...]` directly. MEASURED:
 // `eslint-config-next` enables `import/no-anonymous-default-export`, which
@@ -35,6 +41,25 @@ const config = [
     reactVersion: '19.2.8',
   }),
   ...typeChecked({ tsconfigRootDir: import.meta.dirname, project: './tsconfig.json' }),
+  // The three boundary zones, and THIS ORDER IS LOAD-BEARING TOO — for a
+  // different reason than the one above, which is about severity.
+  //
+  // Flat config replaces a rule's options wholesale when a later entry names the
+  // same rule id and supplies options. All three collide: `webBoundary` and
+  // `featureBoundary` both own `no-restricted-imports`, `webBoundary` and
+  // `serverActionBoundary` both own `no-restricted-syntax`, and all three match
+  // files under `src/`. The two later profiles re-declare `webBoundary`'s
+  // entries for the files they cover, so this order loses nothing; reversed,
+  // `webBoundary` would win everywhere and both other zones would vanish
+  // silently. Neither `next()` nor `typeChecked()` sets either rule id —
+  // MEASURED via calculateConfigForFile, both `undefined` before this block —
+  // so nothing above is being clobbered by it.
+  //
+  // The composition tests live in packages/eslint-config
+  // (test/web-boundaries.test.ts, `the three profiles composed together`).
+  ...webBoundary,
+  ...serverActionBoundary,
+  ...featureBoundary,
   {
     // The one sanctioned process.env reader, per CLAUDE.md. Everything else in
     // the app takes configuration through the exports of this module.

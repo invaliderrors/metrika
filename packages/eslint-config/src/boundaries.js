@@ -186,3 +186,227 @@ export const rawSqlBan = [
 
 /** Both halves, the composition `apps/api` uses. */
 export const prismaBoundary = [...prismaImportBoundary, ...rawSqlBan];
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * apps/web — three zones, and one hazard shared by all of them
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Flat config REPLACES a rule's options wholesale when a later config object
+ * names the same rule id AND supplies options; it merges nothing. (Supplying a
+ * bare severity is the other case — that one preserves the earlier options, which
+ * is how `eslint-config-next/typescript` leaves `typeChecked()`'s `no-unused-vars`
+ * patterns alone. Both directions measured in this repo.)
+ *
+ * The three profiles below collide on exactly that, twice over:
+ *
+ *   `no-restricted-imports` — owned by `webBoundary` and by `featureBoundary`
+ *   `no-restricted-syntax`  — owned by `webBoundary` and by `serverActionBoundary`
+ *
+ * and every one of them matches files under `src/`, so the collisions are real
+ * rather than theoretical. The precedent is already in this file: `rawSqlBan`
+ * carries a comment saying that if it ever had to be composed alongside
+ * `contractsBoundary`, both rule-sets would have to live under ONE
+ * `no-restricted-syntax` entry rather than two config objects. This is that
+ * situation, so that is what these do.
+ *
+ * The resolution: the shared entries are hoisted to the constants below, and
+ * whichever profile wins the merge for a given file carries the full union for
+ * that file. Concretely — `featureBoundary` matches only `src/features/**`, so
+ * it wins `no-restricted-imports` there and must carry the package bans too;
+ * `serverActionBoundary` matches everything except the sanctioned server-action
+ * paths, so it wins `no-restricted-syntax` there and must carry the dynamic
+ * import ban too.
+ *
+ * COMPOSITION ORDER: `webBoundary` first, then the other two. It is the one that
+ * can be dropped from the merge without a hole, because the other two re-declare
+ * its entries for the files they cover. Reversed, `webBoundary` would win for
+ * every file and both of the other zones would silently vanish — no error, no
+ * warning, a green build with two missing controls.
+ *
+ * The `describe('the three profiles composed together')` block in
+ * test/web-boundaries.test.ts is what holds this together. The per-profile tests
+ * cannot: each of them lints a file only one profile's glob matches, so each
+ * passes whether or not its neighbour survived the merge.
+ */
+
+/**
+ * `apps/web` is presentation only, per CLAUDE.md. `@metrika/database` is a
+ * Prisma client and `@metrika/pricing-engine` is the pricing kernel; a price
+ * computed in the browser is a second source of truth for the number the
+ * customer is asked to agree to, and the reproducibility property depends on
+ * there being exactly one. `@prisma/client` is named alongside them because
+ * ADR-0005 confines it to apps/api/src/infrastructure/persistence — reaching it
+ * directly rather than through `@metrika/database` is the same leak wearing a
+ * different name, and `prismaImportBoundary` is scoped to apps/api's layout so
+ * nothing was stopping it here.
+ */
+const forbiddenWebPackageMessage =
+  'apps/web is presentation only — data access and pricing happen server-side, behind the API. See CLAUDE.md (Boundaries) and ADR-0005.';
+
+const forbiddenWebPackagePaths = [
+  { name: '@metrika/database', message: forbiddenWebPackageMessage },
+  { name: '@metrika/pricing-engine', message: forbiddenWebPackageMessage },
+  { name: '@prisma/client', message: forbiddenWebPackageMessage },
+];
+
+/**
+ * Subpath imports (`@metrika/database/client`) are invisible to `paths`, which
+ * only ever matches a bare specifier — the same split `prismaImportBoundary`
+ * makes above, and the same reason its fixture asserts a count of 2.
+ */
+const forbiddenWebPackagePatterns = [
+  {
+    group: ['@metrika/database/*', '@metrika/pricing-engine/*', '@prisma/client/*'],
+    message: forbiddenWebPackageMessage,
+  },
+];
+
+/**
+ * `no-restricted-imports` only inspects static import declarations, so the ban
+ * above is worth nothing against `await import('@metrika/database')`. TWO
+ * selectors, for the reason spelled out on `contractsBoundary`: a template
+ * literal specifier is a `TemplateLiteral`, not a `Literal`, so a single
+ * selector narrowed to `[source.type='Literal']` lints
+ * ``import(`@metrika/database`)`` completely clean. That hole was found in this
+ * repo, not hypothesised.
+ *
+ * The second selector bans every non-literal specifier outright rather than
+ * trying to pattern-match a template's static prefix, which would still be
+ * defeated by ``import(`${pkg}/database`)``. That costs apps/web nothing:
+ * src/i18n/request.ts already writes one literal `import()` per locale instead
+ * of the template form, and documents that the template form cannot pass this
+ * repo's lint anyway — a template-literal specifier resolves to `any`, and
+ * `.default` off an `any` is `no-unsafe-member-access`.
+ */
+const forbiddenDynamicImportSelectors = [
+  {
+    selector:
+      "ImportExpression[source.type='Literal'][source.value=/^(@metrika\\/(database|pricing-engine)|@prisma\\/client)($|\\/)/]",
+    message: `${forbiddenWebPackageMessage} (dynamic import())`,
+  },
+  {
+    selector: "ImportExpression:not([source.type='Literal'])",
+    message: `${forbiddenWebPackageMessage} A dynamic import() here must use a plain string literal so the boundary can be checked statically.`,
+  },
+];
+
+/**
+ * The package ban, applied to every file in apps/web.
+ *
+ * `languageOptions.parser` is set directly, with no `project`, so this profile
+ * works standalone rather than depending on being composed after
+ * `typeChecked()` — which is exactly what test/eslint.web-boundaries.config.js
+ * exercises. Composed after `typeChecked()` in the real app, flat config merges
+ * `languageOptions` per key, so `parserOptions.project` survives untouched
+ * because this object never sets `parserOptions`. Same reasoning as
+ * `contractsBoundary`.
+ *
+ * Annotated, unlike the three boundaries above it. `test/web-boundaries.test.ts`
+ * imports this profile as a MODULE and hands it to `new ESLint({ overrideConfig })`,
+ * where the older fixtures hand ESLint a config path and never type it. Without
+ * the annotation TS widens `['error', ...selectors]` to an array rather than a
+ * tuple, and the call site is a TS2322 about `[Severity, ...unknown[]]` that says
+ * nothing about what is actually wrong. The alternative — `config as never` at
+ * the call site, as test/react.test.ts does — would silence any future genuine
+ * shape error along with it.
+ */
+/** @type {import('eslint').Linter.Config[]} */
+export const webBoundary = [
+  {
+    files: ['**/*.ts', '**/*.tsx'],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { paths: forbiddenWebPackagePaths, patterns: forbiddenWebPackagePatterns },
+      ],
+      'no-restricted-syntax': ['error', ...forbiddenDynamicImportSelectors],
+    },
+  },
+];
+
+/**
+ * ADR-0015 closes the list of Server Action uses at three — cookie and session
+ * mutations, the SSE relay, and Vercel-side form posts — and names the
+ * enforcement: "a lint rule flags `'use server'` outside
+ * `apps/web/src/app/**\/actions.ts` and `apps/web/src/lib/session/**`". These
+ * two globs are that sentence; they are not a stylistic choice and widening
+ * them is an ADR change, not a config change.
+ *
+ * Scoped by NOT MATCHING the sanctioned paths rather than by turning the rule
+ * off inside them. The distinction is load-bearing: `rules: {
+ * 'no-restricted-syntax': 'off' }` would take the dynamic-import ban down with
+ * it, in the one kind of file that runs on the server and can reach the
+ * database. Not matching hands the rule back to `webBoundary` intact.
+ */
+/** @type {import('eslint').Linter.Config[]} */
+export const serverActionBoundary = [
+  {
+    files: ['**/*.ts', '**/*.tsx'],
+    ignores: ['src/app/**/actions.ts', 'src/lib/session/**'],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        // Carried from `webBoundary` because this entry replaces its options
+        // for every file this profile matches. See the block comment above.
+        ...forbiddenDynamicImportSelectors,
+        {
+          // The directive as the parser sees it: a string-literal
+          // ExpressionStatement. Matching the Literal rather than the statement
+          // reports at the directive itself, and catches the inline
+          // function-body form as well as the file-level one — both create a
+          // Server Action.
+          selector: "ExpressionStatement > Literal[value='use server']",
+          message:
+            'Server Actions are limited to src/app/**/actions.ts and src/lib/session/** — domain mutations go through the API. See ADR-0015.',
+        },
+      ],
+    },
+  },
+];
+
+/**
+ * ARCHITECTURE.md §8: a feature owns its components, hooks, schemas and
+ * presentation logic, and cross-feature imports go through the feature's
+ * `index.ts`. Without this, `features/` is a directory naming convention rather
+ * than a boundary, and the first deep import into a neighbour's internals is
+ * the one that makes the next twenty look normal.
+ *
+ * The regex matches a relative path that climbs OUT of the current feature
+ * (`../../`) and back down into another feature's internals
+ * (`<feature>/components|hooks|schemas|lib/`). Deliberately not a blanket ban on
+ * `../../`: `import { QuoteCard } from '../../quotes'` is the public surface and
+ * must stay legal, and neither is a same-feature deep import like
+ * `../hooks/use-model` — a single `../` never leaves the feature. Both are
+ * asserted, because a boundary that also rejects legitimate imports gets
+ * disabled within a week.
+ */
+/** @type {import('eslint').Linter.Config[]} */
+export const featureBoundary = [
+  {
+    files: ['src/features/**/*.ts', 'src/features/**/*.tsx'],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          // `paths` and the package `group` are carried from `webBoundary`
+          // because this entry replaces its options for everything under
+          // src/features/** — which is where nearly all of the app eventually
+          // lives. See the block comment above.
+          paths: forbiddenWebPackagePaths,
+          patterns: [
+            ...forbiddenWebPackagePatterns,
+            {
+              regex: '\\.\\./\\.\\./[^/]+/(components|hooks|schemas|lib)/',
+              message:
+                'Import another feature through its index.ts, not into its internals — see docs/ARCHITECTURE.md §8.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+];
