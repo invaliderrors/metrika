@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as z from 'zod';
 import { brandedUuid } from '../src/index.js';
 
 // Exercises the shared UUID_PATTERN in src/brand.ts directly, through a
@@ -62,5 +63,38 @@ describe('brandedUuid — UUID_PATTERN hostile-string hardening', () => {
     // Position 20 (the first character of the fourth group) must be in
     // `[89ab]`. `c` is the adjacent hex digit just outside that set.
     expect(ProbeId.safeParse('9f1c2b3a-4d5e-4f60-ca1b-2c3d4e5f6071').success).toBe(false);
+  });
+});
+
+describe('the branded-UUID pattern survives JSON Schema emission', () => {
+  // Zod accepts an uppercase UUID. `z.toJSONSchema()` emits the pattern source
+  // and drops the flags, so an `/i` here would produce a Python model that
+  // rejects IDs this side accepts — across the one boundary neither side's
+  // behavioural tests observe. Asserting on the EMITTED pattern is the only
+  // place that divergence is visible.
+  function emittedPattern(): RegExp {
+    const schema = z.toJSONSchema(brandedUuid('ProbeId')) as { pattern?: unknown };
+    const { pattern } = schema;
+    if (typeof pattern !== 'string') {
+      throw new TypeError('z.toJSONSchema emitted no string pattern for a branded UUID');
+    }
+    return new RegExp(pattern);
+  }
+
+  it('emits a pattern at all', () => {
+    expect(() => emittedPattern()).not.toThrow();
+  });
+
+  it('accepts the same uppercase UUID Zod accepts', () => {
+    const upper = 'A1B2C3D4-1111-4111-8111-111111111111';
+    expect(brandedUuid('ProbeId').safeParse(upper).success).toBe(true);
+    expect(emittedPattern().test(upper)).toBe(true);
+  });
+
+  it('rejects the same malformed inputs Zod rejects', () => {
+    for (const bad of ['not-a-uuid', '', 'a1b2c3d4-1111-0111-8111-111111111111']) {
+      expect(brandedUuid('ProbeId').safeParse(bad).success).toBe(false);
+      expect(emittedPattern().test(bad)).toBe(false);
+    }
   });
 });
