@@ -184,6 +184,22 @@ const MIN_LITERAL_LENGTH = 12;
  * this test reports
  * `src/app/page.tsx :: app.tagline :: Cotizaciones de manufactura para …`.
  *
+ * BE EXACT ABOUT WHAT IT CATCHES: the check is `source.includes(value)`, so it
+ * catches a VERBATIM copy of a catalogue value, not a RECONSTRUCTED one.
+ * MEASURED: splitting the sentence across a `+` concatenation defeats it — the
+ * full value never appears in the file text — and the vacuity control above
+ * still passes, because that control reads the catalogue rather than the source.
+ * A template literal, a `.join('')`, or any other assembly is the same hole.
+ *
+ * That hole is left open deliberately, and the alternative was considered rather
+ * than skipped. Normalising `' + '` away would close exactly the concatenation
+ * case while leaving every other reconstruction open, and would restore a
+ * comment that reads as if the check were complete — which is worse than a
+ * stated gap, because the next person would stop looking. The honest framing is
+ * that this test raises the cost of a duplicate from "paste it" to "paste it and
+ * then deliberately obfuscate it", which is the difference between an accident
+ * and a decision. Accidents are what a cheap gate is for.
+ *
  * Comments are stripped first, for the reason the header of this file gives: a
  * doc comment quoting a piece of copy on purpose is not a second source for it.
  * Both catalogues are scanned, not just the shipped one — a hardcoded English

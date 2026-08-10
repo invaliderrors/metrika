@@ -18,9 +18,25 @@ import './globals.css';
  * the load-bearing part. A bare `import '@/config/env'` reads as dead code and
  * is exactly what a later tidy-up deletes, silently reopening the hole. The
  * preconnect hint below is a real optimisation — it opens the TCP and TLS
- * handshake to the API origin before the first fetch needs it — so removing the
- * import costs the page a real element, and `e2e/shell.spec.ts` asserts that
- * element is present with this value.
+ * handshake to the API origin before the first fetch needs it — so DELETING the
+ * import costs the page a real element and `e2e/shell.spec.ts` goes red on the
+ * missing `<link>`. MEASURED, in both directions.
+ *
+ * WHAT THAT TEST DOES NOT CATCH IS SUBSTITUTION, and the distinction is worth
+ * writing down rather than leaving to be rediscovered. Replace
+ * `clientEnv.NEXT_PUBLIC_API_BASE_URL` with the literal origin Playwright
+ * supplies and the element is still there with the same href: all seven e2e
+ * tests pass, INCLUDING the one that names this import, while `turbo run build`
+ * with both keys unset goes back to exit 0 and the build-time guarantee is gone.
+ * MEASURED. Two byte-identical documents are byte-identical — this is the same
+ * shape as the hardcoded-copy hole `test/messages.test.ts` documents, and no
+ * browser assertion can close either.
+ *
+ * The proof that covers substitution is the build-time one: `turbo run build`
+ * with both keys unset must fail with `ClientEnvSchema`'s ZodError naming them.
+ * It lives in the task report rather than in a suite because unsetting the
+ * environment and shelling out to a full `next build` costs more than the inner
+ * loop can carry. Anything that changes this line should re-run it.
  *
  * `new URL(...).origin` rather than the raw string: `rel="preconnect"` takes an
  * ORIGIN, and normalising through `URL` also means a value that is not a

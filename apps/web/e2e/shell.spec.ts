@@ -127,11 +127,17 @@ test('styles are applied, not merely referenced', async ({ page }) => {
  *
  * A build-time property needs a build-time proof, and that one lives in the
  * task report (`turbo run build` with the variables unset must fail with the
- * ZodError naming them). What this test adds is the guard against the quiet
- * regression: an import kept alive only for its side effect is exactly what a
- * later cleanup deletes. The preconnect hint below consumes the VALUE, so the
- * import cannot be removed without the page losing a real element, and this
- * assertion is what notices.
+ * ZodError naming them). What this test adds is narrower, and stating it
+ * precisely is the point: it catches DELETION of that import. The preconnect
+ * hint consumes the value, so an import removed by a later cleanup costs the
+ * page a real element and this assertion goes red.
+ *
+ * It does not catch SUBSTITUTION. MEASURED: hardcode the same origin in
+ * `layout.tsx` instead of deriving it from `clientEnv`, and this assertion
+ * passes unchanged — the `<link>` is present with the same href — while
+ * `turbo run build` with both keys unset returns to exit 0. No assertion over a
+ * rendered document can separate two byte-identical documents; only the
+ * build-time proof covers that case.
  */
 test('the API origin from clientEnv reaches the document', async ({ page }) => {
   await page.goto('/');
