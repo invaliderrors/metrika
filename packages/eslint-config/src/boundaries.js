@@ -244,11 +244,35 @@ export const prismaBoundary = [...prismaImportBoundary, ...rawSqlBan];
 const forbiddenWebPackageMessage =
   'apps/web is presentation only — data access and pricing happen server-side, behind the API. See CLAUDE.md (Boundaries) and ADR-0005.';
 
-const forbiddenWebPackagePaths = [
-  { name: '@metrika/database', message: forbiddenWebPackageMessage },
-  { name: '@metrika/pricing-engine', message: forbiddenWebPackageMessage },
-  { name: '@prisma/client', message: forbiddenWebPackageMessage },
+/**
+ * ONE list, three derivations. Each forbidden package has to be expressed in
+ * three different notations — a `paths` entry, a `patterns` glob group, and an
+ * esquery attribute regex — and a package present in two of the three is a hole
+ * that nothing reports. That is not hypothetical: `@prisma/client` is on this
+ * list precisely because it had been written into `prismaImportBoundary`'s
+ * apps/api-scoped copy and nowhere else, so apps/web could reach it directly.
+ *
+ * Derived rather than duplicated, so adding a package here cannot leave a
+ * notation behind. test/web-boundaries.test.ts imports this constant and runs
+ * every case over it with `describe.each`, so a new entry is automatically
+ * covered in all four positions (bare, subpath, dynamic, inside src/features)
+ * — and asserts the list's contents besides, so quietly deleting an entry is
+ * also red.
+ *
+ * Exported for that test only; `src/index.js` does not re-export it, because it
+ * is an implementation detail of these three profiles rather than something a
+ * consuming package composes.
+ */
+export const FORBIDDEN_WEB_PACKAGES = [
+  '@metrika/database',
+  '@metrika/pricing-engine',
+  '@prisma/client',
 ];
+
+const forbiddenWebPackagePaths = FORBIDDEN_WEB_PACKAGES.map((name) => ({
+  name,
+  message: forbiddenWebPackageMessage,
+}));
 
 /**
  * Subpath imports (`@metrika/database/client`) are invisible to `paths`, which
@@ -257,7 +281,7 @@ const forbiddenWebPackagePaths = [
  */
 const forbiddenWebPackagePatterns = [
   {
-    group: ['@metrika/database/*', '@metrika/pricing-engine/*', '@prisma/client/*'],
+    group: FORBIDDEN_WEB_PACKAGES.map((name) => `${name}/*`),
     message: forbiddenWebPackageMessage,
   },
 ];
@@ -278,11 +302,19 @@ const forbiddenWebPackagePatterns = [
  * of the template form, and documents that the template form cannot pass this
  * repo's lint anyway — a template-literal specifier resolves to `any`, and
  * `.default` off an `any` is `no-unsafe-member-access`.
+ *
+ * The alternation is built from `FORBIDDEN_WEB_PACKAGES` rather than written
+ * out, so this notation cannot drift from the other two. Only `/` needs
+ * escaping — it terminates esquery's regex literal — and no package name here
+ * contains another regex metacharacter.
  */
+const forbiddenDynamicImportAlternation = FORBIDDEN_WEB_PACKAGES.map((name) =>
+  name.replaceAll('/', '\\/'),
+).join('|');
+
 const forbiddenDynamicImportSelectors = [
   {
-    selector:
-      "ImportExpression[source.type='Literal'][source.value=/^(@metrika\\/(database|pricing-engine)|@prisma\\/client)($|\\/)/]",
+    selector: `ImportExpression[source.type='Literal'][source.value=/^(${forbiddenDynamicImportAlternation})($|\\/)/]`,
     message: `${forbiddenWebPackageMessage} (dynamic import())`,
   },
   {
@@ -375,13 +407,29 @@ export const serverActionBoundary = [
  * the one that makes the next twenty look normal.
  *
  * The regex matches a relative path that climbs OUT of the current feature
- * (`../../`) and back down into another feature's internals
+ * (one or more `../`) and back down into another feature's internals
  * (`<feature>/components|hooks|schemas|lib/`). Deliberately not a blanket ban on
- * `../../`: `import { QuoteCard } from '../../quotes'` is the public surface and
+ * `../`: `import { QuoteCard } from '../../quotes'` is the public surface and
  * must stay legal, and neither is a same-feature deep import like
- * `../hooks/use-model` — a single `../` never leaves the feature. Both are
- * asserted, because a boundary that also rejects legitimate imports gets
- * disabled within a week.
+ * `../hooks/use-model`. Both are asserted, because a boundary that also rejects
+ * legitimate imports gets disabled within a week.
+ *
+ * Two details in the pattern, both MEASURED against the eight path shapes in
+ * test/web-boundaries.test.ts rather than reasoned about:
+ *
+ * `(\.\./)+` and not `\.\./\.\./`. The depth of the climb is a function of where
+ * the IMPORTING file sits, not of how far away the target is: the public surface
+ * of a feature is `index.ts` at the feature ROOT, so `src/features/models/index.ts`
+ * reaching `../quotes/components/QuoteCard` needs exactly one `../`. A pattern
+ * requiring two catches every deep caller and misses the one file every other
+ * feature imports through — enforced-looking and unenforced.
+ *
+ * `(?!\.\.)` and not a bare `[^/]+`. `[^/]+` happily matches `..`, so with
+ * backtracking `../../hooks/use-model` parses as
+ * `../` + `..` + `/hooks/` — a FALSE POSITIVE on a same-feature deep import from
+ * a nested component directory. (The two-`../` form had the same bug one level
+ * further down, on `../../../hooks/use-model`.) The lookahead pins the segment
+ * after the climb to a real directory name.
  */
 /** @type {import('eslint').Linter.Config[]} */
 export const featureBoundary = [
@@ -400,7 +448,7 @@ export const featureBoundary = [
           patterns: [
             ...forbiddenWebPackagePatterns,
             {
-              regex: '\\.\\./\\.\\./[^/]+/(components|hooks|schemas|lib)/',
+              regex: '(\\.\\./)+(?!\\.\\.)[^/]+/(components|hooks|schemas|lib)/',
               message:
                 'Import another feature through its index.ts, not into its internals — see docs/ARCHITECTURE.md §8.',
             },

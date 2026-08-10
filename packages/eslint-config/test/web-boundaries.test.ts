@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ESLint } from 'eslint';
 import config from './eslint.web-boundaries.config.js';
+import { FORBIDDEN_WEB_PACKAGES } from '../src/boundaries.js';
 
 async function lint(code: string, filePath: string): Promise<string[]> {
   const eslint = new ESLint({ overrideConfigFile: true, overrideConfig: config });
@@ -86,6 +87,100 @@ describe('featureBoundary', () => {
       'src/features/models/components/ModelCard.tsx',
     );
     expect(rules).toEqual([]);
+  });
+});
+
+/**
+ * The depth cases, all eight of them, because the pattern got both ends of this
+ * wrong before they were measured.
+ *
+ * The climb out of a feature is as long as the IMPORTING file is deep, and the
+ * public surface of a feature is `index.ts` at its ROOT — so the single-`../`
+ * row below is the central violation, not an edge case: it is the one file
+ * every other feature imports through. A `\.\./\.\./` pattern misses it while
+ * catching every deep caller, which is the worst outcome available (the zone
+ * looks enforced).
+ *
+ * The `accepts` rows are the other half. `[^/]+` matches `..`, so without the
+ * `(?!\.\.)` guard a same-feature `../../hooks/use-model` backtracks into
+ * `../` + `..` + `/hooks/` and is REJECTED — a false positive on ordinary
+ * intra-feature code, which is how a boundary gets switched off within a week.
+ */
+describe('featureBoundary — the climb depth', () => {
+  it.each([
+    ['src/features/models/index.ts', '../quotes/components/QuoteCard'],
+    ['src/features/models/components/ModelCard.tsx', '../../quotes/components/QuoteCard'],
+    ['src/features/models/components/a/b/C.tsx', '../../../../quotes/components/QuoteCard'],
+    ['src/features/models/index.ts', '../quotes/hooks/use-quote'],
+  ])('rejects %s importing %s', async (file, specifier) => {
+    const rules = await lint(`import { X } from '${specifier}';`, file);
+    expect(rules).toContain('no-restricted-imports');
+  });
+
+  it.each([
+    ['src/features/models/components/ModelCard.tsx', '../hooks/use-model'],
+    ['src/features/models/components/nested/Deep.tsx', '../../hooks/use-model'],
+    ['src/features/models/components/a/b/C.tsx', '../../../hooks/use-model'],
+    ['src/features/models/hooks/use-model.ts', '../components/ModelCard'],
+  ])('accepts %s importing %s', async (file, specifier) => {
+    const rules = await lint(`import { X } from '${specifier}';`, file);
+    expect(rules).toEqual([]);
+  });
+});
+
+/**
+ * Every forbidden package, in every notation it has to be written in.
+ *
+ * `paths`, the `patterns` glob group and the esquery attribute regex are three
+ * different spellings of the same list, and a package present in two of the
+ * three is a hole nothing reports — which is exactly how `@prisma/client` came
+ * to be reachable from apps/web while `prismaImportBoundary` "covered" it.
+ * `src/boundaries.js` derives all three from `FORBIDDEN_WEB_PACKAGES`; this
+ * block is what proves the derivations actually reach the linter, and it runs
+ * over the imported constant so a package added there is covered here without
+ * anyone remembering to add a case.
+ */
+describe.each(FORBIDDEN_WEB_PACKAGES)('the %s ban', (pkg) => {
+  it('rejects the bare specifier', async () => {
+    expect(await lint(`import { x } from '${pkg}';`, 'src/app/page.tsx')).toContain(
+      'no-restricted-imports',
+    );
+  });
+
+  it('rejects a subpath import', async () => {
+    expect(await lint(`import { x } from '${pkg}/edge';`, 'src/app/page.tsx')).toContain(
+      'no-restricted-imports',
+    );
+  });
+
+  it('rejects a dynamic import', async () => {
+    expect(await lint(`await import('${pkg}');`, 'src/app/page.tsx')).toContain(
+      'no-restricted-syntax',
+    );
+  });
+
+  it('is still banned inside src/features, where featureBoundary wins the merge', async () => {
+    const rules = await lint(
+      `import { x } from '${pkg}';`,
+      'src/features/models/components/ModelCard.tsx',
+    );
+    expect(rules).toEqual(['no-restricted-imports']);
+  });
+});
+
+/**
+ * The companion to the block above: `describe.each` proves whatever is on the
+ * list is enforced, and this proves what is on the list. Without it, emptying
+ * `FORBIDDEN_WEB_PACKAGES` would delete every assertion above it and the suite
+ * would report a cheerful all-green with zero cases run.
+ */
+describe('the forbidden package list', () => {
+  it('is exactly the three server-only packages', () => {
+    expect(FORBIDDEN_WEB_PACKAGES).toEqual([
+      '@metrika/database',
+      '@metrika/pricing-engine',
+      '@prisma/client',
+    ]);
   });
 });
 
