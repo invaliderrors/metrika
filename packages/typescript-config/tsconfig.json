@@ -10,6 +10,7 @@
     "test/flags.test.ts",
     "test/configs.test.ts",
     "test/lint-parity.test.ts",
-    "test/dependency-pins.test.ts"
+    "test/dependency-pins.test.ts",
+    "vitest.config.ts"
   ]
 }
