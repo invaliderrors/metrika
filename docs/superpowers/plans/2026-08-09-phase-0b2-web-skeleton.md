@@ -1786,7 +1786,9 @@ Expected: **non-zero**.
 
 - [ ] **Step 4: Implement the three boundaries**
 
-Append to `packages/eslint-config/src/boundaries.js`, following the file's existing shape and comment density. `webBoundary` bans `@metrika/database` and `@metrika/pricing-engine` statically and dynamically (both selectors). `serverActionBoundary` uses `no-restricted-syntax` on an `ExpressionStatement` whose expression is the `'use server'` directive, with the rule scoped by `files`/`ignores` so the two sanctioned paths never see it. `featureBoundary` uses `no-restricted-imports` with a `regex` matching `\.\./\.\./[^/]+/(components|hooks|schemas|lib)/` — a relative path that climbs out of the current feature and back into another feature's internals.
+Append to `packages/eslint-config/src/boundaries.js`, following the file's existing shape and comment density. `webBoundary` bans `@metrika/database` and `@metrika/pricing-engine` statically and dynamically (both selectors). `serverActionBoundary` uses `no-restricted-syntax` on an `ExpressionStatement` whose expression is the `'use server'` directive, with the rule scoped by `files`/`ignores` so the two sanctioned paths never see it. `featureBoundary` uses `no-restricted-imports` with a `regex` matching `(\.\./)+[^/]+/(components|hooks|schemas|lib)/` — a relative path that climbs out of the current feature and back into another feature's internals.
+
+**One or more `../`, not exactly two.** ARCHITECTURE.md §8 puts a feature's public surface at its root, so `src/features/models/index.ts` reaches a sibling's internals with a _single_ `../`. A two-`../` pattern misses exactly the file every other feature imports through — measured: it lints clean while the two- and three-level forms both reject. Fixture both depths.
 
 Each needs a message naming the rule and pointing at `CLAUDE.md` or the relevant ADR, in the style the existing boundaries use.
 
