@@ -463,7 +463,17 @@ export const serverActionBoundary = [
 /** @type {import('eslint').Linter.Config[]} */
 export const featureBoundary = [
   {
-    files: ['src/features/**/*.ts', 'src/features/**/*.tsx'],
+    // ALL of src/, not just src/features/**. ARCHITECTURE.md section 8 forbids
+    // deep imports "from outside the feature", and src/app/** is the outside
+    // that matters most — a route reaching straight into a feature's internals
+    // is the bypass that makes the public surface optional. Scoped to
+    // src/features/** the zone could only ever police features against each
+    // other, which is the smaller half of its own charter. MEASURED: neither
+    // branch fires on anything outside a feature's internals, because the `@/`
+    // branch is `^`-anchored on the literal `features/` segment and the
+    // relative branch requires a climb — so widening the scope adds rejections
+    // only where the pattern already described a violation.
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
     languageOptions: { parser: tseslint.parser },
     rules: {
       'no-restricted-imports': [
