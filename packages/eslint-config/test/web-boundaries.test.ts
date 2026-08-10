@@ -91,8 +91,8 @@ describe('featureBoundary', () => {
 });
 
 /**
- * The depth cases, all eight of them, because the pattern got both ends of this
- * wrong before they were measured.
+ * Every notation the app can write, because the pattern got both ends of the
+ * climb wrong before they were measured, and then missed two notations entirely.
  *
  * The climb out of a feature is as long as the IMPORTING file is deep, and the
  * public surface of a feature is `index.ts` at its ROOT — so the single-`../`
@@ -101,10 +101,34 @@ describe('featureBoundary', () => {
  * catching every deep caller, which is the worst outcome available (the zone
  * looks enforced).
  *
- * The `accepts` rows are the other half. `[^/]+` matches `..`, so without the
- * `(?!\.\.)` guard a same-feature `../../hooks/use-model` backtracks into
- * `../` + `..` + `/hooks/` and is REJECTED — a false positive on ordinary
- * intra-feature code, which is how a boundary gets switched off within a week.
+ * THE TWO NOTATIONS THE RELATIVE-ONLY PATTERN MISSED, both measured against
+ * these fixtures before the pattern was widened:
+ *
+ *   `@/features/quotes/components/QuoteCard`     the app's own alias, declared
+ *                                                in apps/web's tsconfig.json and
+ *                                                vitest.config.ts and already
+ *                                                used for `@/lib/cn`
+ *   `../../../features/quotes/components/…`      a file deep enough to climb
+ *                                                past `src/features/`, where the
+ *                                                segment after the climb is
+ *                                                `features`, not the feature
+ *                                                name
+ *
+ * The alias row that follows them is the deliberate cost, stated as a test
+ * rather than left to be discovered: `no-restricted-imports` sees the specifier
+ * and never the importing file, so it cannot tell `@/features/models/...` read
+ * from inside `models` apart from the same text read from inside `quotes`. The
+ * alias into ANY feature's internals is therefore reported, and a same-feature
+ * import is written relatively — which the `accepts` block below requires
+ * anyway.
+ *
+ * The `accepts` rows are the other half, and they are why the pattern is not
+ * simply `../`. `[^/]+` matches `..`, so without the `(?!\.\.)` guard a
+ * same-feature `../../hooks/use-model` backtracks into `../` + `..` + `/hooks/`
+ * and is REJECTED — a false positive on ordinary intra-feature code, which is
+ * how a boundary gets switched off within a week. The two `@/` rows there pin
+ * the other direction: widening the pattern to the alias must not catch the
+ * public surface or the app's ordinary non-feature imports.
  */
 describe('featureBoundary — the climb depth', () => {
   it.each([
@@ -112,6 +136,14 @@ describe('featureBoundary — the climb depth', () => {
     ['src/features/models/components/ModelCard.tsx', '../../quotes/components/QuoteCard'],
     ['src/features/models/components/a/b/C.tsx', '../../../../quotes/components/QuoteCard'],
     ['src/features/models/index.ts', '../quotes/hooks/use-quote'],
+    ['src/features/models/components/ModelCard.tsx', '@/features/quotes/components/QuoteCard'],
+    ['src/features/models/index.ts', '@/features/quotes/schemas/quote'],
+    [
+      'src/features/models/components/ModelCard.tsx',
+      '../../../features/quotes/components/QuoteCard',
+    ],
+    // Same feature, alias form: reported on purpose. See the header.
+    ['src/features/models/components/ModelCard.tsx', '@/features/models/hooks/use-model'],
   ])('rejects %s importing %s', async (file, specifier) => {
     const rules = await lint(`import { X } from '${specifier}';`, file);
     expect(rules).toContain('no-restricted-imports');
@@ -122,6 +154,8 @@ describe('featureBoundary — the climb depth', () => {
     ['src/features/models/components/nested/Deep.tsx', '../../hooks/use-model'],
     ['src/features/models/components/a/b/C.tsx', '../../../hooks/use-model'],
     ['src/features/models/hooks/use-model.ts', '../components/ModelCard'],
+    ['src/features/models/components/ModelCard.tsx', '@/features/quotes'],
+    ['src/features/models/components/ModelCard.tsx', '@/lib/cn'],
   ])('accepts %s importing %s', async (file, specifier) => {
     const rules = await lint(`import { X } from '${specifier}';`, file);
     expect(rules).toEqual([]);

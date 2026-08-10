@@ -406,15 +406,38 @@ export const serverActionBoundary = [
  * than a boundary, and the first deep import into a neighbour's internals is
  * the one that makes the next twenty look normal.
  *
- * The regex matches a relative path that climbs OUT of the current feature
- * (one or more `../`) and back down into another feature's internals
- * (`<feature>/components|hooks|schemas|lib/`). Deliberately not a blanket ban on
- * `../`: `import { QuoteCard } from '../../quotes'` is the public surface and
- * must stay legal, and neither is a same-feature deep import like
- * `../hooks/use-model`. Both are asserted, because a boundary that also rejects
- * legitimate imports gets disabled within a week.
+ * The regex matches a path that lands in a feature's internals
+ * (`<feature>/components|hooks|schemas|lib/`) by either of the two spellings
+ * this app can write: a relative path that climbs OUT of the current feature
+ * (one or more `../`, optionally back down through `features/`), or the `@/`
+ * alias `apps/web` declares in both `tsconfig.json` and `vitest.config.ts` and
+ * already uses for `@/lib/cn`. Deliberately not a blanket ban on `../`:
+ * `import { QuoteCard } from '../../quotes'` is the public surface and must stay
+ * legal, and neither is a same-feature deep import like `../hooks/use-model`.
+ * Both are asserted, because a boundary that also rejects legitimate imports
+ * gets disabled within a week.
  *
- * Two details in the pattern, both MEASURED against the eight path shapes in
+ * THE ALIAS BRANCH COSTS ONE LEGITIMATE SPELLING, and it is stated here rather
+ * than discovered: `no-restricted-imports` sees the specifier and never the
+ * importing file, so `@/features/models/hooks/use-model` is indistinguishable
+ * from `@/features/quotes/hooks/use-quote` — the rule cannot tell whose feature
+ * `models` is. It therefore bans the alias into ANY feature's internals,
+ * including your own, and the sanctioned form for reaching your own internals is
+ * the relative one the `accepts` fixtures cover. That is a spelling requirement
+ * with a legal alternative one character shorter, not a blocked import; the
+ * message says so. The alternative — leaving the alias unmatched — was measured
+ * and is worse: `@/features/beta/components/Thing` and
+ * `../../../features/beta/components/Thing` both linted clean while
+ * `../../beta/components/Thing` was reported, so the zone was enforced against
+ * one notation of three.
+ *
+ * `@/` is anchored with `^` and requires the literal `features/` segment, so
+ * `@/lib/cn`, `@/config/env` and `@/features/quotes` (the public surface) are
+ * untouched. Without the anchor and the segment, a hypothetical
+ * `@/hooks/components/x` would be reported by a rule that has no business
+ * looking at it.
+ *
+ * Two details in the relative branch, both MEASURED against the path shapes in
  * test/web-boundaries.test.ts rather than reasoned about:
  *
  * `(\.\./)+` and not `\.\./\.\./`. The depth of the climb is a function of where
@@ -430,6 +453,12 @@ export const serverActionBoundary = [
  * a nested component directory. (The two-`../` form had the same bug one level
  * further down, on `../../../hooks/use-model`.) The lookahead pins the segment
  * after the climb to a real directory name.
+ *
+ * `(?:features/)?` on the relative branch closes the third notation: a file deep
+ * enough to climb past `src/features/` writes
+ * `../../../features/quotes/components/QuoteCard`, where the segment after the
+ * climb is `features` rather than the feature name. Optional, because the
+ * shorter climbs do not pass through it.
  */
 /** @type {import('eslint').Linter.Config[]} */
 export const featureBoundary = [
@@ -448,9 +477,10 @@ export const featureBoundary = [
           patterns: [
             ...forbiddenWebPackagePatterns,
             {
-              regex: '(\\.\\./)+(?!\\.\\.)[^/]+/(components|hooks|schemas|lib)/',
+              regex:
+                '(?:^@/features/|(?:\\.\\./)+(?:features/)?)(?!\\.\\.)[^/]+/(?:components|hooks|schemas|lib)/',
               message:
-                'Import another feature through its index.ts, not into its internals — see docs/ARCHITECTURE.md §8.',
+                "Import another feature through its index.ts, not into its internals; reach your OWN feature's internals with a relative path rather than the @/ alias, which cannot be told apart from a neighbour's — see docs/ARCHITECTURE.md §8.",
             },
           ],
         },
