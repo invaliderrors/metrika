@@ -1879,12 +1879,11 @@ Model it on the existing `openapi` job — same checkout, `pnpm/action-setup`, `
 
       - name: E2E
         run: pnpm --filter @metrika/web test:e2e
-        env:
-          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3001
-          NEXT_PUBLIC_DEFAULT_LOCALE: es-CO
 ```
 
-The two `NEXT_PUBLIC_` values must be set at the job level as well as in `playwright.config.ts`, because `next build` reads them at build time and the config's `env` block applies only to the spawned server.
+**The two `NEXT_PUBLIC_` values are inherited from the workflow-level `env:` block, not set on the E2E step.** That placement is deliberate and was measured: the root layout imports `clientEnv`, which is parsed at module scope, so **`pnpm build` itself fails** with a ZodError naming both keys when they are absent — a `web` job that set them only on its E2E step would die one step earlier, at Build, with an error that looks nothing like a missing test-server variable.
+
+If the workflow-level block is missing when you arrive, add it and move the per-job copies into it. A key that every job needs and each job declares separately is a trap for the next job somebody adds.
 
 - [ ] **Step 3: Prove the job would actually fail**
 
