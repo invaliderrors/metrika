@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test:unit": {
+      "dependsOn": ["^build", "build"],
+      // test/env-example.test.ts reads the ROOT `.env.example` and asserts it
+      // documents every key this package's env schema declares. Turbo hashes
+      // only a package's own files, so without this the gate reports success
+      // FROM CACHE while the file it validates has drifted.
+      //
+      // MEASURED on apps/api: prime green, delete two documented keys from
+      // .env.example, re-run — exit 0, cache hit. The gate never ran.
+      //
+      // `$TURBO_ROOT$` is what lets a package's inputs reach outside its own
+      // directory.
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.env.example"]
+    }
+  }
+}
