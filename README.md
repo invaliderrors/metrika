@@ -4,9 +4,12 @@ Digital manufacturing platform for professional 3D printing. Upload a 3D model, 
 
 Initial market: Colombia (`es-CO`, COP). Initial customers: architects and architecture studios. The architecture is internationalisation-ready and does not hardcode Colombia-specific business rules in the domain.
 
-> **Status: Phase 0A complete.** The monorepo, quality-gate config packages
-> (`packages/typescript-config`, `packages/eslint-config`) and `packages/contracts`
-> exist and are tested. `apps/` and the remaining `packages/*` do not exist yet. The
+> **Status: Phase 0A and Plans 0B-1 / 0B-2 complete.** The monorepo, the
+> quality-gate config packages (`packages/typescript-config`,
+> `packages/eslint-config`), `packages/contracts`, `packages/database`,
+> `packages/testing`, `apps/api` (a health-probe skeleton) and `apps/web` (a
+> one-page localised shell) exist and are tested. `apps/workers` and the
+> remaining `packages/*` do not exist yet — see "Shape" below for the split. The
 > complete engineering plan lives in [`docs/`](./docs/) and is intended to be
 > executable without re-deriving fundamental decisions.
 
