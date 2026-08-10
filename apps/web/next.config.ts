@@ -1,3 +1,4 @@
+import createNextIntlPlugin from 'next-intl/plugin';
 import type { NextConfig } from 'next';
 
 const config: NextConfig = {
@@ -25,4 +26,17 @@ const config: NextConfig = {
   typescript: { ignoreBuildErrors: false },
 };
 
-export default config;
+/**
+ * The path is passed explicitly. `createNextIntlPlugin()` defaults to probing
+ * `./i18n/request.ts` and `./src/i18n/request.ts`, so naming it is not
+ * redundant: it turns a moved or misnamed file into a build error instead of a
+ * silent fallback to next-intl's built-in empty config, under which every
+ * `useTranslations` call renders its own key.
+ *
+ * Wrapping happens LAST, so `agentRules: false` above survives. The plugin
+ * returns a shallow-merged config; anything set after this line would be
+ * setting it on the wrong object.
+ */
+const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
+
+export default withNextIntl(config);

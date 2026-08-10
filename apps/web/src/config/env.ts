@@ -1,7 +1,16 @@
 import { z } from 'zod';
+import { SUPPORTED_LOCALES } from '../i18n/routing';
 
-export const SUPPORTED_LOCALES = ['es-CO', 'en-US'] as const;
-export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+/**
+ * Re-exported, not declared here. The list itself lives in `../i18n/routing.ts`
+ * so that a module wanting only the locales does not have to import THIS file,
+ * whose `clientEnv` parse at the bottom runs on import and therefore demands a
+ * populated environment from `next build`. That header explains the failure in
+ * full. Every existing importer of `SUPPORTED_LOCALES` / `SupportedLocale` from
+ * here keeps working.
+ */
+export { SUPPORTED_LOCALES };
+export type { SupportedLocale } from '../i18n/routing';
 
 const PublicKeys = {
   NEXT_PUBLIC_API_BASE_URL: z.string().regex(/^https?:\/\//, 'must be an http:// or https:// URL'),
