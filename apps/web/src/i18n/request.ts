@@ -1,5 +1,5 @@
 import { getRequestConfig } from 'next-intl/server';
-import { DEFAULT_LOCALE, type SupportedLocale } from './routing';
+import { DEFAULT_LOCALE, DEFAULT_TIME_ZONE, type SupportedLocale } from './routing';
 
 /**
  * One statically-analysable `import()` per locale, rather than the shorter
@@ -26,5 +26,6 @@ const CATALOGUES = {
  */
 export default getRequestConfig(async () => ({
   locale: DEFAULT_LOCALE,
+  timeZone: DEFAULT_TIME_ZONE,
   messages: (await CATALOGUES[DEFAULT_LOCALE]()).default,
 }));

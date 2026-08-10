@@ -32,3 +32,18 @@ export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
  * reintroduce the import this file's header exists to forbid.
  */
 export const DEFAULT_LOCALE: SupportedLocale = 'es-CO';
+
+/**
+ * PINNED, not inferred. `next-intl` falls back to the runtime's own zone when
+ * `timeZone` is absent, so the same instant renders as a different wall clock
+ * depending on where the code runs: this machine infers `America/Bogota`, a CI
+ * runner and a serverless region both infer `UTC`, and server and client would
+ * then disagree inside one page. Nothing formats a date yet, which is exactly
+ * why this is cheap to fix now — the first `<time>` element would otherwise
+ * ship the bug already in place and blame the component.
+ *
+ * Bogotá because that is where the operators and the customers are. When
+ * per-tenant time zones exist this becomes the fallback for a request that has
+ * no tenant yet, not a value to delete.
+ */
+export const DEFAULT_TIME_ZONE = 'America/Bogota';
