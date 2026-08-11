@@ -3,7 +3,8 @@
 > Target: clone to a working end-to-end quote flow in five commands, verified by CI on
 > a clean checkout. **Not yet reachable** — there is no quote flow to run: `apps/api` is
 > a health-probe skeleton, `apps/web` is a one-page localised shell that calls no API,
-> and `apps/workers` is a toolchain with no workers in it yet. What is reachable today is a clean clone to a
+> and `apps/workers` has two worker processes that connect to Temporal and register one
+> stub activity each — no geometry and no slicing. What is reachable today is a clean clone to a
 > running API with a migrated database and a web shell that renders, and CI verifies
 > that across four jobs (`verify`, `integration`, `web`, `openapi`). See §2.
 
@@ -278,7 +279,17 @@ That service takes **six** environment variables, and they are recorded across t
 
 **API** — `pnpm --filter @metrika/api dev` runs `tsc -b --watch` alongside `node --watch dist/main.js`, reading the root `.env`. A `dev:debug` script and a committed `.vscode/launch.json` attach configuration are intended and do not exist yet; until then, `node --inspect --env-file=.env dist/main.js` from `apps/api` is the equivalent.
 
-**Python workers** _(Plan 0B-3)_ — `debugpy` is enabled in dev mode; the corresponding attach configuration is committed.
+**Python workers** — `pnpm dev` does not start them yet. Run one by hand with the compose stack up:
+
+```bash
+cd apps/workers
+METRIKA_WORKER_TEMPORAL_TASK_QUEUE=geometry-small METRIKA_WORKER_S3_BUCKET=metrika-models \
+  uv run --locked --all-packages python -m metrika_geometry
+```
+
+Both processes refuse to start without those two variables rather than defaulting — a worker polling a queue nobody publishes to looks exactly like an idle system. `Ctrl-C` (or SIGTERM) shuts one down gracefully; ignoring SIGTERM would mean every deploy killing a worker mid-poll, so `metrika_core.temporal.run_worker` handles it.
+
+_(Plan 0B-3, intended and not yet done)_ — `debugpy` in dev mode, with the corresponding attach configuration committed.
 
 **Database** — `pnpm db:studio`, or connect directly. Note that RLS is active locally: a `psql` session **as `metrika_app`** sees nothing until `SET app.current_org_id`. This is intentional — local development should behave like production, and discovering RLS in staging is worse than discovering it on day one. `metrika`, the owner role the compose stack creates and that migrations run as, is a Postgres superuser and therefore bypasses RLS unconditionally — which is exactly why `DATABASE_URL` names `metrika_app` and only `DATABASE_ADMIN_URL` names `metrika`. Connect as `metrika` and you are not testing what production does. Both halves are asserted against a live connection rather than trusted: `packages/database/test/harness.integration.test.ts` checks that `metrika_app` is neither `SUPERUSER` nor `BYPASSRLS`, and `packages/database/test/rls.integration.test.ts` checks that `relforcerowsecurity` is actually set on the applied table.
 
