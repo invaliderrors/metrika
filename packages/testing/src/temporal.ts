@@ -79,6 +79,22 @@ const STARTUP_TIMEOUT_MS = 180_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 const RPC_DEADLINE_MS = 10_000;
 
+/**
+ * Wall-clock budget for the namespace to become usable, and the poll interval
+ * inside it. Sized for a LOADED host, not this one: the repository's full
+ * `pnpm test:integration` now brings up two `auto-setup` bootstraps and four
+ * Postgres containers at once, and the whole point of this budget is to survive
+ * that. It is only ever paid in full when something is genuinely broken, in
+ * which case the error below names the cause; on an idle machine the loop exits
+ * on its first or second attempt.
+ *
+ * Deliberately NOT wrapped around `Connection.connect`. Retrying the connect
+ * would reintroduce the hang this harness is checked against — a dead address
+ * would burn the whole budget instead of failing in one `connectTimeout`.
+ */
+const NAMESPACE_READY_TIMEOUT_MS = 60_000;
+const NAMESPACE_POLL_INTERVAL_MS = 250;
+
 function publishedHandle(): TemporalHandle | undefined {
   const address = process.env[TEMPORAL_ADDRESS_VAR];
   if (address === undefined) return undefined;
@@ -100,22 +116,62 @@ function publishedHandle(): TemporalHandle | undefined {
  * port at container creation and holds the connection open. A dial here would
  * therefore be unconditionally green and would prove nothing.
  *
- * So this makes two real RPCs instead:
+ * So this makes real RPCs instead, and — since round 2 — it makes the RPC the
+ * consumer actually needs rather than a cheaper one that correlates with it.
  *
- * 1. `Connection.connect` itself, which calls `GetSystemInfo` — that is a
- *    round trip through the gRPC frontend, so it cannot be satisfied by a
- *    proxy accepting a socket.
- * 2. `DescribeNamespace` for `default`, which is the part `auto-setup`
- *    provisions LAST. Between the frontend accepting connections and the
- *    namespace existing there is a window in which every client call fails
- *    with `NamespaceNotFound`, and a harness that returns inside that window
- *    hands out an address whose first real use fails.
+ * ## Why `ListWorkflowExecutions` and not `DescribeNamespace`
+ *
+ * This function used to call `DescribeNamespace` once and return. That was a
+ * PROXY for "the namespace is usable", and MEASURED, the proxy is green before
+ * the property is:
+ *
+ *   after the wait strategy returned, polling from this process at 100ms:
+ *     t=0.04s  describeNamespace       OK
+ *     t=0.04s  listWorkflowExecutions  FAILS  5 NOT_FOUND: Namespace default is not found.
+ *     t=0.14s  listWorkflowExecutions  OK
+ *
+ * The two RPCs resolve the namespace by different paths. `DescribeNamespace`
+ * reads through to persistence, so it is green the moment auto-setup's
+ * `RegisterNamespace` row is committed. Everything a real caller does —
+ * `ListWorkflowExecutions`, `StartWorkflowExecution`, a worker polling a task
+ * queue — resolves the name through the frontend's namespace REGISTRY, which
+ * lags that write. So there is a window in which this harness could hand out an
+ * address, a caller could describe the namespace, and its first real call would
+ * still fail with `NOT_FOUND`.
+ *
+ * That window is small when the machine is idle (0.10s above; 0.00–0.11s across
+ * four concurrent bootstraps) and it is NOT small enough. It bit for real: once
+ * `apps/workers` added a second `auto-setup` to the same parallel
+ * `pnpm test:integration`, `temporal.integration.test.ts` — which Vitest happens
+ * to schedule first, ~50ms after globalSetup returns — failed on exactly this,
+ * one run in two. Isolated re-runs passed 3/3 and proved nothing.
+ *
+ * ## Why the wait strategy cannot carry this
+ *
+ * `Wait.forSuccessfulCommand` runs `docker exec` INSIDE the container, against
+ * loopback, through the CLI. Two things follow. It cannot exercise the mapped
+ * port in `address`, which is the only thing any caller will use. And it is a
+ * different client from a different process, so the thing being closed here —
+ * the gap between "the container is ready" and "THIS process's client can use
+ * the namespace" — is by construction only observable from this process. The
+ * wait strategy therefore stays byte-for-byte the compose healthcheck (one
+ * container-level readiness definition for both environments), and the
+ * host-side guarantee lives here.
+ *
+ * ## Shape
+ *
+ * 1. `Connection.connect`, ONCE and bounded — it calls `GetSystemInfo`, a real
+ *    round trip through the gRPC frontend, so a proxy accepting a socket cannot
+ *    satisfy it. Not retried, deliberately: see NAMESPACE_READY_TIMEOUT_MS.
+ * 2. Then poll `DescribeNamespace` AND `ListWorkflowExecutions` until both
+ *    succeed. Both, not just the second: keeping the cheap one makes the error
+ *    message able to distinguish "no namespace at all" from "registered but the
+ *    registry has not caught up", which are different bugs.
  *
  * `interceptors: []` removes the SDK's default retry interceptor. Retrying is
- * right for an application and wrong for a probe: it converts "this address is
- * dead" from a fast, legible error into a slow one, and the mutation this
- * harness is checked against — point it at a dead port — must fail rather than
- * hang.
+ * right for an application and wrong for a probe: it would fold the retry into
+ * the RPC where this function cannot bound or report it. The retrying happens
+ * here, explicitly, with a budget and an error that says what it waited for.
  *
  * Failures are re-thrown wrapped, because grpc-js's own message is
  * `Failed to connect before the deadline` and nothing else: no address, no
@@ -125,7 +181,7 @@ function publishedHandle(): TemporalHandle | undefined {
  * the same courtesy, with `cause` preserved so the gRPC status is still there
  * for anyone who wants it.
  */
-async function assertTemporalReachable(address: string): Promise<void> {
+async function awaitTemporalUsable(address: string): Promise<void> {
   let connection: Connection;
   try {
     connection = await Connection.connect({
@@ -142,16 +198,49 @@ async function assertTemporalReachable(address: string): Promise<void> {
     );
   }
 
+  const deadline = Date.now() + NAMESPACE_READY_TIMEOUT_MS;
+  let lastError: unknown;
+  // Which of the two RPCs was the last to fail, so the timeout message can tell
+  // "auto-setup never provisioned the namespace" apart from "it did, and the
+  // registry never caught up" — different bugs with the same gRPC status.
+  let reached: 'neither' | 'describe' = 'neither';
+
   try {
-    await connection.withDeadline(Date.now() + RPC_DEADLINE_MS, async () => {
-      await connection.workflowService.describeNamespace({ namespace: NAMESPACE });
-    });
-  } catch (error: unknown) {
+    for (;;) {
+      try {
+        await connection.withDeadline(Date.now() + RPC_DEADLINE_MS, async () =>
+          connection.workflowService.describeNamespace({ namespace: NAMESPACE }),
+        );
+        reached = 'describe';
+        // The registry-resolved call, and the one that actually gates. This is
+        // also the assertion test/temporal.integration.test.ts makes, on
+        // purpose: readiness here is the property the suite checks rather than
+        // something that correlates with it. Weaken this back to
+        // `describeNamespace` alone and that test starts flaking again — which
+        // is the signal.
+        await connection.withDeadline(Date.now() + RPC_DEADLINE_MS, async () =>
+          connection.workflowService.listWorkflowExecutions({
+            namespace: NAMESPACE,
+            pageSize: 1,
+          }),
+        );
+        return;
+      } catch (error: unknown) {
+        lastError = error;
+        if (Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, NAMESPACE_POLL_INTERVAL_MS));
+      }
+    }
+
     throw new Error(
-      `startTemporal: connected to ${address}, but namespace "${NAMESPACE}" is ` +
-        `not usable — auto-setup registers it last, so this is the wait strategy ` +
-        `having returned too early`,
-      { cause: error },
+      `startTemporal: connected to ${address}, but namespace "${NAMESPACE}" was ` +
+        `still not usable after ${String(NAMESPACE_READY_TIMEOUT_MS)}ms — ` +
+        (reached === 'describe'
+          ? `DescribeNamespace succeeded, so auto-setup registered it and the ` +
+            `frontend's namespace registry never picked it up`
+          : `DescribeNamespace never succeeded either, so auto-setup did not ` +
+            `finish provisioning it at all`),
+      { cause: lastError },
     );
   } finally {
     await connection.close();
@@ -273,12 +362,12 @@ async function startContainers(): Promise<TemporalHandle> {
 
   const address = `${temporal.getHost()}:${String(temporal.getMappedPort(FRONTEND_PORT))}`;
 
-  // The wait strategy proved the server is usable from INSIDE the container.
-  // It says nothing about the mapped port in `address`, which is the only
-  // thing any caller will ever use — a wrong port here would surface three
-  // layers away as a mystery connection error in a test that has nothing to
-  // do with the real cause.
-  await assertTemporalReachable(address);
+  // The wait strategy proved the server answers INSIDE the container. It says
+  // nothing about the mapped port in `address` — the only thing any caller will
+  // ever use — and nothing about whether a client out here can actually use the
+  // namespace yet. Both gaps are real and both were measured; see the doc
+  // comment on `awaitTemporalUsable`.
+  await awaitTemporalUsable(address);
 
   return { address, namespace: NAMESPACE };
 }

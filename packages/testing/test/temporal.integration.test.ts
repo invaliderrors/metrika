@@ -56,15 +56,27 @@ describe('the Testcontainers Temporal harness', () => {
       expect(described.namespaceInfo?.name).toBe(handle.namespace);
 
       // Usable, not merely described — this is the assertion that separates
-      // "the frontend answered" from "a worker could actually run here".
-      // auto-setup registers `default` LAST, after two schema migrations, and
-      // a namespace-SCOPED call is what fails with NamespaceNotFound across
-      // that window. `describeNamespace` alone would not: its own `state`
-      // field decodes as the raw protobuf enum ordinal (`1`), so asserting on
-      // it means committing a magic number to the test, and `@temporalio/proto`
-      // — where the symbolic name lives — is a transitive dependency this
-      // package does not declare. A real scoped RPC is both stronger and
-      // self-explaining.
+      // "the frontend answered" from "a worker could actually run here", and it
+      // is deliberately the SAME call `startTemporal` polls on before it hands
+      // out an address. Not a coincidence and not duplication: the harness's
+      // readiness condition is meant to be exactly this property rather than
+      // something that correlates with it, so if anyone weakens the harness
+      // back to `describeNamespace` alone, this line starts failing again
+      // instead of the weakening going unnoticed. It is asserted here with its
+      // own call rather than by reusing the harness's helper, so the test does
+      // not become a tautology over the code it is checking.
+      //
+      // The two RPCs resolve the namespace differently: `describeNamespace`
+      // reads through to persistence, `listWorkflowExecutions` goes via the
+      // frontend's namespace registry, and the registry lags. That gap is what
+      // this test caught — one full parallel run in two, once apps/workers
+      // added a second Temporal container to it.
+      //
+      // (`describeNamespace`'s own `state` field would be the obvious thing to
+      // assert instead, and it is worse: it decodes as the raw protobuf enum
+      // ordinal `1`, so it means committing a magic number, and the package
+      // where the symbolic name lives is a transitive dependency this one does
+      // not declare.)
       const listed = await connection.workflowService.listWorkflowExecutions({
         namespace: handle.namespace,
         pageSize: 1,
