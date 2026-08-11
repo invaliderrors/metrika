@@ -186,6 +186,16 @@ pushes to `main`:
 | `openapi`     | `pnpm --filter @metrika/api openapi:emit` then `git diff --exit-code -- apps/api/openapi/openapi.json`                                                       |
 | `contracts`   | `pnpm contracts:emit` then `git diff --exit-code` on the generated pydantic models — the only job besides `verify`/`integration` that installs `uv`          |
 
+**There is deliberately no `workers` job, and its absence is not an omission.**
+`apps/workers` exposes `lint`, `typecheck`, `test:unit` and `format:check` as
+`uv run …` shims, so Turbo already schedules every one of them inside `verify`
+— MEASURED with `turbo run <task> --dry=json`, which lists
+`uv run --locked --all-packages ruff check .`, `… mypy .`, `… pytest` and
+`… ruff format --check .` for `@metrika/workers`. `integration` and
+`contracts` install `uv` for their own reasons. A separate job would re-run
+all of that on a second runner: slower CI, no additional coverage, and a
+second place to forget a pin.
+
 The five jobs are independent and run in parallel; each does its own install
 and build, because nothing is shared between GitHub Actions jobs. The two
 `NEXT_PUBLIC_` keys and `DATABASE_ADMIN_URL` are set once at the **workflow**

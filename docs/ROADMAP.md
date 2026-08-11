@@ -71,7 +71,7 @@
 | 0.6  | ✅ `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness                                                                                         | `packages/database`                                                           |
 | 0.7  | ✅ `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                                                 | `apps/api/src`                                                                |
 | 0.8  | ✅ `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                                                   | `apps/web/src`                                                                |
-| 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                                                   | `apps/workers`                                                                |
+| 0.9  | ✅ `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                                                | `apps/workers`                                                                |
 | 0.10 | ✅ `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit — all six, each pinned by exact tag in [IMAGE_PINS.md](../infra/docker/IMAGE_PINS.md) and each with a healthcheck        | `infra/docker`                                                                |
 | 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                                                               | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
 | 0.12 | ✅ GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                                                                | `.github/workflows`                                                           |
@@ -82,10 +82,13 @@
 
 ✅ = done · ◐ = partially done, with the remainder named on the row.
 
-Progress: 0.1–0.8, 0.10, 0.12 and 0.15 are complete. 0.13 is partial: the
-Postgres and Temporal harnesses exist in `packages/testing`; Redis and MinIO
-follow their consumers. Remaining: 0.9, 0.11, 0.14, and 0.13's Redis and MinIO
-harnesses.
+Progress: 0.1–0.10, 0.12 and 0.15 are complete. 0.13 is partial: the Postgres
+and Temporal harnesses exist in `packages/testing`; Redis and MinIO follow
+their consumers. Remaining: 0.11, 0.14, and 0.13's Redis and MinIO harnesses.
+
+0.9 ships the runtime skeleton only — a shared library, two entry points and a
+stub activity each. There is no geometry, no slicing and no OrcaSlicer image;
+those are Phases 3 and 6.
 
 Caveats on the ✅ rows: several describe end-state work that lands incrementally
 as the runtimes that need it are built. 0.1's Turbo remote caching is still off
