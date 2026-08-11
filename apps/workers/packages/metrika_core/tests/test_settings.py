@@ -49,10 +49,36 @@ def test_declares_exactly_these_six_fields_and_nothing_else() -> None:
     declares `database_url` reports only `["store"]`; and a field `conn` carrying
     `validation_alias="METRIKA_WORKER_DATABASE_URL"` names nothing suspicious at all.
 
-    Asserting the exact set closes all three at once and costs one line. It fails
-    on ANY addition rather than on the ones somebody thought of — which is the
-    point, because the next credential-shaped field will not be called
-    `database_url`.
+    Asserting the exact set costs one line and fails on ANY addition rather than
+    on the ones somebody thought of, which is the point: the next
+    credential-shaped field will not be called `database_url`. It does NOT close
+    all three by itself, and the earlier version of this docstring claimed it
+    did. What it actually covers, measured on this tree:
+
+      the twenty-two names   CLOSED here. Any new field, whatever it is called,
+                             changes this set.
+      a NEW nested model     CLOSED here, for the same reason -- `store:
+                             Credentials` adds `"store"` to the set.
+      an EXISTING field name
+      whose TYPE changes     NOT SEEN HERE. `s3_endpoint_url: _Credentials |
+                             None`, where `_Credentials` declares `database_url`,
+                             leaves `set(model_fields)` byte-identical and every
+                             test in this file green -- measured, 8 passed.
+                             `mypy --strict` is what stops it, at the CONSUMER:
+                             `storage.py:92`, `Argument 1 to "build_s3_client"
+                             has incompatible type "_Credentials | None"`. Which
+                             also marks the limit of the pair -- a field nothing
+                             reads would change type unobserved by both.
+      the alias              CLOSED, but by `_surface_unknown_prefixed_variables`
+                             and `extra="forbid"`, not by this assertion. Put
+                             `validation_alias="METRIKA_WORKER_DATABASE_URL"` on
+                             an existing field and this set does not move;
+                             MEASURED, `WorkerSettings()` then raises
+                             `extra_forbidden` naming `database_url`, with
+                             `input_value='<value withheld>'`.
+
+    So three controls hold this, not one. Deleting any of them reopens a
+    different third of it.
     """
     assert set(WorkerSettings.model_fields) == {
         "temporal_address",
