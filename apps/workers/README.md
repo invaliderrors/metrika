@@ -39,6 +39,23 @@ names them.
 - `storage.py` — `ObjectStore`, the only module on the Python side that names
   `boto3`. `get_object` raises for a missing key and never returns `b""`; a
   missing _bucket_ is a configuration fault and propagates as a `ClientError`.
+- `contracts/__init__.py` — **generated, committed, and never edited by hand.**
+  `pnpm contracts:emit` writes it from the Zod schemas in `packages/contracts`
+  (`z.toJSONSchema()` → one JSON Schema document → `datamodel-codegen`), and CI's
+  `contracts` job re-runs the emission and fails on `git diff --exit-code`. The
+  file's own header carries what did **not** cross the boundary: branding
+  (`QuoteId` and `OrderId` are the same `str` here), regex flags, and the fact
+  that `\d` means something wider in Python than in JavaScript.
+- `tests/test_generated_contracts.py` — the boundary, asserted from this side,
+  which is the only side it is observable from. Every model is **instantiated and
+  a payload validated through it**, because ADR-0027 measured a generated model
+  passing `ruff`, `ruff format --check`, `mypy --strict` and `import` at exit 0
+  and then raising an uncaught `TypeError` on every payload. It also guards the
+  two config-level exemptions the generated file needs — the
+  `[[tool.mypy.overrides]]` for `explicit-any` and the `N815` per-file-ignore —
+  by asserting each names that module and nothing else. A generated file cannot
+  carry an inline suppression, so both had to become configuration, and an
+  exemption list is exactly the thing that widens under pressure.
 - `tests/test_dependencies.py` — the other half of ADR-0007. Nothing asserted
   that this package cannot install a database **driver**; measured,
   `psycopg==3.2.0` here passed every gate in the repository. Its resolved
@@ -134,8 +151,12 @@ synthesises from pydantic's `dataclass_transform`, and `plugins =
 `WorkerSettings()` typecheck at all) does not remove it.
 `metrika_core.settings` carries one justified inline suppression for it.
 **That does not scale to generated models**, which cannot carry a hand-written
-one, so the generated contracts package gets a `[[tool.mypy.overrides]]` scoped
-to that module alone — never a global relaxation. The comment above
+one, so `metrika_core.contracts` gets a `[[tool.mypy.overrides]]` scoped to that
+module alone — never a global relaxation. MEASURED: 17 `explicit-any` errors on
+that one file, every one on a class line, and none of the `Any` is in the
+generated source (`grep -c Any` on it is 0). `test_generated_contracts.py`
+asserts the override names exactly `["metrika_core.contracts"]`; adding
+`metrika_core.*` to it turns that test red. The comment above
 `disallow_any_explicit` in `pyproject.toml` says the rest.
 
 **The ruff configuration is an input to generated code.** `contracts:emit` runs

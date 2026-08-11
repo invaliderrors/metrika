@@ -23,6 +23,7 @@
     "db:deploy": "node --env-file-if-exists=.env scripts/prisma.mjs migrate deploy",
     "db:reset": "node --env-file-if-exists=.env scripts/prisma.mjs migrate reset --force",
     "db:studio": "node --env-file-if-exists=.env scripts/prisma.mjs studio",
+    "contracts:emit": "node scripts/contracts-emit.mjs",
     "format": "prettier --write . && turbo run format",
     "format:check": "prettier --check . && turbo run format:check",
     "verify": "pnpm format:check && pnpm build && pnpm lint && pnpm typecheck && pnpm test:unit",

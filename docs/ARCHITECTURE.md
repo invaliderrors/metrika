@@ -432,7 +432,7 @@ The rules, and whether the ESLint zone that enforces each one exists yet. A rule
 | Only `apps/api/src/infrastructure/persistence/**` may import `brandUnsafe`                           | not yet — **the helper itself does not exist** | The single controlled place where a DB `string` becomes a branded ID                                    |
 | `apps/*` may not import from another app's `src`                                                     | not yet — there is only one app                | Cross-app sharing goes through a package or it does not happen                                          |
 
-The Python side is to consume contracts by **generating pydantic models from JSON Schema emitted by `packages/contracts`** in a `pnpm contracts:emit` step, committed and diffed in CI. **That script does not exist yet** — neither does `apps/workers` — and no CI job runs it. Both land in Plan 0B-3. The design intent is one source of truth across the language boundary without a runtime dependency.
+The Python side consumes contracts by **generating pydantic models from JSON Schema emitted by `packages/contracts`** in a `pnpm contracts:emit` step, committed and diffed in CI by the `contracts` job. The chain is `z.toJSONSchema()` → one JSON Schema document → `datamodel-code-generator` — **not** `zod-to-json-schema`, which this repository does not depend on and must not: Zod 4 emits JSON Schema natively, and the rule directly above is that `packages/contracts` imports nothing else. One source of truth across the language boundary, with no runtime dependency in either direction. See [CONTRACTS_AND_API.md §5](./CONTRACTS_AND_API.md#5-crossing-into-python) for what does **not** cross — branding, regex flags, and the meaning of `\d`.
 
 ---
 

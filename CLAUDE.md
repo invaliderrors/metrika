@@ -36,8 +36,7 @@ bare `pnpm exec prisma` inside `packages/database` cannot find
 `test:e2e` exists as a **package** script only, deliberately: a root one would
 put a chromium download in everyone's inner loop. Run it as
 `pnpm --filter @metrika/web test:e2e`.
-Not yet created (Plan 0B-3): `db:seed`, `contracts:emit`, and the Python half of
-`dev`.
+Not yet created (Plan 0B-3): `db:seed` and the Python half of `dev`.
 
 ```bash
 pnpm verify                    # format:check + build + lint + typecheck + test:unit — the gate to run before claiming done
@@ -51,6 +50,7 @@ pnpm infra:up | infra:down | infra:reset   # postgres, redis, minio, mailpit
 pnpm db:generate | db:migrate | db:deploy | db:reset | db:studio
 pnpm --filter @metrika/web test:e2e        # Playwright; builds and starts apps/web itself on 127.0.0.1:3000
 pnpm --filter @metrika/api openapi:emit    # regenerate apps/api/openapi/openapi.json; CI fails if this produces a diff
+pnpm contracts:emit                        # Zod → JSON Schema → the committed pydantic models; CI fails if this produces a diff
 ```
 
 Single test: `pnpm --filter <package> test:unit -- <pattern>` (Vitest).

@@ -244,7 +244,10 @@ which builds that package and nothing else. On a tree that has never been built,
 '@metrika/contracts'`, and Playwright reports only "Process from
 config.webServer was not able to start". Run `pnpm build` from the root first.
 
-`pnpm contracts:emit` and `pnpm db:seed` arrive in Plan 0B-3.
+`pnpm contracts:emit` regenerates the committed pydantic models from the Zod
+schemas — run it after touching `packages/contracts` and commit the result, or
+CI's `contracts` job fails on the diff. It needs `uv` on `PATH` and nothing else;
+it builds `@metrika/contracts` itself. `pnpm db:seed` arrives in Plan 0B-3.
 
 ---
 

@@ -17,7 +17,7 @@ graph LR
     Z -->|nestjs-zod| V[Runtime request/response validation]
     Z -->|nestjs-zod + @nestjs/swagger| O[OpenAPI 3.1]
     Z -->|orval, from the emitted document| C[Typed client + hooks]
-    Z -->|zod-to-json-schema → datamodel-codegen| P[pydantic models — Python workers]
+    Z -->|z.toJSONSchema → datamodel-codegen| P[pydantic models — Python workers]
     Z -->|z.infer| E[Event payload types]
 ```
 
@@ -239,11 +239,25 @@ A lint rule forbids raw `fetch` in `apps/web/src/features/**`. There is one HTTP
 
 ## 5. Crossing into Python
 
-`packages/contracts` emits JSON Schema for the schemas the workers need (activity inputs/outputs, geometry results, slice metrics, unit interpretation), and `datamodel-code-generator` turns those into pydantic models committed under `apps/workers/packages/metrika_core/generated/`.
+`pnpm contracts:emit` (`scripts/contracts-emit.mjs`) is the whole chain. `packages/contracts/src/json-schema.ts` turns the Zod schemas into ONE JSON Schema document with a `$defs` entry per contract, and `datamodel-code-generator` turns that into pydantic models committed as `apps/workers/packages/metrika_core/src/metrika_core/contracts/__init__.py`.
 
-CI runs the emission and fails on `git diff --exit-code`. A TypeScript contract change that is not reflected in the Python models breaks the build immediately, at the point of change, rather than at runtime in a worker three weeks later.
+**No `zod-to-json-schema` dependency, and there must not be one.** Zod 4 ships `z.toJSONSchema()`, and `packages/contracts` may import nothing but `zod` (§7 of [ARCHITECTURE.md](./ARCHITECTURE.md)) — a second package here propagates to every consumer including the browser bundle.
+
+One document rather than a file per schema, because the generator names a model after its `$defs` key and because a nested reference then emits `$ref`. Emitted per-schema instead, `Money.currency` inlines the currency enum and the generator writes a **second** Python enum beside `CurrencyCode` — two classes for one contract, invisible from TypeScript.
+
+CI runs the emission and fails on `git diff --exit-code` (the `contracts` job). A TypeScript contract change that is not reflected in the Python models breaks the build immediately, at the point of change, rather than at runtime in a worker three weeks later. `packages/contracts/test/json-schema.test.ts` asks a weaker version of the same question in `pnpm verify`, so the answer is not CI-only.
 
 This is deliberately a build-time artefact rather than a runtime dependency — the workers stay a pure Python project with no Node requirement in their image.
+
+### What does not cross
+
+Three things, and each one is a property of the boundary rather than a defect to fix:
+
+- **Branding.** `z.string().regex(…).brand<'QuoteId'>()` emits a plain constrained string, so `QuoteId` and `OrderId` are the same type in Python and are freely interchangeable there. Python gets validation, not identity; [ADR-0018](./adr/0018-branded-types.md) stops here and cannot be made to cross. The generated file says so in its header.
+- **Regex flags.** `z.toJSONSchema()` emits a pattern's source and drops its flags **silently**. An `/i` on the Zod side therefore produces a Python model stricter than the schema defining it — which is why `src/brand.ts` spells case into its character classes.
+- **`\d`.** ASCII-only in JavaScript, any Unicode decimal digit in Python. A pattern containing one makes the generated model strictly **more permissive** than Zod: `"3٥٠"` is accepted and read as `350`. `src/money.ts` writes `[0-9]` for this reason. Zod's own built-in formats (`z.e164()`, `z.iso.datetime()`, …) carry `\d` and cannot be edited here; [ADR-0027](./adr/0027-python-toolchain.md) decided against rewriting them in the emitter, so `apps/workers/packages/metrika_core/tests/test_generated_contracts.py` carries a rejection test per pattern-carrying model instead.
+
+The Python suite **instantiates and validates**, never merely imports. ADR-0027 measured a generated model that passed `ruff`, `ruff format`, `mypy --strict` and `import` at exit 0 and then raised an uncaught `TypeError` on every payload.
 
 ---
 
