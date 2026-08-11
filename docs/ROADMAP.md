@@ -97,7 +97,9 @@ convert CI's cross-package type gate into a pass. `.github/workflows/ci.yml`
 carries the measurement. 0.2 is complete — `base`, `node`, `react-library`,
 `web-library`, `nest` and `next` all exist. 0.3's `react` and `next` profiles landed with
 Plan 0B-2 Task 2, each with a fixture asserting a named rule reports; the
-`workflows` profile arrives with `apps/api/src/workflows` (Plan 0B-3).
+`workflows` profile landed with Plan 0B-3 Task 7, ahead of the
+`apps/api/src/workflows` directory it constrains, and is composed into
+`apps/api` today.
 `base`, `typeChecked`, `nest`, `test` and seven boundary exports
 (`contractsBoundary`, `prismaImportBoundary`, `rawSqlBan`, their `prismaBoundary`
 composite, and `webBoundary`, `serverActionBoundary`, `featureBoundary` from Plan
