@@ -206,22 +206,43 @@ asserts the override names exactly `["metrika_core.contracts"]`; adding
 `metrika_core.*` to it turns that test red. The comment above
 `disallow_any_explicit` in `pyproject.toml` says the rest.
 
-**Constructing a Temporal `Worker` starts polling. It is not a local object.**
-MEASURED on temporalio 1.31.0: `Worker.__init__` calls
-`temporalio.bridge.worker.Worker.create`, and the Rust core worker it makes
-begins taking tasks off its queue before `run()` is called and whether or not
-`run()` is ever called. A worker that is constructed, inspected and dropped
-therefore keeps accepting activity tasks and executes none of them, and
-`shutdown()` is no escape — it waits on an event only `run()` sets, so on a
+**Constructing a Temporal `Worker` takes a registration that dropping the object
+does not release.** MEASURED on temporalio 1.31.0, in one boot against a real
+server, with a positive control (script:
+`registration_probe.py`, run 2026-08-11):
+
+| measurement                                                  | result                                     |
+| ------------------------------------------------------------ | ------------------------------------------ |
+| running worker (`async with`) → activity pollers             | **1** — the control passes                 |
+| constructed, never run → activity pollers after 6s           | **0**                                      |
+| `del` + `gc.collect()`, then a second `Worker` on that queue | **`RuntimeError: Failed creating worker`** |
+| the same, from a new event loop and a new `Client`           | constructs with no error                   |
+
+The error is core's, and it names what it is keyed on: `Registration of multiple
+workers with overlapping worker task types on the same namespace, task queue,
+and deployment build ID not allowed: SlotKey { namespace: "default", task_queue:
+… }`. `shutdown()` is no escape — it waits on an event only `run()` sets, so on a
 never-run worker it hangs.
 
-The symptom points nowhere near the cause: the round-trip test failed about one
-run in three with `activity StartToClose timeout` — the server saying the task
-WAS dispatched — while the process's own debug log showed no `Running activity`
-line at all. Isolated on a shared queue: **4 failures in 6 with an abandoned
-worker, 0 in 6 without.** `packages/metrika_core/tests/test_temporal.py` now
-gives every test its own task queue and enters any worker it builds as a context
-manager. Do not build one to look at it.
+**Construction does NOT poll**, and an earlier version of this section said it
+did. It was inferred from a symptom rather than measured, and the control above
+is what refutes it: 0 pollers, and an activity whose only worker is an abandoned
+one times out on `ScheduleToStart` — identical to no worker at all, not to a
+worker eating tasks.
+
+What the symptom actually was, and it is left here unexplained on purpose:
+with an abandoned worker from an earlier event loop still in the process, a
+properly running worker on the same queue is **starved** — the round trip failed
+about one run in three with `activity StartToClose timeout` (the server saying
+the task WAS dispatched) while the process logged no `Running activity` line.
+Isolated on a shared queue: **4 failures in 6 with an abandoned worker, 0 in 6
+without**, and reproduced again in the table above. The mechanism is not
+established. Do not write one down without measuring it.
+
+The mitigation is the same either way, and it is already applied:
+`packages/metrika_core/tests/test_temporal.py` gives every test its own task
+queue and enters every worker it builds as a context manager. **Do not construct
+one to look at it.**
 
 **The ruff configuration is an input to generated code.** `contracts:emit` runs
 `datamodel-codegen --formatters ruff-format ruff-check`, so the committed

@@ -40,6 +40,8 @@ where Docker is installed is a drift check that stops running first.
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import ExitStack
@@ -47,7 +49,11 @@ from pathlib import Path
 
 import pytest
 from temporalio import activity
-from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
+from temporalio.api.workflowservice.v1 import (
+    DescribeNamespaceRequest,
+    ListWorkflowExecutionsRequest,
+)
+from temporalio.client import Client
 from temporalio.worker import Worker
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.network import Network
@@ -91,6 +97,13 @@ _BOOTSTRAP_DATABASE = "metrika_test"
 # then registers the namespace and the search attributes.
 _STARTUP_TIMEOUT_S = 180
 
+# The HOST-side gate below. Short, because by the time it runs the container has
+# already reported itself usable from the inside; this is only closing the gap
+# between the two, which Task 5 measured at 0.10 to 0.25s.
+_READINESS_TIMEOUT_S = 60
+_READINESS_POLL_S = 0.05
+_RPC_TIMEOUT_S = 10
+
 _COMPOSE_FILE = Path(__file__).resolve().parents[5] / "infra" / "docker" / "docker-compose.yml"
 
 # The queue a worker built by `build_worker` polls, and the separate one the
@@ -115,6 +128,58 @@ async def probe() -> str:
     other worker in the process happens to pick the task up.
     """
     return activity.info().task_queue
+
+
+async def _usable(address: str) -> None:
+    """Two RPCs from THIS process, both of which a caller depends on.
+
+    The wait strategy above proves the server is usable from INSIDE the
+    container. That is not the same claim, and Task 5 measured the difference:
+    `DescribeNamespace` goes green as soon as the `RegisterNamespace` row
+    commits, while everything a real caller does resolves through the frontend's
+    namespace **registry**, which lags it by **0.10 to 0.25s**. A container-level
+    check alone is structurally the pre-fix condition, and this suite makes
+    registry-resolved calls — `execute_workflow`, and a worker polling a task
+    queue.
+
+    Measured here before this function existed: `ListWorkflowExecutions` was
+    already usable at t≈0.00s in 3 of 3 boots, because python-testcontainers
+    polls the exec strategy on a **1s** cadence and the lag is a quarter of
+    that. That is ~0.75s of incidental margin, not a design, and it is not a
+    thing to leave a suite standing on.
+
+    So: `DescribeNamespace` (the frontend is up and the namespace row exists)
+    and then `ListWorkflowExecutions` (the registry has resolved it), on the
+    MAPPED port, which is the only address any caller here will use.
+    """
+    client = await Client.connect(address, namespace=_NAMESPACE)
+    await client.workflow_service.describe_namespace(DescribeNamespaceRequest(namespace=_NAMESPACE))
+    await client.workflow_service.list_workflow_executions(
+        ListWorkflowExecutionsRequest(namespace=_NAMESPACE, page_size=1)
+    )
+
+
+def _await_usable(address: str) -> None:
+    """Poll `_usable` until it succeeds, or fail naming the last error.
+
+    Bounded rather than retried forever: the failure this bound prevents — a
+    fixture that HANGS against a dead address instead of failing — reads as
+    infrastructure trouble rather than as a bug.
+    """
+    deadline = time.monotonic() + _READINESS_TIMEOUT_S
+    last: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            asyncio.run(asyncio.wait_for(_usable(address), timeout=_RPC_TIMEOUT_S))
+        # Any RPC failure here means "not yet", including a connection
+        # refusal: this loop is the thing that decides when it stops meaning
+        # that, and the deadline above is what stops it meaning it forever.
+        except Exception as error:
+            last = error
+            time.sleep(_READINESS_POLL_S)
+        else:
+            return
+    raise AssertionError(f"{address} never became usable from this process: {last!r}")
 
 
 async def not_an_activity() -> str:
@@ -217,7 +282,15 @@ def temporal_address() -> Iterator[str]:
 
         host = temporal.get_container_host_ip()
         port = temporal.get_exposed_port(_FRONTEND_PORT)
-        yield f"{host}:{port}"
+        address = f"{host}:{port}"
+
+        # The wait strategy above spoke to the server from inside the container.
+        # This is the only address any caller here will use, and the frontend's
+        # namespace registry lags the row the container-side check sees — see
+        # `_usable`.
+        _await_usable(address)
+
+        yield address
 
 
 @pytest.fixture
@@ -230,27 +303,43 @@ def settings(temporal_address: str, monkeypatch: pytest.MonkeyPatch) -> WorkerSe
     that decides whether a deployed worker reads anything at all.
 
     **A UNIQUE TASK QUEUE PER TEST, and it took a flake to learn why.**
-    MEASURED on temporalio 1.31.0: constructing a `Worker` is not building a
-    local object. `Worker.__init__` calls
-    `temporalio.bridge.worker.Worker.create` (`_worker.py:637`), and the Rust
-    core worker it makes **starts polling its task queue immediately** — before
-    `run()`, and whether or not `run()` is ever called. A worker that is
-    constructed, inspected and dropped therefore keeps taking activity tasks off
-    that queue and never executes any of them, and `shutdown()` is no escape:
-    it waits on an event only `run()` sets, so on a never-run worker it hangs.
+    MEASURED on temporalio 1.31.0, one boot against a real server, with a
+    positive control:
 
-    The symptom is the interesting part, because nothing points at the cause.
-    The round-trip test below failed roughly one run in three with
-    `activity StartToClose timeout` — the server saying the task WAS dispatched
-    and started — while the process's own debug log showed no `Running activity`
-    line at all. Isolated, on a shared queue, with one `asyncio.run` per
-    simulated test: **4 failures in 6 with an abandoned worker, 0 in 6
-    without.**
+        running worker (`async with`) → activity pollers .......... 1
+        constructed, never run → activity pollers after 6s ........ 0
+        del + gc.collect(), second Worker on that queue ........... RuntimeError
+        the same from a new event loop and a new Client ........... no error
 
-    So: one queue per test, and the two tests that build a worker without
-    running it enter it as a context manager instead. Either alone would fix
-    today's flake; both together are what makes it impossible for a test added
-    later to steal another's work.
+    So constructing a `Worker` is not building a local object — it takes a
+    **process-local registration that dropping the object does not release**,
+    and core says so by name: `Registration of multiple workers with overlapping
+    worker task types on the same namespace, task queue, and deployment build ID
+    not allowed: SlotKey { namespace: "default", task_queue: … }`. `shutdown()`
+    is no escape: it waits on an event only `run()` sets, so on a never-run
+    worker it hangs.
+
+    It does NOT poll, and an earlier version of this docstring claimed it did —
+    inferred from the symptom below rather than measured. The control is what
+    refutes it: 0 pollers, and an activity whose only worker is an abandoned one
+    times out on `ScheduleToStart`, which is what "no worker at all" looks like
+    rather than what "a worker eating tasks" looks like.
+
+    THE SYMPTOM, left unexplained deliberately: with an abandoned worker from an
+    earlier event loop still in the process, a properly RUNNING worker on the
+    same queue is starved. The round-trip test below failed roughly one run in
+    three with `activity StartToClose timeout` — the server saying the task WAS
+    dispatched — while the process's own debug log showed no `Running activity`
+    line at all. Isolated, on a shared queue, one `asyncio.run` per simulated
+    test: **4 failures in 6 with an abandoned worker, 0 in 6 without**, and
+    reproduced again in the run above. The mechanism is not established; do not
+    write one down here without measuring it.
+
+    So: one queue per test, and every test that builds a worker enters it as a
+    context manager. Either alone would fix today's flake; both together are
+    what makes it impossible for a test added later to steal another's work,
+    and the unique queue is also what keeps the `SlotKey` collision above out of
+    a suite that builds a worker in more than one test.
     """
     monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_ADDRESS", temporal_address)
     monkeypatch.setenv(

@@ -22,11 +22,15 @@
       // since naming any input REPLACES the default set rather than extending
       // it.
       //
-      // This is the fifth instance of the shape in this repository — the others
-      // are in apps/api, apps/web, packages/database and
-      // packages/typescript-config, each with its own measurement. Any test
-      // that reads a file outside its own package needs an entry here, and
-      // nothing enforces that: a test added later is silently unhashed.
+      // This is the SIXTH instance of the shape in this repository. The census
+      // is `grep -rl TURBO_ROOT --include=turbo.json`: apps/api, apps/web,
+      // packages/contracts, packages/database, packages/typescript-config and
+      // this one, each with its own measurement. Counting from memory is how
+      // the previous two comments here both ended up wrong in different
+      // directions — one omitted packages/contracts, the other said five while
+      // listing five that were not the same five. Any test that reads a file
+      // outside its own package needs an entry, and nothing enforces that: a
+      // test added later is silently unhashed.
       //
       // The integration suite does not need an entry of its own.
       // `test:integration` is `cache: false` in the root turbo.json, so its own
