@@ -23,9 +23,14 @@
         "$TURBO_ROOT$/pnpm-workspace.yaml",
         "$TURBO_ROOT$/apps/*/package.json",
         "$TURBO_ROOT$/packages/*/package.json",
-        "$TURBO_ROOT$/apps/workers/pyproject.toml",
-        "$TURBO_ROOT$/apps/workers/*/pyproject.toml",
-        "$TURBO_ROOT$/apps/workers/packages/*/pyproject.toml",
+        // Repo-wide, matching the walk. pyprojectPaths() deliberately searches
+        // the whole repository — its own comment says a pyproject.toml
+        // "somewhere else entirely" is exactly what a members-driven walk would
+        // miss — so an apps/workers-shaped glob would silently reinstate that
+        // blind spot. MEASURED: with the narrow globs, adding
+        // scripts/pyproject.toml carrying `requests>=2.0.0` left the gate green
+        // from cache.
+        "$TURBO_ROOT$/**/pyproject.toml",
         "$TURBO_ROOT$/apps/workers/uv.lock"
       ]
     }
