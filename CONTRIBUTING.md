@@ -16,7 +16,7 @@ See [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md).
 git switch -c feat/quote-expiry-sweeper
 # ... work ...
 pnpm verify          # format:check + build + lint + typecheck + unit — CI's `verify` job
-pnpm test:integration # if you touched packages/database or apps/api; Docker must be running
+pnpm test:integration # if you touched packages/database, apps/api or apps/workers; Docker must be running
 git commit           # conventional commits — a convention today; commitlint is not installed yet
 ```
 
@@ -40,7 +40,7 @@ Two conventions that apply to every commit:
 A change is ready when **all** of these hold:
 
 - [ ] `pnpm verify` passes — it is `format:check` **+ `build`** + `lint` + `typecheck` + `test:unit`, in that order, and the `build` is not incidental: `lint` and `typecheck` both depend on `^build`, so a workspace dependency that does not compile has to fail as a build
-- [ ] `pnpm test:integration` passes locally if the change touches `packages/database` or `apps/api`. Neither `pnpm verify` nor any other local gate can see what it sees — an `import type` on an injected provider, an RLS policy that stops isolating, a probe that answers 200 while its dependency is down, or a stack trace escaping the exception filter are all green under lint, types and unit tests
+- [ ] `pnpm test:integration` passes locally if the change touches `packages/database`, `apps/api` or `apps/workers`. Neither `pnpm verify` nor any other local gate can see what it sees — an `import type` on an injected provider, an RLS policy that stops isolating, a probe that answers 200 while its dependency is down, a stack trace escaping the exception filter, or an S3 addressing style the endpoint rejects are all green under lint, types and unit tests
 - [ ] CI passes — all four jobs: `verify`, `integration`, `web` (Playwright against a production build of `apps/web`) and `openapi`. From Phase 1 that includes the cross-tenant IDOR suite, which does not exist yet
 - [ ] Coverage targets for the touched packages are met ([docs/TESTING.md](./docs/TESTING.md))
 - [ ] No `any`. No unjustified `@ts-expect-error`. No unjustified `eslint-disable`. No skipped tests without a linked issue

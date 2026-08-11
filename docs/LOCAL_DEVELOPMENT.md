@@ -22,9 +22,15 @@
 
 **Docker is not optional.** It runs the local stack (`pnpm infra:up`) _and_ every
 integration test: `pnpm test:integration` starts its own Postgres through
-Testcontainers, and `packages/testing`'s preflight fails with a readable
+Testcontainers — and, since Plan 0B-3, its own MinIO for `apps/workers` —
+and `packages/testing`'s preflight fails with a readable
 `DockerUnavailableError` when no daemon is reachable rather than hanging. A
-change to `packages/database` or `apps/api` cannot be verified without it.
+change to `packages/database`, `apps/api` or `apps/workers` cannot be verified
+without it.
+
+`pnpm verify` deliberately does **not** need Docker, on either side. The Python
+storage suite is marked `integration` and deselected by `addopts` in
+`apps/workers/pyproject.toml` for exactly that reason.
 
 `mise` is recommended over nvm + pyenv because a polyglot repository with two version managers has two ways to be subtly wrong. `.nvmrc` and `.python-version` are committed anyway so nobody is forced to adopt it.
 
@@ -149,8 +155,8 @@ pnpm dev                       # apps/api + apps/web
 pnpm verify                    # format:check + build + lint + typecheck + unit — the pre-push gate
 pnpm build                     # tsc -b per package + next build, topological through Turbo
 
-pnpm test:unit                 # fast
-pnpm test:integration          # Testcontainers; Docker must be running
+pnpm test:unit                 # fast, and needs no Docker on either side
+pnpm test:integration          # Testcontainers — Postgres and MinIO; Docker must be running
 
 pnpm infra:up                  # start postgres, redis, minio, mailpit and wait for healthy
 pnpm infra:down                # stop them, keeping the volumes
