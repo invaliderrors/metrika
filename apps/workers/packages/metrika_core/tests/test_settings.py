@@ -6,23 +6,23 @@ from pydantic import ValidationError
 from metrika_core.settings import WorkerSettings
 
 
-def test_reads_the_metrika_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("METRIKA_S3_BUCKET", "metrika-models")
-    monkeypatch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "geometry-small")
+def test_reads_the_worker_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("METRIKA_WORKER_S3_BUCKET", "metrika-models")
+    monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "geometry-small")
     settings = WorkerSettings()
     assert settings.s3_bucket == "metrika-models"
     assert settings.temporal_task_queue == "geometry-small"
 
 
 def test_defaults_the_temporal_address(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("METRIKA_S3_BUCKET", "b")
-    monkeypatch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "q")
+    monkeypatch.setenv("METRIKA_WORKER_S3_BUCKET", "b")
+    monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "q")
     assert WorkerSettings().temporal_address == "localhost:7233"
 
 
 def test_rejects_a_missing_bucket_and_names_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("METRIKA_S3_BUCKET", raising=False)
-    monkeypatch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "q")
+    monkeypatch.delenv("METRIKA_WORKER_S3_BUCKET", raising=False)
+    monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "q")
     with pytest.raises(ValidationError, match="s3_bucket"):
         WorkerSettings()
 
@@ -47,7 +47,7 @@ def test_declares_exactly_these_six_fields_and_nothing_else() -> None:
     Two structural holes as well, and neither is reachable by any blacklist:
     `model_fields` is one level deep, so a field `store: Credentials` whose model
     declares `database_url` reports only `["store"]`; and a field `conn` carrying
-    `validation_alias="METRIKA_DATABASE_URL"` names nothing suspicious at all.
+    `validation_alias="METRIKA_WORKER_DATABASE_URL"` names nothing suspicious at all.
 
     Asserting the exact set closes all three at once and costs one line. It fails
     on ANY addition rather than on the ones somebody thought of — which is the
@@ -64,13 +64,41 @@ def test_declares_exactly_these_six_fields_and_nothing_else() -> None:
     }
 
 
-def test_rejects_an_unknown_metrika_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rejects_an_unknown_worker_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Typos must fail loudly rather than silently taking a default."""
-    monkeypatch.setenv("METRIKA_S3_BUCKET", "b")
-    monkeypatch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "q")
-    monkeypatch.setenv("METRIKA_S3_BUKCET", "typo")
-    with pytest.raises(ValidationError):
+    monkeypatch.setenv("METRIKA_WORKER_S3_BUCKET", "b")
+    monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "q")
+    monkeypatch.setenv("METRIKA_WORKER_S3_BUKCET", "typo")
+    with pytest.raises(ValidationError, match="s3_bukcet"):
         WorkerSettings()
+
+
+def test_ignores_a_metrika_variable_that_belongs_to_something_else(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The strict policy is right; claiming the whole `METRIKA_` namespace was not.
+
+    `METRIKA_TEST_DATABASE_URL` is not hypothetical — `packages/testing/src/database.ts`
+    publishes it, and any developer or CI step that has run the Node integration
+    harness in the same shell has it exported. MEASURED under the old
+    `METRIKA_` prefix: `WorkerSettings()` did not construct AT ALL, because a
+    strict claim over a shared namespace turns another team's variable into this
+    worker's startup failure.
+
+    Narrowing the claim to `METRIKA_WORKER_` is what makes the strictness safe.
+    The worker now owns its namespace completely, so "an unrecognised variable
+    in it is an error" is a statement about our own configuration rather than
+    about the machine's.
+    """
+    monkeypatch.setenv("METRIKA_WORKER_S3_BUCKET", "metrika-models")
+    monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "geometry-small")
+    monkeypatch.setenv("METRIKA_TEST_DATABASE_URL", "postgresql://u:s3cr3t-pw@h:5432/d")
+    monkeypatch.setenv("METRIKA_TEST_DATABASE_ADMIN_URL", "postgresql://a:s3cr3t-pw@h:5432/d")
+    monkeypatch.setenv("METRIKA_SLICER", "real")
+
+    settings = WorkerSettings()
+
+    assert settings.s3_bucket == "metrika-models"
 
 
 def test_never_puts_the_value_of_an_unknown_variable_in_the_error(
@@ -78,18 +106,23 @@ def test_never_puts_the_value_of_an_unknown_variable_in_the_error(
 ) -> None:
     """The rejection above must not become the leak it exists to prevent.
 
-    `METRIKA_TEST_DATABASE_URL` is not hypothetical — `packages/testing`
-    publishes it — and a worker that logs its own startup ValidationError would
-    then have written a Postgres password to stdout, from the one module whose
-    whole job is that there is nothing there to write. MEASURED: surfacing the
-    real value put it in `str(error)` and in `error.json()` at any length.
+    A worker that logged its own startup ValidationError would have written the
+    value to stdout, from the one module whose whole job is that there is
+    nothing there to write. MEASURED: surfacing the real value put it in
+    `str(error)` and in `error.json()` at any length.
+
+    Narrowing the prefix did not make this redundant. It removed the variables
+    somebody ELSE sets from the walk; a credential is just as easy to put in a
+    variable of ours — `METRIKA_WORKER_DATABASE_URL` is precisely what someone
+    reaches for on the day they decide the worker needs a database, which is the
+    day ADR-0007 is being broken and the error must not help.
 
     The variable's NAME must survive, or the error stops being actionable.
     """
     needle = "s3cr3t-pw"
-    monkeypatch.setenv("METRIKA_S3_BUCKET", "b")
-    monkeypatch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "q")
-    monkeypatch.setenv("METRIKA_TEST_DATABASE_URL", f"postgresql://u:{needle}@h:5432/d")
+    monkeypatch.setenv("METRIKA_WORKER_S3_BUCKET", "b")
+    monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "q")
+    monkeypatch.setenv("METRIKA_WORKER_DATABASE_URL", f"postgresql://u:{needle}@h:5432/d")
 
     with pytest.raises(ValidationError) as caught:
         WorkerSettings()
@@ -97,13 +130,13 @@ def test_never_puts_the_value_of_an_unknown_variable_in_the_error(
     rendered = f"{caught.value}\n{caught.value.json()}"
     assert needle not in rendered
     assert "postgresql" not in rendered
-    assert "test_database_url" in rendered, "the name must survive; it is the actionable half"
+    assert "database_url" in rendered, "the name must survive; it is the actionable half"
 
 
 def test_rejects_a_log_level_the_logger_cannot_use(monkeypatch: pytest.MonkeyPatch) -> None:
     """A bad level is a settings error, not a `KeyError` inside `configure_logging`."""
-    monkeypatch.setenv("METRIKA_S3_BUCKET", "b")
-    monkeypatch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "q")
-    monkeypatch.setenv("METRIKA_LOG_LEVEL", "verbose")
+    monkeypatch.setenv("METRIKA_WORKER_S3_BUCKET", "b")
+    monkeypatch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "q")
+    monkeypatch.setenv("METRIKA_WORKER_LOG_LEVEL", "verbose")
     with pytest.raises(ValidationError, match="log_level"):
         WorkerSettings()

@@ -97,9 +97,9 @@ def store(minio_endpoint: str) -> Iterator[ObjectStore]:
     one is function-scoped and this container is not.
     """
     patch = pytest.MonkeyPatch()
-    patch.setenv("METRIKA_S3_BUCKET", _BUCKET)
-    patch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "geometry-small")
-    patch.setenv("METRIKA_S3_ENDPOINT_URL", minio_endpoint)
+    patch.setenv("METRIKA_WORKER_S3_BUCKET", _BUCKET)
+    patch.setenv("METRIKA_WORKER_TEMPORAL_TASK_QUEUE", "geometry-small")
+    patch.setenv("METRIKA_WORKER_S3_ENDPOINT_URL", minio_endpoint)
     patch.setenv("AWS_ACCESS_KEY_ID", _ROOT_USER)
     patch.setenv("AWS_SECRET_ACCESS_KEY", _ROOT_PASSWORD)
     patch.setenv("AWS_DEFAULT_REGION", "us-east-1")

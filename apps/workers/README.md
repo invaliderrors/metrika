@@ -14,12 +14,23 @@ names them.
 
 ### `packages/metrika_core`
 
-- `settings.py` — `WorkerSettings`, read from `METRIKA_*`. **There is no
-  database field of any kind**, and `tests/test_settings.py` asserts the exact
+- `settings.py` — `WorkerSettings`, read from **`METRIKA_WORKER_*`**. **There is
+  no database field of any kind**, and `tests/test_settings.py` asserts the exact
   field set rather than screening names for suspicious substrings (ADR-0007) — a
   blacklist missed twenty-two spellings, nested models and aliases; a whitelist
-  fails on any addition. A typo'd `METRIKA_*` variable is a startup error, not a
-  silent default, and the error names it **without** its value.
+  fails on any addition. A typo'd `METRIKA_WORKER_*` variable is a startup error,
+  not a silent default, and the error names it **without** its value.
+
+  **The prefix is `METRIKA_WORKER_` and not `METRIKA_` for a measured reason.**
+  `extra="forbid"` here means "an unrecognised variable in our namespace is an
+  error", which is right — and was applied to a namespace this repository shares:
+  `packages/testing/src/database.ts` publishes `METRIKA_TEST_DATABASE_URL`, and
+  with it exported `WorkerSettings()` refused to construct at all, so any shell
+  that had run the Node integration harness could not start a worker. Narrowing
+  the claim is what makes the strictness safe. Do not widen it back; add a
+  variable under `METRIKA_WORKER_` instead, and to `.env.example` in the same
+  commit.
+
 - `logging.py` — JSON to stdout through `structlog`, with redaction as a
   processor. `REDACTED_KEYS` and `REDACTED_SUFFIXES` cover presigned URLs and
   file names, because a signed URL in a log is a credential in a log

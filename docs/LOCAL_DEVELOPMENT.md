@@ -32,6 +32,16 @@ without it.
 storage suite is marked `integration` and deselected by `addopts` in
 `apps/workers/pyproject.toml` for exactly that reason.
 
+**The Python workers read `METRIKA_WORKER_*`, and the `_WORKER_` is
+load-bearing.** `metrika_core.WorkerSettings` sets `extra="forbid"` over its
+whole namespace, so an unrecognised variable in it is a startup error — right
+for a typo, hostile over a prefix somebody else writes to. `METRIKA_` is shared:
+`packages/testing` publishes `METRIKA_TEST_DATABASE_URL`, and measured under the
+wider prefix, a shell that had run the Node integration harness could not
+construct worker settings at all. The six variables are documented in
+`.env.example`; none of them is a database URL, and none ever will be
+(ADR-0007).
+
 `mise` is recommended over nvm + pyenv because a polyglot repository with two version managers has two ways to be subtly wrong. `.nvmrc` and `.python-version` are committed anyway so nobody is forced to adopt it.
 
 **`uv` is no longer a `curl | sh` install**, and the change is not cosmetic: [ADR-0027](./adr/0027-python-toolchain.md)'s spike found `uv` on that machine reachable only through a _global_ `~/.config/mise/config.toml` carrying `uv = "latest"` — an unpinned, unreviewed, per-machine version that no checkout reproduces. `mise.toml` now pins it exactly (`uv = "0.12.3"`), which is what makes `uv.lock` mean the same thing on a second machine. Without `mise` on `PATH`, `pnpm lint`, `pnpm typecheck`, `pnpm test:unit`, `pnpm format` and `pnpm format:check` all fail in `apps/workers` with `uv: command not found`; a project-local install of the same version works too, but a global `latest` is the thing to avoid.

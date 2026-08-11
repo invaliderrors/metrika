@@ -35,6 +35,13 @@ ROOT_PACKAGE = "metrika-core"
 # Adding a line here is the review. It is deliberately not generated from
 # anything — a list derived from the lockfile would agree with the lockfile by
 # construction and assert nothing at all.
+#
+# SO: a legitimate new runtime dependency is SUPPOSED to require an edit here, in
+# the same commit that adds it. That is not an obstacle in front of the real
+# work, it IS the control — the whole claim of ADR-0007 is that a compromised
+# mesh parser lands somewhere with nothing to reach, and "nothing" is a property
+# of this list. If you are here because a test went red, the fix is to add the
+# package deliberately, having decided a worker should be able to import it.
 ALLOWED_RUNTIME_CLOSURE = frozenset(
     {
         "metrika-core",

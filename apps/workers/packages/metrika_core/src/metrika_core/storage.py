@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 # means the same thing.
 #
 # `NoSuchBucket` is deliberately NOT here, and it was, briefly. A misconfigured
-# `METRIKA_S3_BUCKET` is a configuration fault, not a missing object — folding it
+# `METRIKA_WORKER_S3_BUCKET` is a configuration fault, not a missing object — folding it
 # in made a typo'd bucket present as "every object in the pipeline is missing",
 # which is a diagnosis several layers away from the cause. It propagates as a
 # `ClientError` instead, which is what an unexpected S3 failure should do.
