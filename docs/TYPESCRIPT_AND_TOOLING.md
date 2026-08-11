@@ -190,6 +190,7 @@ export { nest } from './nest.js';
 export { react } from './react.js';
 export { next } from './next.js';
 export { test } from './test.js';
+export { workflows } from './workflows.js';
 export {
   contractsBoundary,
   featureBoundary,
@@ -205,7 +206,11 @@ The package is JavaScript with JSDoc types, not TypeScript — a config package 
 
 The boundaries are **seven named exports, not one `boundaries` profile**, and that is deliberate: a consumer composes exactly the zones its own layout has. `prismaBoundary` is the two-half composition `apps/api` uses (`prismaImportBoundary` + `rawSqlBan`); `packages/database` needs the raw-SQL half without the import half, and reaching for it as `prismaBoundary.slice(1)` is precisely the silent swap the split exists to prevent. `webBoundary`, `serverActionBoundary` and `featureBoundary` are `apps/web`'s three zones and are composed in that order — see the block comment above `webBoundary` in `src/boundaries.js` for why the order is load-bearing.
 
-A `workflows` profile (Temporal determinism, per the rule in CLAUDE.md) is **target state** and arrives with `apps/api/src/workflows`. There is no `script` profile.
+`workflows` is the Temporal determinism gate for `apps/api/src/workflows/**`, and it landed before the directory it constrains. Replay re-executes workflow code against the recorded history, so the clock, randomness, the environment and any infrastructure import produce a workflow that passes today and fails **on replay after a deploy** — a failure that surfaces long after the change that caused it. It bans the `Date`, `crypto`, `performance`, `process` and `require` globals, `Math.random` and `globalThis.*` by property (`Math` as a whole stays legal — a gate that rejects `Math.max` is a gate that gets switched off), and admits only `@temporalio/workflow`, `@temporalio/common`, `@metrika/contracts` and relative paths as imports, in both the static and the `import()` forms. An **allowlist**, deliberately: a denylist of `node:*` and `@prisma/client` would leave `fastify`, `ioredis` and every future dependency reachable. It is a plain array rather than a factory for the same reason `react` is — not one of its rules is type-aware, and `parserOptions.project` on a profile with no type-aware rules buys a TypeScript program for zero findings and a fatal parse error on any file that program lacks.
+
+It is composed **last** in `apps/api/eslint.config.js` and it owns three rule ids earlier profiles also own, so it carries `base`'s `process.env` ban and `rawSqlBan`'s selectors (from shared constants, so the copies cannot drift) and subsumes `prismaImportBoundary`'s denylist under its own allowlist. Flat config replaces a rule's options wholesale rather than merging them; the composition cases in `packages/eslint-config/test/workflows.test.ts` are what prove none of the three went missing, because every per-rule case lints a file only one profile speaks to and would pass either way.
+
+There is no `script` profile.
 
 ### Type-checked rules
 
