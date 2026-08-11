@@ -40,6 +40,11 @@ import { CubicMillimeters, Grams, Millimeters, Seconds, SquareMillimeters } from
  *     `QuoteId` and `OrderId` are freely interchangeable there in a way they are
  *     not here. ADR-0018's guarantee stops at this boundary and cannot be made
  *     to cross it. Same for the branded numeric units.
+ *   - UNKNOWN KEYS diverge, in the safe direction. Zod's default object mode
+ *     STRIPS an unknown key and accepts the object; the emitted
+ *     `additionalProperties: false` makes pydantic FORBID it. So a payload
+ *     TypeScript accepts can be rejected in Python. Listed because this header
+ *     claims to enumerate the divergences, not because it is a hazard.
  *
  * AND A WHOLE FAMILY THAT VANISHES WITHOUT SAYING SO. `z.toJSONSchema()` throws
  * on `.transform()`, `z.bigint()` and `z.date()` — those are safe, because a

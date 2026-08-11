@@ -448,6 +448,22 @@ def test_the_one_place_this_side_is_stricter_than_zod_is_named() -> None:
 
 
 def test_money_forbids_unknown_fields() -> None:
+    """A DIVERGENCE, not an agreement, and the safe one is still worth naming.
+
+    Zod's default object mode STRIPS an unknown key and accepts the object:
+    `Money.parse({..., "extra": 1})` succeeds on the TypeScript side and returns
+    the three known fields. `z.toJSONSchema()` emits `additionalProperties:
+    false` regardless, so `--strict-types` generates `extra="forbid"` and this
+    side REJECTS the same payload.
+
+    So the two sides disagree about `{"extra": 1}`, in the direction where
+    Python is the stricter one -- an API that starts sending a field the workers
+    have not regenerated for fails loudly here rather than being silently
+    dropped. That is the outcome this repository wants, which is exactly why it
+    needs writing down: it is easy to read this test as "both sides forbid it".
+    The generated header enumerates it, because a header claiming to list the
+    divergences must list the ones that landed well too.
+    """
     with pytest.raises(ValidationError):
         Money.model_validate(
             {"amountMinor": "350000", "currency": "COP", "exponent": 0, "extra": 1}
