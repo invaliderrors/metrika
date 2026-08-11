@@ -184,9 +184,15 @@ def test_the_module_is_runnable_and_refuses_to_start_unconfigured() -> None:
     # guessing at: ruff exempts `sys.executable` specifically, so a suppression
     # here is reported as unused by RUF100 — measured, when this had one.
     #
-    # (And writing that suppression out in prose is itself a trap: ruff parses
-    # any comment of that shape, in any position, and reports an "invalid noqa
-    # directive" warning for the sentence explaining it. Also measured.)
+    # (And spelling that directive out in prose is itself a trap, twice over.
+    # ruff parses a comment of that shape in ANY position and reports an
+    # "invalid directive" warning for the sentence explaining it -- measured.
+    # CI's unjustified-suppression grep is the second half: it scans line
+    # content and cannot tell prose from a directive, so a paragraph naming the
+    # directive fails the build with no way to justify itself. That gate is
+    # CI-only, so `pnpm verify` is structurally blind to it and this survived
+    # eight reviews. `metrika_core/settings.py` carries the same note for the
+    # same reason. Do not write the word.)
     result = subprocess.run(
         [sys.executable, "-m", "metrika_geometry"],
         cwd=WORKSPACE_ROOT,
