@@ -18,7 +18,7 @@ const imageTags = readFileSync(composePath, 'utf8')
 // compose file. packages/database already has that declaration and a
 // `test:unit` task to hang it on; packages/testing has neither. Moving it would
 // mean re-deriving both, and a second place to get the same trap wrong.
-describe('every image the Testcontainers harnesses start has exactly one definition', () => {
+describe('the compose file pins every image, and agrees with the Testcontainers harnesses', () => {
   it('finds all six service images, so a moved file cannot make this vacuous', () => {
     expect(imageTags).toHaveLength(6);
   });

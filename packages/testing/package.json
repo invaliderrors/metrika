@@ -14,6 +14,10 @@
       "types": "./dist/images.d.ts",
       "default": "./dist/images.js"
     },
+    "./temporal": {
+      "types": "./dist/temporal.d.ts",
+      "default": "./dist/temporal.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

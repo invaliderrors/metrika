@@ -5,7 +5,13 @@ import {
   stopDatabase,
   type StartDatabaseOptions,
 } from './database.js';
-import { startTemporal, stopTemporal, TEMPORAL_ADDRESS_VAR } from './temporal.js';
+
+// Deliberately NO import of './temporal.js' here. This module is reachable
+// from the package root, so importing it would pull `@temporalio/*` into every
+// consumer of `@metrika/testing` — including packages/database and apps/api,
+// which never dial a workflow server. `createTemporalGlobalSetup` therefore
+// lives in temporal.ts, behind the `@metrika/testing/temporal` subpath export;
+// src/index.ts carries the measurement.
 
 /**
  * Builds the default export of a Vitest `globalSetup` file.
@@ -41,31 +47,6 @@ export function createDatabaseGlobalSetup(
       Reflect.deleteProperty(process.env, APPLICATION_URL_VAR);
       Reflect.deleteProperty(process.env, ADMIN_URL_VAR);
       await stopDatabase();
-    };
-  };
-}
-
-/**
- * The Temporal counterpart, and a SEPARATE globalSetup file rather than an
- * addition to the database one on purpose: `packages/database` and `apps/api`
- * both use `createDatabaseGlobalSetup`, and neither needs a Temporal server.
- * Folding the two together would put a ~10-second, three-container start in
- * front of every integration suite in the repository, to be paid by suites
- * that never dial it. Vitest's `globalSetup` takes an ARRAY, so a package that
- * needs both lists both.
- *
- * Everything the database factory's comment says about why a container's
- * lifecycle has to live here applies unchanged.
- */
-export function createTemporalGlobalSetup(): () => Promise<() => Promise<void>> {
-  return async function setup(): Promise<() => Promise<void>> {
-    const started = await startTemporal();
-    process.env[TEMPORAL_ADDRESS_VAR] = started.address;
-
-    return async function teardown(): Promise<void> {
-      // Reflect.deleteProperty, not `delete`, for the reason above.
-      Reflect.deleteProperty(process.env, TEMPORAL_ADDRESS_VAR);
-      await stopTemporal();
     };
   };
 }

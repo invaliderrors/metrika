@@ -112,7 +112,11 @@ services:
         condition: service_healthy
     environment:
       DB: postgres12
-      # FIVE variables, not four, and DB_PORT is the one that is easy to omit.
+      # SIX variables. ADR-0027 says five and says it as a complete count;
+      # ADR-0028 corrects that with BIND_ON_IP below. Both are needed to read
+      # this block.
+      #
+      # DB_PORT is the one that is easy to omit.
       # It defaults to 3306 — MySQL's port — and omitting it does not fail
       # loudly: auto-setup.sh loops `until nc -z "${POSTGRES_SEEDS}" 3306`, so
       # the container sits `Up` logging "Waiting for PostgreSQL" forever while
@@ -128,46 +132,69 @@ services:
       # metrika_app is NOSUPERUSER NOBYPASSRLS and deliberately cannot.
       POSTGRES_USER: metrika
       POSTGRES_PWD: metrika
-      # A sixth, and it is what makes the healthcheck below addressable.
-      # MEASURED: left at its default, `entrypoint.sh` derives BIND_ON_IP from
-      # `getent hosts $(hostname)` — the container's FIRST address — and
-      # temporal-server then binds only that one interface, neither `0.0.0.0`
-      # nor loopback. `netstat -ltn` inside the container shows a single
-      # `172.x.y.z:7233`, so a `127.0.0.1` probe fails forever against a server
-      # that is running perfectly.
+      # The sixth, added by ADR-0028, and it is what makes the healthcheck
+      # below addressable at all.
+      #
+      # `/etc/temporal/entrypoint.sh:5` in this image:
+      #   : "${BIND_ON_IP:=$(getent hosts "$(hostname)" | awk '{print $1;}')}"
+      # — the container's FIRST address — which dockerize then threads into
+      # five `bindOnIP` fields in config_template.yaml (frontend, matching,
+      # history, worker, internal-frontend). So temporal-server binds exactly
+      # one interface, neither `0.0.0.0` nor loopback, and MEASURED with this
+      # left out, `netstat -ltn` inside the container shows a single
+      # `172.x.y.z:7233` while a `127.0.0.1` probe fails forever against a
+      # server that is serving normally.
+      #
+      # `:=` expands on unset OR NULL, so `BIND_ON_IP: ''` reproduces the
+      # default path exactly — that, not deleting the line, is the mutation to
+      # use when re-testing this.
       #
       # It bites harder in `packages/testing`'s harness than here, which is why
-      # both carry this variable rather than only the one that needed it:
-      # testcontainers attaches an aliased container to the DEFAULT bridge as
+      # both carry the variable rather than only the one that needed it:
+      # testcontainers attaches an ALIASED container to the default bridge as
       # well as its own network, "first address" is then the bridge one, and
       # the server ends up listening on an interface its own network alias does
       # not resolve to. Measured there as 45s of `connection refused` against
       # `temporal:7233` while the server was up on a different subnet.
       #
       # `entrypoint.sh` special-cases `0.0.0.0` and sets
-      # TEMPORAL_BROADCAST_ADDRESS to the real address for ring membership, so
-      # this does not break the single-node cluster. Nothing new is published
-      # to the host: `ports` below is still the only thing crossing the
-      # container boundary, and still only on loopback.
+      # TEMPORAL_BROADCAST_ADDRESS from the same `getent`, so ring membership
+      # keeps a real address and the single-node cluster still forms. Nothing
+      # new is published to the host: `ports` below is still the only thing
+      # crossing the container boundary, and still only on loopback.
       BIND_ON_IP: '0.0.0.0'
     ports:
       - '127.0.0.1:7233:7233'
     healthcheck:
-      # `namespace describe default`, not a TCP dial, for the same reason
-      # postgres above passes `-h 127.0.0.1`: the weaker check reports healthy
-      # long before the service is usable. MEASURED here, and it is worse than
-      # the postgres case — `127.0.0.1:7233` **on the host** accepts a TCP
-      # connection the instant `docker compose up -d` returns, while
-      # `netstat -ltn` INSIDE the container shows zero sockets on `:7233`,
-      # because docker-proxy binds the published port at container creation and
-      # holds the connection open. A dial-based healthcheck (or `nc -z`) is
-      # therefore not merely early here, it is unconditionally green from t=0.
+      # `namespace describe default`, not `nc -z 127.0.0.1 7233`, for the same
+      # reason postgres above passes `-h 127.0.0.1`: the weaker check reports
+      # healthy before the service is usable. MEASURED inside this container on
+      # a cold start — inside is the only place that matters, because a docker
+      # healthcheck executes IN the container:
       #
-      # This command instead fails with `connection refused` and then, briefly,
-      # `Namespace default is not found` — auto-setup registers the namespace
-      # LAST, after creating two databases and applying both schemas, and a
-      # client that connects inside that window fails on its first real call.
-      # Both failures were observed in sequence on a cold start.
+      #   t=0.74s  nc -z 127.0.0.1 7233                  SUCCEEDS
+      #   t=1.79s  temporal operator namespace describe  SUCCEEDS
+      #
+      # auto-setup binds the port, THEN creates two databases, applies both
+      # schemas and registers `default` last. A client that connects in that
+      # ~1s window fails its first real call with
+      # `Namespace default is not found` — which is what this command returns
+      # across exactly the same window.
+      #
+      # Swapping this line for `nc -z` and re-running end to end, with the
+      # start_interval below in place: compose reported healthy at **1.20s**
+      # and a `namespace describe` run immediately afterwards **failed** with
+      # `Namespace default is not found`. With this command: healthy at
+      # **2.72s**, and the same call succeeded. That is the whole difference,
+      # and it is worth ~1.5 seconds.
+      #
+      # (Do NOT justify this with a host-side dial. `127.0.0.1:7233` on the
+      # HOST accepts a connection the instant `docker compose up -d` returns,
+      # with zero sockets listening inside the container, because docker-proxy
+      # binds the published port at creation. True, and irrelevant here — a
+      # healthcheck never runs on the host. It is a real argument for
+      # `packages/testing`'s harness, which dials from the host, and it is
+      # recorded there.)
       test:
         [
           'CMD',
@@ -183,11 +210,22 @@ services:
       interval: 3s
       timeout: 5s
       retries: 40
-      # Real budget ~= 40 x (3s + ~0.1s) = ~2 minutes. More patient than the
-      # other services because this one is not just a process start: it creates
-      # two databases and applies both schemas before the server boots, and it
-      # waits on postgres first. No start_period, consistent with every service
-      # above — the check is cheap enough to pay from t=0.
+      # start_period + start_interval are what make the choice above
+      # OBSERVABLE, and they were added because without them the mutation that
+      # justifies it cannot fail. At `interval: 3s` alone — the shape every
+      # other service here uses — docker's first probe fires after the ~1s
+      # window has already closed, so `nc -z` and this command are
+      # indistinguishable and the weaker one looks fine. The 1.20s-vs-2.72s
+      # result quoted above is only visible because docker polls at 100ms
+      # during the start period.
+      #
+      # start_period only stops failures counting toward `retries`; it does not
+      # delay the first probe, so this is strictly faster to healthy as well.
+      # 90s covers a cold boot — postgres waited on, two databases created, two
+      # schemas applied — after which the 3s x 40 budget (~2 minutes) governs a
+      # server that has already been up once.
+      start_period: 90s
+      start_interval: 100ms
 
   temporal-ui:
     image: temporalio/ui:2.53.2

@@ -5,19 +5,26 @@
     "test:unit": {
       "dependsOn": ["^build", "build"],
       // test/postgres-image.test.ts is a UNIT test that reads
-      // infra/docker/docker-compose.yml — outside this package (it now guards
-      // the Temporal pin as well as the Postgres one; the file says why it
-      // lives here). Turbo hashes
-      // only a package's own files, so without this it reports success FROM
-      // CACHE while the compose file it validates has drifted.
+      // infra/docker/docker-compose.yml — outside this package. It now guards
+      // the Temporal pin as well as the Postgres one, and the file itself says
+      // why it lives here rather than in packages/testing, which owns both
+      // constants. Turbo hashes only a package's own files, so without this it
+      // reports success FROM CACHE while the compose file it validates has
+      // drifted.
       //
-      // MEASURED: prime green, change postgres:16-alpine to postgres:17-alpine,
-      // re-run — same hash, exit 0. Forced, exit 1 with
+      // MEASURED twice. First: prime green, change postgres:16-alpine to
+      // postgres:17-alpine, re-run — same hash, exit 0. Forced, exit 1 with
       // `expected [ 'postgres:17-alpine' ] to deeply equal [ 'postgres:16-alpine' ]`.
+      // Again when Temporal was added: `cache hit 827c6e8126ef345e` → change
+      // the auto-setup tag → `cache miss e9a6a15acc05a956`, exit 1 → revert →
+      // `cache hit 827c6e8126ef345e`. The OTHER half of that pair needs no
+      // entry here: packages/testing/src/images.ts is hashed through the
+      // `^build` edge, so a drift on that side invalidates without a declared
+      // input.
       //
-      // This was the fourth instance of the shape; the other three are in
-      // apps/api, apps/web and packages/typescript-config. Any test that reads
-      // a file outside its own package needs an entry here, and nothing
+      // There are now FIVE files carrying this shape: this one, apps/api,
+      // apps/web, packages/contracts and packages/typescript-config. Any test
+      // that reads a file outside its own package needs an entry, and nothing
       // enforces that — a test added later is silently unhashed.
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/infra/docker/docker-compose.yml"]
     }

@@ -33,3 +33,4 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 | [0025](./0025-radix-umbrella.md)                  | `radix-ui` umbrella over `@radix-ui/react-slot`, because the shadcn registry emits it    | Accepted                              |
 | [0026](./0026-web-consumes-compiled-contracts.md) | `apps/web` consumes compiled `dist/` too, so ADR-0020's scoping sentence is wrong        | Accepted, scopes part of ADR-0020     |
 | [0027](./0027-python-toolchain.md)                | Python 3.12 and the pinned worker toolchain, gated on a measured spike                   | Accepted, scopes part of ADR-0007     |
+| [0028](./0028-temporal-bind-on-ip.md)             | `temporalio/auto-setup` needs a sixth environment variable, `BIND_ON_IP`                 | Accepted, corrects part of ADR-0027   |

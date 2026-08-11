@@ -116,18 +116,43 @@ function publishedHandle(): TemporalHandle | undefined {
  * dead" from a fast, legible error into a slow one, and the mutation this
  * harness is checked against — point it at a dead port — must fail rather than
  * hang.
+ *
+ * Failures are re-thrown wrapped, because grpc-js's own message is
+ * `Failed to connect before the deadline` and nothing else: no address, no
+ * mention of Temporal, no mention of this package. That lands in a caller's
+ * console three layers from here with nothing to grep for. `database.ts`'s
+ * `assertTcpReachable` already names `${host}:${port}` in its timeout; this is
+ * the same courtesy, with `cause` preserved so the gRPC status is still there
+ * for anyone who wants it.
  */
 async function assertTemporalReachable(address: string): Promise<void> {
-  const connection = await Connection.connect({
-    address,
-    connectTimeout: CONNECT_TIMEOUT_MS,
-    interceptors: [],
-  });
+  let connection: Connection;
+  try {
+    connection = await Connection.connect({
+      address,
+      connectTimeout: CONNECT_TIMEOUT_MS,
+      interceptors: [],
+    });
+  } catch (error: unknown) {
+    throw new Error(
+      `startTemporal: no Temporal server answered at ${address} within ` +
+        `${String(CONNECT_TIMEOUT_MS)}ms (the container started, but the address ` +
+        `it published is not serving)`,
+      { cause: error },
+    );
+  }
 
   try {
     await connection.withDeadline(Date.now() + RPC_DEADLINE_MS, async () => {
       await connection.workflowService.describeNamespace({ namespace: NAMESPACE });
     });
+  } catch (error: unknown) {
+    throw new Error(
+      `startTemporal: connected to ${address}, but namespace "${NAMESPACE}" is ` +
+        `not usable — auto-setup registers it last, so this is the wait strategy ` +
+        `having returned too early`,
+      { cause: error },
+    );
   } finally {
     await connection.close();
   }
@@ -282,4 +307,43 @@ export async function stopTemporal(): Promise<void> {
     network = undefined;
   }
   handle = undefined;
+}
+
+/**
+ * Builds the default export of a Vitest `globalSetup` file, the Temporal
+ * counterpart to `createDatabaseGlobalSetup`.
+ *
+ * It lives HERE rather than beside its twin in `global-setup.ts`, and that is
+ * about module loading rather than tidiness. `global-setup.ts` is reachable
+ * from this package's root entry point, so a factory there would drag
+ * `./temporal.js` — and therefore all of `@temporalio/*` — into every
+ * `import '@metrika/testing'` in the repository. `packages/database` and
+ * `apps/api` both do that, and neither has any use for a workflow server.
+ * Keeping the whole Temporal surface behind the `@metrika/testing/temporal`
+ * subpath means they do not pay for it; src/index.ts records what that is
+ * measured to be worth, and what it is NOT (grpc-js arrives with
+ * testcontainers either way).
+ *
+ * A SEPARATE globalSetup file from the database one, for a second reason:
+ * Vitest's `globalSetup` takes an array, so a package that needs both lists
+ * both, and a package that needs only a database never starts three containers
+ * to get one.
+ *
+ * Everything `createDatabaseGlobalSetup`'s comment says about why a container's
+ * lifecycle has to live in globalSetup applies here unchanged.
+ */
+export function createTemporalGlobalSetup(): () => Promise<() => Promise<void>> {
+  return async function setup(): Promise<() => Promise<void>> {
+    const started = await startTemporal();
+    process.env[TEMPORAL_ADDRESS_VAR] = started.address;
+
+    return async function teardown(): Promise<void> {
+      // Reflect.deleteProperty, not `delete`: TEMPORAL_ADDRESS_VAR is a
+      // computed key and a dynamic `delete` trips
+      // @typescript-eslint/no-dynamic-delete. Same reasoning as
+      // global-setup.ts.
+      Reflect.deleteProperty(process.env, TEMPORAL_ADDRESS_VAR);
+      await stopTemporal();
+    };
+  };
 }

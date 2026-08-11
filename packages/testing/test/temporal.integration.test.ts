@@ -1,6 +1,8 @@
 import { Connection } from '@temporalio/client';
 import { afterAll, describe, expect, it } from 'vitest';
-import { startTemporal, stopTemporal, TEMPORAL_ADDRESS_VAR } from '../src/index.js';
+// Not '../src/index.js' — the harness is intentionally not in the barrel; see
+// the comment there.
+import { startTemporal, stopTemporal, TEMPORAL_ADDRESS_VAR } from '../src/temporal.js';
 
 /**
  * Bounded on purpose. Every connection in this file is to an address the
