@@ -105,7 +105,13 @@ ignore = []
 #
 # A member added later and not listed here fails `I001` loudly rather than being
 # silently misfiled, which is why this is an explicit list and not a glob.
-known-first-party = ["metrika_core"]
+#
+# All three members, added as each arrived. MEASURED for the two worker packages
+# when Task 6 added them: without the entry, `from metrika_geometry.activities
+# import ACTIVITIES` in that package's own `__main__.py` is filed beside
+# `import structlog` and `I001` demands it — loudly, which is the good version
+# of this failure and the reason the list is explicit.
+known-first-party = ["metrika_core", "metrika_geometry", "metrika_slicer"]
 
 [tool.ruff.lint.per-file-ignores]
 # assert is the point of a test file; S101 bans it everywhere else.

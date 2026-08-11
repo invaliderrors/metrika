@@ -6,11 +6,25 @@ Postgres — they receive activity arguments from Temporal, read and write S3
 under scoped IAM, and return structured results. See
 [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md).
 
-Today this package contains its toolchain and one shared library,
-`packages/metrika_core` — settings, structured logging and the single module
-that talks to S3. The worker processes themselves (`geometry/` and `slicer/`)
-arrive in the later tasks of Plan 0B-3; `[tool.uv.workspace] members` already
-names them.
+Today this package contains its toolchain, one shared library
+(`packages/metrika_core` — settings, structured logging, S3 and Temporal) and
+the two worker processes, `geometry/` and `slicer/`. Both are **entry points and
+one stub activity each**: the geometry and slicing work arrives in later tasks,
+with its own dependencies and its own review.
+
+```bash
+python -m metrika_geometry   # polls METRIKA_WORKER_TEMPORAL_TASK_QUEUE for geometry.*
+python -m metrika_slicer     # the same process, registering slicer.* instead
+```
+
+The two entry points are the same fifteen lines and differ in **exactly one
+import** — the activities they register. The queue is not in either file; it is
+`METRIKA_WORKER_TEMPORAL_TASK_QUEUE`, so the same image can be deployed against
+`geometry-small` and `geometry-large` without a code change. Everything else a
+worker process does — connecting, polling, shutting down on SIGTERM — lives in
+`metrika_core.temporal`, because two entry points that each grew their own
+client setup would drift on precisely the details nobody looks at until an
+incident.
 
 ### `packages/metrika_core`
 
@@ -39,6 +53,15 @@ names them.
 - `storage.py` — `ObjectStore`, the only module on the Python side that names
   `boto3`. `get_object` raises for a missing key and never returns `b""`; a
   missing _bucket_ is a configuration fault and propagates as a `ClientError`.
+- `temporal.py` — `build_client`, `build_worker` and `run_worker`, and no
+  workflow. Temporal workflows live in `apps/api/src/workflows/**` in
+  TypeScript, where determinism is enforced by lint rules this side does not
+  have, so `build_worker` takes no `workflows` argument at all: adding
+  orchestration here is an edit to that file with a reviewer attached, not an
+  extra keyword argument at a call site. `run_worker` handles **SIGTERM**, which
+  is the reason it exists — a container runtime sends it and then waits before
+  SIGKILL, and `Worker.run()` installs no handler of its own, so a process
+  without this is killed mid-poll on every deploy.
 - `contracts/__init__.py` — **generated, committed, and never edited by hand.**
   `pnpm contracts:emit` writes it from the Zod schemas in `packages/contracts`
   (`z.toJSONSchema()` → one JSON Schema document → `datamodel-codegen`), and CI's
@@ -58,10 +81,34 @@ names them.
   exemption list is exactly the thing that widens under pressure.
 - `tests/test_dependencies.py` — the other half of ADR-0007. Nothing asserted
   that this package cannot install a database **driver**; measured,
-  `psycopg==3.2.0` here passed every gate in the repository. Its resolved
-  runtime closure is now whitelisted, so a package enters a worker only when a
-  human adds a line, and a separate assertion keeps that list from being widened
-  to admit a driver.
+  `psycopg==3.2.0` here passed every gate in the repository. The resolved
+  runtime closure of **every workspace member** is now whitelisted — `geometry`
+  and `slicer` included, and a member added without an entry turns the suite red
+  rather than going ungraded — so a package enters a worker only when a human
+  adds a line, and a separate assertion keeps that list from being widened to
+  admit a driver. `geometry/tests/test_entrypoint.py` asks the driver question a
+  second time, of `uv export --no-dev` rather than of this walk, so a misreading
+  of the lock format shows up as a disagreement instead of two confident passes.
+
+### `geometry` and `slicer`
+
+Two processes, three files each: `activities.py` (what it registers),
+`__main__.py` (what runs it) and a test. Neither declares a dependency beyond
+`metrika-core` — no `trimesh`, no slicer bindings — because neither does its
+real work yet, and a short closure is worth keeping short from the start rather
+than trimming later.
+
+The activity lives in `activities.py` and not in `__main__.py` for a reason that
+only shows up in production: `python -m metrika_geometry` executes that file
+under the name `__main__`, so an activity defined there registers under one name
+when the process runs it and another when anything imports it — surfacing as an
+activity Temporal cannot find, on a worker that is otherwise healthy.
+
+`geometry/tests/test_entrypoint.py` carries **ADR-0007's central mechanical
+check**: the package's `uv export --no-dev` closure contains no database driver.
+It reads the resolved export rather than the declared dependencies, because the
+driver that matters arrives four levels down, pulled by something that looked
+like a mesh library.
 
 ## Layout
 
@@ -109,7 +156,7 @@ CPython from that file and ignores `mise`'s, which is recorded in ADR-0027 so
 that the next person to debug a version discrepancy knows there are two places
 to look.
 
-## Four things that will bite
+## Five things that will bite
 
 **`uv add` writes `>=` ranges, not pins.** Every requirement in
 `pyproject.toml` is an exact `==`, written by hand, and
@@ -158,6 +205,23 @@ generated source (`grep -c Any` on it is 0). `test_generated_contracts.py`
 asserts the override names exactly `["metrika_core.contracts"]`; adding
 `metrika_core.*` to it turns that test red. The comment above
 `disallow_any_explicit` in `pyproject.toml` says the rest.
+
+**Constructing a Temporal `Worker` starts polling. It is not a local object.**
+MEASURED on temporalio 1.31.0: `Worker.__init__` calls
+`temporalio.bridge.worker.Worker.create`, and the Rust core worker it makes
+begins taking tasks off its queue before `run()` is called and whether or not
+`run()` is ever called. A worker that is constructed, inspected and dropped
+therefore keeps accepting activity tasks and executes none of them, and
+`shutdown()` is no escape — it waits on an event only `run()` sets, so on a
+never-run worker it hangs.
+
+The symptom points nowhere near the cause: the round-trip test failed about one
+run in three with `activity StartToClose timeout` — the server saying the task
+WAS dispatched — while the process's own debug log showed no `Running activity`
+line at all. Isolated on a shared queue: **4 failures in 6 with an abandoned
+worker, 0 in 6 without.** `packages/metrika_core/tests/test_temporal.py` now
+gives every test its own task queue and enters any worker it builds as a context
+manager. Do not build one to look at it.
 
 **The ruff configuration is an input to generated code.** `contracts:emit` runs
 `datamodel-codegen --formatters ruff-format ruff-check`, so the committed

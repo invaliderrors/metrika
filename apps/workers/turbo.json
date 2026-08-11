@@ -1,0 +1,37 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test:unit": {
+      // packages/metrika_core/tests/test_temporal.py carries an UNMARKED (so:
+      // unit, no Docker) assertion that its two container images are the ones
+      // infra/docker/docker-compose.yml runs. That file is outside this
+      // package, and turbo hashes only a package's own files — so without this
+      // entry the gate reports success FROM CACHE while the file it validates
+      // has drifted, which is the only thing that file can do wrong.
+      //
+      // MEASURED on turbo 2.10.8, and the numbers are the reason this is not
+      // written as a precaution: prime the cache green, change
+      // `temporalio/auto-setup:1.29.7` to `:1.29.6` in the compose file, re-run
+      // — `cache hit, replaying logs ea6558e74e9519ea`, the SAME hash, exit 0.
+      // The gate did not merely pass; it never ran. With this entry the same
+      // edit is a cache MISS and the suite fails naming the tag.
+      //
+      // `$TURBO_ROOT$` is what lets a package's inputs reach outside its own
+      // directory; `$TURBO_DEFAULT$` keeps this package's own files hashed,
+      // since naming any input REPLACES the default set rather than extending
+      // it.
+      //
+      // This is the fifth instance of the shape in this repository — the others
+      // are in apps/api, apps/web, packages/database and
+      // packages/typescript-config, each with its own measurement. Any test
+      // that reads a file outside its own package needs an entry here, and
+      // nothing enforces that: a test added later is silently unhashed.
+      //
+      // The integration suite does not need an entry of its own.
+      // `test:integration` is `cache: false` in the root turbo.json, so its own
+      // compose read (test_storage.py's MinIO image) cannot be served stale.
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/infra/docker/docker-compose.yml"]
+    }
+  }
+}
