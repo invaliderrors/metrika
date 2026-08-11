@@ -214,3 +214,14 @@ markers = [
   "integration: needs a Docker daemon; run via `pnpm --filter @metrika/workers run test:integration`",
 ]
 addopts = "-m 'not integration'"
+# ADR-0027 obligation 9. Task 5 writes the first `async def` worker test and
+# Task 6 the first workflow one; this table is where the setting has to live, so
+# it is set here rather than left to whichever task trips over it.
+#
+# `pytest@9.1.1` FAILS an unmarked async test rather than skipping it with a
+# warning, which closes the vacuous-pass hazard `asyncio_mode` used to carry —
+# but the fix for that failure must be this line, not a developer quietly
+# deleting the test. `tests/test_toolchain.py` therefore asserts both halves the
+# obligation names: that an unmarked coroutine test RUNS, and that a failing one
+# is reported as a failure rather than passing or being skipped.
+asyncio_mode = "auto"

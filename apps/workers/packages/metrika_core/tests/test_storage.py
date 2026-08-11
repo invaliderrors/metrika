@@ -48,13 +48,14 @@ MINIO_IMAGE = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
 _MINIO_PORT = 9000
 _BUCKET = "metrika-models"
 
-# The same credentials docker-compose.yml gives the local MinIO. Named `_KEY`
-# rather than `_PASSWORD` because that is what they are — an S3 access key pair
-# for a throwaway container — and because a name carrying "password" or "secret"
-# would make ruff's S105/S106 report a hardcoded credential, which is a warning
-# worth keeping loud for the cases where it is true.
+# The same credentials docker-compose.yml already gives the local MinIO, in
+# public, in a committed file. Named for what MinIO calls them and suppressed
+# explicitly: an earlier version called the second one `_ROOT_KEY` purely so that
+# S105 would not fire, which is renaming around a detector. That is strictly
+# worse than a suppression — it leaves the rule silent AND the name misleading,
+# and the next person cannot tell the dodge from a real access key.
 _ROOT_USER = "metrika"
-_ROOT_KEY = "metrika-local"
+_ROOT_PASSWORD = "metrika-local"  # noqa: S105  # -- the public local-dev pair, already in compose
 
 _COMPOSE_FILE = Path(__file__).resolve().parents[5] / "infra" / "docker" / "docker-compose.yml"
 
@@ -66,7 +67,7 @@ def minio_endpoint() -> Iterator[str]:
         DockerContainer(MINIO_IMAGE)
         .with_command("server /data")
         .with_env("MINIO_ROOT_USER", _ROOT_USER)
-        .with_env("MINIO_ROOT_PASSWORD", _ROOT_KEY)
+        .with_env("MINIO_ROOT_PASSWORD", _ROOT_PASSWORD)
         .with_exposed_ports(_MINIO_PORT)
         # Not a fixed sleep and not "the container is running": MinIO answers
         # /minio/health/live only once it will serve S3 requests, so this is the
@@ -100,7 +101,7 @@ def store(minio_endpoint: str) -> Iterator[ObjectStore]:
     patch.setenv("METRIKA_TEMPORAL_TASK_QUEUE", "geometry-small")
     patch.setenv("METRIKA_S3_ENDPOINT_URL", minio_endpoint)
     patch.setenv("AWS_ACCESS_KEY_ID", _ROOT_USER)
-    patch.setenv("AWS_SECRET_ACCESS_KEY", _ROOT_KEY)
+    patch.setenv("AWS_SECRET_ACCESS_KEY", _ROOT_PASSWORD)
     patch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     try:
         settings = WorkerSettings()

@@ -25,12 +25,16 @@ if TYPE_CHECKING:
     # deployed worker.
     from mypy_boto3_s3.client import S3Client
 
-# S3 answers a GET for an absent key with `NoSuchKey`. `NoSuchBucket` and a bare
-# `404` are here because a misconfigured `METRIKA_S3_BUCKET` and a
-# non-AWS implementation answering without a modelled code are the same event
-# to a caller — the object is not there — and collapsing them is what keeps
-# `get_object` from ever returning something that looks like an empty file.
-_NOT_FOUND_CODES = frozenset({"NoSuchKey", "NoSuchBucket", "404"})
+# S3 answers a GET for an absent key with `NoSuchKey`; a bare `404` is what an
+# S3-compatible implementation answering without a modelled code produces, and it
+# means the same thing.
+#
+# `NoSuchBucket` is deliberately NOT here, and it was, briefly. A misconfigured
+# `METRIKA_S3_BUCKET` is a configuration fault, not a missing object — folding it
+# in made a typo'd bucket present as "every object in the pipeline is missing",
+# which is a diagnosis several layers away from the cause. It propagates as a
+# `ClientError` instead, which is what an unexpected S3 failure should do.
+_NOT_FOUND_CODES = frozenset({"NoSuchKey", "404"})
 
 
 class ObjectNotFoundError(Exception):

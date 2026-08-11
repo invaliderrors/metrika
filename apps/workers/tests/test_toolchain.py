@@ -7,6 +7,7 @@ optional and not silently downgradeable.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 import tomllib
@@ -91,6 +92,75 @@ def test_the_lockfile_is_current() -> None:
     """
     result = subprocess.run(["uv", "lock", "--check"], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+async def _resolved() -> int:
+    await asyncio.sleep(0)
+    return 1
+
+
+async def test_an_unmarked_coroutine_test_actually_runs() -> None:
+    """ADR-0027 obligation 9, first half.
+
+    No `@pytest.mark.asyncio` anywhere, so this passes only under
+    `asyncio_mode = "auto"`. Under the default strict mode, pytest@9.1.1 FAILS an
+    unmarked async test rather than skipping it — which is the good failure, and
+    is what makes this test a check on the setting rather than on pytest.
+
+    It awaits something and asserts the result, because a coroutine test body
+    that is never awaited also never fails.
+    """
+    assert await _resolved() == 1
+
+
+def test_a_failing_async_test_is_reported_as_a_failure(tmp_path: Path) -> None:
+    """ADR-0027 obligation 9, second half — the one that is easy to skip.
+
+    The test above proves an async test RUNS. It cannot prove one can FAIL, and
+    those are different properties: a runner that collected the coroutine and
+    dropped it would leave a whole category of assertion silently green, which is
+    exactly the shape this repository keeps meeting.
+
+    So a deliberately failing async test is written to a temp file and run in a
+    subprocess against THIS package's configuration (`-c`, so `asyncio_mode`
+    applies), and both the exit code and the summary line are checked — `1
+    failed` specifically, because `1 skipped`, `1 error` and `1 passed` all
+    describe a broken gate and only one of them exits non-zero.
+    """
+    failing = tmp_path / "test_deliberately_failing_async.py"
+    failing.write_text(
+        "async def test_fails() -> None:\n    assert 1 == 2, 'this must be reported'\n",
+        encoding="utf-8",
+    )
+
+    # S603 fires because two argv entries are not string literals. They are
+    # `ROOT`, derived from this file's own path, and pytest's `tmp_path` — there
+    # is no untrusted input in this list, and S603 stays enabled for test files
+    # (see the per-file-ignores comment) precisely so that a call with real
+    # untrusted input has to argue for itself the way this one does.
+    result = subprocess.run(  # noqa: S603  # -- argv is literal plus two paths this test built
+        [
+            "uv",
+            "run",
+            "--locked",
+            "--all-packages",
+            "pytest",
+            "-c",
+            str(ROOT / "pyproject.toml"),
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            str(failing),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0, f"a failing async test exited 0:\n{result.stdout}"
+    assert "1 failed" in result.stdout, (
+        f"expected the failure to be REPORTED, not skipped or errored:\n{result.stdout}"
+    )
 
 
 def test_no_member_narrows_the_ruff_configuration() -> None:

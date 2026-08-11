@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import os
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# What `_surface_unknown_prefixed_variables` puts in an unclaimed variable's
+# place. Never the real value.
+#
+# MEASURED, and this module is the worst possible place for it: surfacing the
+# value meant `str(ValidationError)` and `ValidationError.json()` both rendered
+# it as `input_value=...`, so `METRIKA_TEST_DATABASE_URL` — a variable
+# `packages/testing/src/database.ts` really does publish — put a Postgres
+# password into an exception a worker would log at startup. The NAME is the
+# actionable half of that error and it is still there, in the error's location.
+_VALUE_WITHHELD = "<value withheld>"
 
 
 class WorkerSettings(BaseSettings):  # type: ignore[explicit-any]  # -- see the note below
@@ -36,7 +48,8 @@ class WorkerSettings(BaseSettings):  # type: ignore[explicit-any]  # -- see the 
     AWS credentials and region are deliberately absent too, and for a different
     reason: they come from the standard provider chain (an IRSA/instance role in
     production, `AWS_*` in local development), so there is no field here that
-    could hold one and no code path that could log one.
+    could hold one and no code path that could log one. The second half of that
+    sentence was briefly untrue — see `_VALUE_WITHHELD`.
     """
 
     model_config = SettingsConfigDict(env_prefix="METRIKA_", extra="forbid")
@@ -46,7 +59,14 @@ class WorkerSettings(BaseSettings):  # type: ignore[explicit-any]  # -- see the 
     temporal_task_queue: str
     s3_bucket: str
     s3_endpoint_url: str | None = None
-    log_level: str = "info"
+    # A `Literal`, not `str`: `configure_logging` looks the level up in
+    # `logging.getLevelNamesMapping()`, so `METRIKA_LOG_LEVEL=verbose` used to
+    # raise `KeyError` from inside the logging setup — an unhandled crash in the
+    # first thing a worker does, reported as a bug in the wrong module. It is a
+    # `ValidationError` naming `log_level` now, alongside every other
+    # misconfiguration. Lowercase spellings only, so there is one form on the
+    # wire; `configure_logging` upper-cases.
+    log_level: Literal["debug", "info", "warning", "error", "critical"] = "info"
 
     @model_validator(mode="before")
     @classmethod
@@ -82,9 +102,13 @@ class WorkerSettings(BaseSettings):  # type: ignore[explicit-any]  # -- see the 
             return data
 
         claimed = set(cls.model_fields)
+        # The NAME, never `os.environ[name]` — see `_VALUE_WITHHELD`. `extra`
+        # rejects on the key, so the sentinel loses nothing: the resulting
+        # `extra_forbidden` error still names the offending variable, which is
+        # the only part a reader can act on.
         surfaced = {
-            name[len(prefix) :].lower(): value
-            for name, value in os.environ.items()
+            name[len(prefix) :].lower(): _VALUE_WITHHELD
+            for name in os.environ
             if name.upper().startswith(prefix.upper())
             and name[len(prefix) :].lower() not in claimed
         }

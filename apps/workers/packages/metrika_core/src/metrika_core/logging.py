@@ -18,12 +18,10 @@ from structlog.typing import EventDict, WrappedLogger
 # object until it expires; an original file name is customer data and is exactly
 # the field a support ticket screenshot leaks.
 #
-# Matched on the KEY, case-insensitively, and only on exact equality: a
-# substring rule would redact `url_count` and, worse, would read as if it
-# redacted `presigned` inside a message string, which no key-based processor can
-# do. Redaction here is a floor, not a guarantee — a signed URL interpolated
-# into the event message itself is not something structlog can see, which is why
-# callers pass values as key/value pairs and never as f-strings.
+# Matched on the KEY, case-insensitively. Redaction here is a floor, not a
+# guarantee — a signed URL interpolated into the event message itself is not
+# something structlog can see, which is why callers pass values as key/value
+# pairs and never as f-strings.
 REDACTED_KEYS: frozenset[str] = frozenset(
     {
         "presigned_url",
@@ -39,12 +37,40 @@ REDACTED_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# Exact equality over `REDACTED_KEYS` alone was too narrow, and it was narrow in
+# the direction that matters: `download_url`, `s3_url`, `object_url` and
+# `upload_url` are the names a caller actually reaches for, and every one of them
+# went through untouched.
+#
+# A SUFFIX rule rather than a substring rule, because substring matching would
+# take `url_count` — a harmless integer — and, worse, would take `cache_key`, the
+# content-addressed identifier this system uses to talk about an upload without
+# naming it. `_key` is deliberately absent below for exactly that reason: it is
+# the one credential-shaped word here whose values are safe and whose redaction
+# would cost real debuggability.
+REDACTED_SUFFIXES: frozenset[str] = frozenset(
+    {
+        "_url",
+        "_token",
+        "_secret",
+        "_password",
+        "_filename",
+        "_file_name",
+        "_authorization",
+    }
+)
+
 _REDACTED = "[redacted]"
+
+
+def _is_redacted(key: str) -> bool:
+    lowered = key.lower()
+    return lowered in REDACTED_KEYS or lowered.endswith(tuple(REDACTED_SUFFIXES))
 
 
 def _redact(_logger: WrappedLogger, _method_name: str, event_dict: EventDict) -> EventDict:
     for key in list(event_dict):
-        if key.lower() in REDACTED_KEYS:
+        if _is_redacted(key):
             event_dict[key] = _REDACTED
     return event_dict
 

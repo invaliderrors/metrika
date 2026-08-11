@@ -15,22 +15,34 @@ names them.
 ### `packages/metrika_core`
 
 - `settings.py` — `WorkerSettings`, read from `METRIKA_*`. **There is no
-  database field of any kind**, and `tests/test_settings.py` asserts the absence
-  by name rather than trusting it (ADR-0007). A typo'd `METRIKA_*` variable is a
-  startup error, not a silent default.
+  database field of any kind**, and `tests/test_settings.py` asserts the exact
+  field set rather than screening names for suspicious substrings (ADR-0007) — a
+  blacklist missed twenty-two spellings, nested models and aliases; a whitelist
+  fails on any addition. A typo'd `METRIKA_*` variable is a startup error, not a
+  silent default, and the error names it **without** its value.
 - `logging.py` — JSON to stdout through `structlog`, with redaction as a
-  processor. `REDACTED_KEYS` covers presigned URLs and file names, because a
-  signed URL in a log is a credential in a log (`SECURITY.md`).
+  processor. `REDACTED_KEYS` and `REDACTED_SUFFIXES` cover presigned URLs and
+  file names, because a signed URL in a log is a credential in a log
+  (`SECURITY.md`). `cache_key` is deliberately not redacted: it is
+  content-addressed, and it is how a stuck job gets debugged.
 - `storage.py` — `ObjectStore`, the only module on the Python side that names
-  `boto3`. `get_object` raises for a missing key and never returns `b""`.
+  `boto3`. `get_object` raises for a missing key and never returns `b""`; a
+  missing _bucket_ is a configuration fault and propagates as a `ClientError`.
+- `tests/test_dependencies.py` — the other half of ADR-0007. Nothing asserted
+  that this package cannot install a database **driver**; measured,
+  `psycopg==3.2.0` here passed every gate in the repository. Its resolved
+  runtime closure is now whitelisted, so a package enters a worker only when a
+  human adds a line, and a separate assertion keeps that list from being widened
+  to admit a driver.
 
 ## Layout
 
 This directory is the **uv workspace root**. It is also a pnpm workspace package
 — `package.json` here is a shim with no Node dependencies whose only job is to
-give Turbo five scripts to call, so that `pnpm lint`, `pnpm typecheck`,
-`pnpm test:unit`, `pnpm format` and `pnpm format:check` at the repository root
-cover Python as well as TypeScript. There is one gate, not two.
+give Turbo six scripts to call, so that `pnpm lint`, `pnpm typecheck`,
+`pnpm test:unit`, `pnpm test:integration`, `pnpm format` and `pnpm format:check`
+at the repository root cover Python as well as TypeScript. There is one gate,
+not two.
 
 ## Running things
 
@@ -109,11 +121,11 @@ annotation of its own anywhere — reports `Explicit "Any" is not allowed
 synthesises from pydantic's `dataclass_transform`, and `plugins =
 ["pydantic.mypy"]` (which this package enables, and which is what makes
 `WorkerSettings()` typecheck at all) does not remove it.
-`metrika_core.settings` carries one justified `# type: ignore[explicit-any]`.
+`metrika_core.settings` carries one justified inline suppression for it.
 **That does not scale to generated models**, which cannot carry a hand-written
-suppression — the choice there is a `[[tool.mypy.overrides]]` on the generated
-package or dropping the flag, and the comment above `disallow_any_explicit` in
-`pyproject.toml` says so.
+one, so the generated contracts package gets a `[[tool.mypy.overrides]]` scoped
+to that module alone — never a global relaxation. The comment above
+`disallow_any_explicit` in `pyproject.toml` says the rest.
 
 **The ruff configuration is an input to generated code.** `contracts:emit` runs
 `datamodel-codegen --formatters ruff-format ruff-check`, so the committed
@@ -121,6 +133,14 @@ pydantic models are a function of this package's `[tool.ruff]` settings — most
 of all `line-length` — as well as of the JSON Schema. Changing one reflows files
 that CI diffs against their committed copies. Regenerate in the same commit;
 ADR-0027 obligation 6 and the comment in `pyproject.toml` say the rest.
+
+`[tool.ruff.lint.isort] known-first-party` is part of that surface, and this was
+measured rather than assumed: output is byte-identical when a generated model
+imports nothing first-party, and **moves** as soon as one carries an absolute
+`from metrika_core… import …` — the import relocates to its own block and a blank
+line appears. So if the generated package ever emits absolute intra-package
+imports, that key is load-bearing for the committed bytes, not just for
+readability.
 
 ## Reference
 
