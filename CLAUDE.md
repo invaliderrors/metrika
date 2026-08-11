@@ -16,7 +16,7 @@ below: one static page, no data fetching, no route groups, and none of
 `packages/api-client`, `packages/ui`, TanStack Query, either Zustand store or
 the viewer. The ESLint boundary zones that will fence them (`webBoundary`,
 `serverActionBoundary`, `featureBoundary`) do exist and are fixture-tested.
-`apps/workers` does not exist yet — Plan 0B-3 builds it.
+`apps/workers` exists: a uv workspace with `metrika_core` (settings, structlog, S3, Temporal base) and two worker entry points with a stub activity each. No geometry, no slicing — those are Phases 3 and 6.
 
 Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
 which phase and which sub-plan the work belongs to.
@@ -36,12 +36,12 @@ bare `pnpm exec prisma` inside `packages/database` cannot find
 `test:e2e` exists as a **package** script only, deliberately: a root one would
 put a chromium download in everyone's inner loop. Run it as
 `pnpm --filter @metrika/web test:e2e`.
-Not yet created (Plan 0B-3): `db:seed` and the Python half of `dev`.
+Not yet created: `db:seed`, and the Python half of `dev` (the workers run via `uv run -m metrika_geometry` / `metrika_slicer`).
 
 ```bash
 pnpm verify                    # format:check + build + lint + typecheck + test:unit — the gate to run before claiming done
 pnpm build                     # tsc -b per package + next build, topological through Turbo; loads the root .env, because next build inlines NEXT_PUBLIC_* into the bundle
-pnpm dev                       # every dev task in the workspace: apps/api (tsc --watch + node --watch) and apps/web (next dev on :3000). Python workers join in Plan 0B-3
+pnpm dev                       # every dev task in the workspace: apps/api (tsc --watch + node --watch) and apps/web (next dev on :3000). The Python workers are not in this task yet — run them directly
 pnpm lint                      # eslint --max-warnings=0 across the workspace
 pnpm typecheck                 # tsc -b --force (the --force is load-bearing; see .github/workflows/ci.yml)
 pnpm test:unit
@@ -54,12 +54,14 @@ pnpm contracts:emit                        # Zod → JSON Schema → the committ
 ```
 
 Single test: `pnpm --filter <package> test:unit -- <pattern>` (Vitest).
-Local infrastructure: `pnpm infra:up` (postgres, redis, minio, mailpit — `temporal` and `temporal-ui` land in Plan 0B-3). See [`docs/LOCAL_DEVELOPMENT.md`](./docs/LOCAL_DEVELOPMENT.md).
+Local infrastructure: `pnpm infra:up` (postgres, redis, minio, mailpit, temporal, temporal-ui). See [`docs/LOCAL_DEVELOPMENT.md`](./docs/LOCAL_DEVELOPMENT.md).
 
-CI runs four jobs on every pull request: `verify` (the gates above plus the two
-suppression greps), `integration` (`pnpm test:integration` against
-Testcontainers), `web` (`pnpm build`, then the Playwright suite in chromium) and
-`openapi` (re-emits the document and fails on a diff).
+CI runs five jobs on every pull request: `verify` (the gates above plus the two
+suppression greps — and, through Turbo, `apps/workers`' ruff, mypy and pytest,
+which is why there is no separate `workers` job), `integration` (`pnpm
+test:integration` against Testcontainers), `web` (`pnpm build`, then the
+Playwright suite in chromium), `openapi` (re-emits the document and fails on a
+diff) and `contracts` (re-emits the pydantic models and fails on a diff).
 
 ## Architecture in one paragraph
 

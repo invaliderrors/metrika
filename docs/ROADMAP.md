@@ -106,8 +106,9 @@ Plan 0B-2 Task 2, each with a fixture asserting a named rule reports; the
 `base`, `typeChecked`, `nest`, `test` and seven boundary exports
 (`contractsBoundary`, `prismaImportBoundary`, `rawSqlBan`, their `prismaBoundary`
 composite, and `webBoundary`, `serverActionBoundary`, `featureBoundary` from Plan
-0B-2 Task 7) exist. 0.4's `ruff`/`mypy` land with
-`apps/workers` (Plan 0B-3); only the Prettier/`.editorconfig` half is done.
+0B-2 Task 7) exist, plus `workflows` from Plan 0B-3 Task 7. 0.4's `ruff` and
+`mypy --strict` are live in `apps/workers`, wired into `pnpm lint`, `typecheck`,
+`test:unit` and `format:check` through Turbo shims.
 0.8 is the **shell** the row describes and no more: App Router, Tailwind v4 with
 the shadcn tokens, `config/env.ts`, a localised root layout, `next-intl` on
 `es-CO` and a seven-case Playwright suite. There is no data fetching, no route
@@ -116,7 +117,7 @@ store and no viewer — those arrive with the phases that need them (1.8, 1.10,
 Phase 4). An `en-US` catalogue exists so the structure is exercised, but nothing
 serves it: `DEFAULT_LOCALE` is a constant and there is no negotiation, and the
 locale itself is V1 in the scope table above.
-0.12's CI now runs four jobs — `verify` (format, build, lint, typecheck, unit
+0.12's CI now runs five jobs — `verify` (format, build, lint, typecheck, unit
 tests, suppression greps), `integration` (Testcontainers Postgres), `web`
 (`pnpm build` + the Playwright suite in chromium, added by Plan 0B-2 Task 8) and
 `openapi` (re-emit and diff) — but the rest of

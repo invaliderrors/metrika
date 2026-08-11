@@ -41,7 +41,7 @@ A change is ready when **all** of these hold:
 
 - [ ] `pnpm verify` passes — it is `format:check` **+ `build`** + `lint` + `typecheck` + `test:unit`, in that order, and the `build` is not incidental: `lint` and `typecheck` both depend on `^build`, so a workspace dependency that does not compile has to fail as a build
 - [ ] `pnpm test:integration` passes locally if the change touches `packages/database`, `apps/api` or `apps/workers`. Neither `pnpm verify` nor any other local gate can see what it sees — an `import type` on an injected provider, an RLS policy that stops isolating, a probe that answers 200 while its dependency is down, a stack trace escaping the exception filter, or an S3 addressing style the endpoint rejects are all green under lint, types and unit tests
-- [ ] CI passes — all four jobs: `verify`, `integration`, `web` (Playwright against a production build of `apps/web`) and `openapi`. From Phase 1 that includes the cross-tenant IDOR suite, which does not exist yet
+- [ ] CI passes — all five jobs: `verify`, `integration`, `web` (Playwright against a production build of `apps/web`), `openapi` and `contracts` (the generated pydantic models, diffed). From Phase 1 that includes the cross-tenant IDOR suite, which does not exist yet
 - [ ] Coverage targets for the touched packages are met ([docs/TESTING.md](./docs/TESTING.md))
 - [ ] No `any`. No unjustified `@ts-expect-error`. No unjustified `eslint-disable`. No skipped tests without a linked issue
 - [ ] Database changes ship as a reviewed migration that is expand/contract-safe
@@ -55,7 +55,7 @@ A change is ready when **all** of these hold:
 
 These are enforced mechanically. If you find yourself fighting one, the design is probably wrong, not the rule.
 
-Each rule's enforcement lands with the code it protects, so some of the rows below name a control that is not installed yet. Live today: the `any` rules, the `process.env` restriction, the Prisma and `@metrika/database` import zones, the `$queryRawUnsafe` / `$executeRawUnsafe` ban, and the three `apps/web` zones — no `@metrika/database` / `@metrika/pricing-engine` / `@prisma/client`, `'use server'` only in the two paths ADR-0015 names, and no deep import into another feature's internals. The `workflows` ESLint profile arrives with `apps/api/src/workflows` in Plan 0B-3; the money, `transition()` and versioning rules arrive with the schemas they apply to.
+Each rule's enforcement lands with the code it protects, so some of the rows below name a control that is not installed yet. Live today: the `any` rules, the `process.env` restriction, the Prisma and `@metrika/database` import zones, the `$queryRawUnsafe` / `$executeRawUnsafe` ban, and the three `apps/web` zones — no `@metrika/database` / `@metrika/pricing-engine` / `@prisma/client`, `'use server'` only in the two paths ADR-0015 names, and no deep import into another feature's internals. The `workflows` ESLint profile is live — it is composed into `apps/api` and scoped to `src/workflows/**`, which does not exist yet, so the rule landed before the code it constrains; the money, `transition()` and versioning rules arrive with the schemas they apply to.
 
 | Rule                                               | Enforcement                                           |
 | -------------------------------------------------- | ----------------------------------------------------- |

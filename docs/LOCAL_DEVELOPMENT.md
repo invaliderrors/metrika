@@ -6,7 +6,7 @@
 > and `apps/workers` has two worker processes that connect to Temporal and register one
 > stub activity each — no geometry and no slicing. What is reachable today is a clean clone to a
 > running API with a migrated database and a web shell that renders, and CI verifies
-> that across four jobs (`verify`, `integration`, `web`, `openapi`). See §2.
+> that across five jobs (`verify`, `integration`, `web`, `openapi`, `contracts`). See §2.
 
 ---
 
