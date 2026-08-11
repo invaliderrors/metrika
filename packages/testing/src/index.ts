@@ -1,6 +1,6 @@
 export { assertDockerAvailable, DockerUnavailableError } from './docker.js';
-export { POSTGRES_IMAGE } from './images.js';
-export { createDatabaseGlobalSetup } from './global-setup.js';
+export { POSTGRES_IMAGE, TEMPORAL_IMAGE } from './images.js';
+export { createDatabaseGlobalSetup, createTemporalGlobalSetup } from './global-setup.js';
 export {
   ADMIN_URL_VAR,
   APPLICATION_URL_VAR,
@@ -12,3 +12,9 @@ export {
   type StartDatabaseOptions,
   type WithDatabaseOptions,
 } from './database.js';
+export {
+  startTemporal,
+  stopTemporal,
+  TEMPORAL_ADDRESS_VAR,
+  type TemporalHandle,
+} from './temporal.js';

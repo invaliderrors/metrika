@@ -22,8 +22,9 @@
 
 **Docker is not optional.** It runs the local stack (`pnpm infra:up`) _and_ every
 integration test: `pnpm test:integration` starts its own Postgres through
-Testcontainers — and, since Plan 0B-3, its own MinIO for `apps/workers` —
-and `packages/testing`'s preflight fails with a readable
+Testcontainers — and, since Plan 0B-3, its own MinIO for `apps/workers` and its
+own Temporal server (plus a second Postgres for it to store history in) for
+`packages/testing` — and `packages/testing`'s preflight fails with a readable
 `DockerUnavailableError` when no daemon is reachable rather than hanging. A
 change to `packages/database`, `apps/api` or `apps/workers` cannot be verified
 without it.
@@ -59,7 +60,8 @@ pnpm install --frozen-lockfile  # workspace dependencies
 cp .env.example .env            # every value works out of the box for local dev
                                 # `.env` is the ONLY local environment file — see §8
 
-pnpm infra:up                   # postgres, redis, minio, mailpit — waits for healthy
+pnpm infra:up                   # postgres, redis, minio, temporal, temporal-ui,
+                                # mailpit — waits for healthy
 pnpm db:deploy                  # apply committed migrations (prisma migrate deploy)
 pnpm dev                        # every runtime that exists: apps/api on API_PORT
                                 # (3001) and apps/web on 3000. One at a time:
@@ -81,15 +83,25 @@ env mode drops any variable a task does not declare — measured, a task sees bo
 `NEXT_PUBLIC_` keys and not `WEB_PORT`. Export it in your shell to move the port,
 or add it to `turbo.json`'s `dev` task.
 
-| Service       | URL                        | Notes                                                                    |
-| ------------- | -------------------------- | ------------------------------------------------------------------------ |
-| Web           | http://localhost:3000      | The localised shell — one page, no API calls yet                         |
-| API           | http://localhost:3001      | `/health/{live,ready,deep}` and `/api/v1/openapi.json` today             |
-| API docs      | http://localhost:3001/docs | Scalar — not mounted yet                                                 |
-| Temporal UI   | http://localhost:8233      | Plan 0B-3 — not in `docker-compose.yml` yet                              |
-| MinIO console | http://localhost:9001      | `metrika` / `metrika-local`                                              |
-| Mailpit       | http://localhost:8025      | Catches all outbound email                                               |
-| Postgres      | localhost:5432             | `metrika` / `metrika` / `metrika_dev`; the API connects as `metrika_app` |
+| Service         | URL                        | Notes                                                                    |
+| --------------- | -------------------------- | ------------------------------------------------------------------------ |
+| Web             | http://localhost:3000      | The localised shell — one page, no API calls yet                         |
+| API             | http://localhost:3001      | `/health/{live,ready,deep}` and `/api/v1/openapi.json` today             |
+| API docs        | http://localhost:3001/docs | Scalar — not mounted yet                                                 |
+| Temporal UI     | http://localhost:8233      | Workflow history; no workflows exist yet                                 |
+| Temporal (gRPC) | localhost:7233             | Namespace `default`; what a worker or client dials                       |
+| MinIO console   | http://localhost:9001      | `metrika` / `metrika-local`                                              |
+| Mailpit         | http://localhost:8025      | Catches all outbound email                                               |
+| Postgres        | localhost:5432             | `metrika` / `metrika` / `metrika_dev`; the API connects as `metrika_app` |
+
+The Temporal service is `temporalio/auto-setup`, which stores its history and
+visibility data in the **same Postgres** as the application, in two databases it
+creates itself on first boot: `temporal` and `temporal_visibility`. They are not
+Prisma-managed and no migration in this repository knows about them.
+`pnpm infra:reset` drops them along with everything else, and the next
+`infra:up` re-creates them from scratch — that is the supported way to get a
+clean workflow history. It is a local-development image only; production is
+Temporal Cloud ([ADR-0006](./adr/0006-temporal.md)).
 
 Every published port binds to `127.0.0.1`, not `0.0.0.0` — Docker's publish path
 inserts firewall rules that would otherwise expose Postgres and the MinIO console
@@ -166,9 +178,11 @@ pnpm verify                    # format:check + build + lint + typecheck + unit 
 pnpm build                     # tsc -b per package + next build, topological through Turbo
 
 pnpm test:unit                 # fast, and needs no Docker on either side
-pnpm test:integration          # Testcontainers — Postgres and MinIO; Docker must be running
+pnpm test:integration          # Testcontainers — Postgres, MinIO and Temporal; Docker must
+                               # be running
 
-pnpm infra:up                  # start postgres, redis, minio, mailpit and wait for healthy
+pnpm infra:up                  # start postgres, redis, minio, temporal, temporal-ui and
+                               # mailpit, and wait for healthy
 pnpm infra:down                # stop them, keeping the volumes
 pnpm infra:reset               # stop them AND drop the volumes — this is what re-runs
                                # packages/database/sql/00-app-role.sql on a fresh Postgres
@@ -256,7 +270,9 @@ it builds `@metrika/contracts` itself. `pnpm db:seed` arrives in Plan 0B-3.
 Everything in this section except **Database** describes a runtime that does not
 exist yet. It is kept as the intended shape, marked for what it is.
 
-**Workflows** _(Plan 0B-3)_ — the Temporal UI at :8233 shows event history, inputs, outputs and failures for every workflow. Replay a failed workflow locally against modified code to reproduce a non-determinism error, which is otherwise the hardest class of bug here.
+**Workflows** — the Temporal UI at :8233 shows event history, inputs, outputs and failures for every workflow. Replay a failed workflow locally against modified code to reproduce a non-determinism error, which is otherwise the hardest class of bug here. The server and the UI are in `docker-compose.yml` as of Plan 0B-3; there is no workflow to look at yet, so today it is an empty `default` namespace that proves the stack is wired.
+
+A container that stays `Up` while logging `Waiting for PostgreSQL` forever means `DB_PORT` was dropped from the `temporal` service — it defaults to **3306**, MySQL's port. `docker ps` shows a healthy-looking container and `docker compose up -d` returns 0, so the first symptom is a worker connection timeout with nothing obviously broken upstream. [ADR-0027](./adr/0027-python-toolchain.md) records all six variables that service needs.
 
 **API** — `pnpm --filter @metrika/api dev` runs `tsc -b --watch` alongside `node --watch dist/main.js`, reading the root `.env`. A `dev:debug` script and a committed `.vscode/launch.json` attach configuration are intended and do not exist yet; until then, `node --inspect --env-file=.env dist/main.js` from `apps/api` is the equivalent.
 

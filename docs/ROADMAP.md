@@ -72,19 +72,19 @@
 | 0.7  | ✅ `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                                                 | `apps/api/src`                                                                |
 | 0.8  | ✅ `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                                                   | `apps/web/src`                                                                |
 | 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                                                   | `apps/workers`                                                                |
-| 0.10 | ◐ `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit — all but `temporal`/`temporal-ui`, which land in Plan 0B-3                                                               | `infra/docker`                                                                |
+| 0.10 | ✅ `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit — all six, each pinned by exact tag in [IMAGE_PINS.md](../infra/docker/IMAGE_PINS.md) and each with a healthcheck        | `infra/docker`                                                                |
 | 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                                                               | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
 | 0.12 | ✅ GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                                                                | `.github/workflows`                                                           |
-| 0.13 | ◐ `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env — Postgres done; Redis, MinIO and Temporal follow their consumers                                           | `packages/testing`                                                            |
+| 0.13 | ◐ `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env — Postgres and Temporal done; Redis and MinIO follow their consumers                                        | `packages/testing`                                                            |
 | 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role                                                                                                                                            | `infra/terraform/shared`                                                      |
 | 0.15 | ✅ **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in an ADR. **Outcome: ts-rest failed; `nestjs-zod` adopted in ADR-0019** | throwaway branch                                                              |
 | 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                                                                 | root, `docs/`                                                                 |
 
 ✅ = done · ◐ = partially done, with the remainder named on the row.
 
-Progress: 0.1–0.8, 0.12, 0.13 (Postgres harness), 0.15 complete. 0.10 partially:
-`postgres`, `redis`, `minio` and `mailpit` exist; `temporal` and `temporal-ui`
-land in Plan 0B-3. Remaining: 0.9, 0.11, 0.14, and 0.13's Redis/MinIO/Temporal
+Progress: 0.1–0.8, 0.10, 0.12 and 0.15 are complete. 0.13 is partial: the
+Postgres and Temporal harnesses exist in `packages/testing`; Redis and MinIO
+follow their consumers. Remaining: 0.9, 0.11, 0.14, and 0.13's Redis and MinIO
 harnesses.
 
 Caveats on the ✅ rows: several describe end-state work that lands incrementally

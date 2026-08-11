@@ -5,7 +5,9 @@
     "test:unit": {
       "dependsOn": ["^build", "build"],
       // test/postgres-image.test.ts is a UNIT test that reads
-      // infra/docker/docker-compose.yml — outside this package. Turbo hashes
+      // infra/docker/docker-compose.yml — outside this package (it now guards
+      // the Temporal pin as well as the Postgres one; the file says why it
+      // lives here). Turbo hashes
       // only a package's own files, so without this it reports success FROM
       // CACHE while the compose file it validates has drifted.
       //

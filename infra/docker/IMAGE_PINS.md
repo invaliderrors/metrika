@@ -22,12 +22,25 @@ digests and a per-architecture refresh policy; that is deliberately out of scope
 until Plan 0D, which does exactly that for the images that carry production
 data.
 
-`postgres`'s tag additionally has a second consumer — `POSTGRES_IMAGE` in
-`packages/testing/src/images.ts` — and a test that fails when the two diverge.
+`postgres` and `temporal` each additionally have a second consumer —
+`POSTGRES_IMAGE` and `TEMPORAL_IMAGE` in `packages/testing/src/images.ts` — and
+`packages/database/test/postgres-image.test.ts` fails when either pair diverges.
+It also fails on any `:latest` in this file, for the reason in the next
+paragraph.
 
-| Service  | Image           | Tag                          | Image ID     |
-| -------- | --------------- | ---------------------------- | ------------ |
-| postgres | postgres        | 16-alpine                    | 57c72fd2a128 |
-| redis    | redis           | 7-alpine                     | e7723ff73d96 |
-| minio    | minio/minio     | RELEASE.2025-09-07T16-13-09Z | 14cea493d9a3 |
-| mailpit  | axllent/mailpit | v1.30.7                      | d5ecbb067db3 |
+**`temporal`'s tag is the one to leave alone.** [ADR-0027](../../docs/adr/0027-python-toolchain.md)
+measured `temporalio/auto-setup:latest` resolving to **1.29.3** while **1.29.7**
+was published — four patch releases stale. So "latest" here would pin _older_
+than naming a version does, silently, with the word "latest" on screen saying
+otherwise. `auto-setup` is a local/test image specifically: it provisions the
+`default` namespace and search attributes on first boot. Production is Temporal
+Cloud ([ADR-0006](../../docs/adr/0006-temporal.md)) and has no counterpart.
+
+| Service     | Image                 | Tag                          | Image ID     |
+| ----------- | --------------------- | ---------------------------- | ------------ |
+| postgres    | postgres              | 16-alpine                    | 57c72fd2a128 |
+| redis       | redis                 | 7-alpine                     | e7723ff73d96 |
+| minio       | minio/minio           | RELEASE.2025-09-07T16-13-09Z | 14cea493d9a3 |
+| temporal    | temporalio/auto-setup | 1.29.7                       | f14912b699cf |
+| temporal-ui | temporalio/ui         | 2.53.2                       | 0c89f0e96b8d |
+| mailpit     | axllent/mailpit       | v1.30.7                      | d5ecbb067db3 |
