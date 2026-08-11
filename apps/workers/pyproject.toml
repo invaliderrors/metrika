@@ -235,8 +235,14 @@ enable_error_code = ["ignore-without-code"]
 #
 # So `--strict`, which is what CLAUDE.md and docs/TYPESCRIPT_AND_TOOLING.md
 # actually commit to, is untouched by this override; the flag being relaxed is an
-# extra on top of it. `plugins = ["pydantic.mypy"]` does NOT fix it — that was
-# ADR-0027's guess and it is wrong, measured.
+# extra on top of it. `plugins = ["pydantic.mypy"]` does NOT fix it, and that is
+# a tried remedy rather than an untried one: `[tool.mypy]` above already sets the
+# plugin, for the `call-arg` reason given there. MEASURED with it active — delete
+# the justified suppression on `WorkerSettings`'s class line and this project's
+# own `mypy .` exits 1 with `Explicit "Any" is not allowed [explicit-any]`
+# pointing at that line. (An earlier draft of this comment credited the idea to
+# ADR-0027. That ADR does not mention the plugin anywhere; the attribution was
+# invented and is now removed.)
 #
 # NOT `metrika_core.*`, and not a second entry. `metrika_core`, `geometry` and
 # `slicer` are where humans write code and an explicit `Any` there is a real
