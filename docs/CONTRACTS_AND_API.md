@@ -249,6 +249,15 @@ CI runs the emission and fails on `git diff --exit-code` (the `contracts` job). 
 
 This is deliberately a build-time artefact rather than a runtime dependency — the workers stay a pure Python project with no Node requirement in their image.
 
+### What crosses only because it was made to
+
+Two constraints have no JSON Schema keyword and would otherwise be **dropped silently**, leaving the generated model strictly more permissive than the Zod schema defining it — the same direction, and the same invisibility, as the `\d` defect below.
+
+- **Finiteness.** `z.number()` rejects `NaN`, `+Infinity` and `-Infinity`. A bare pydantic `float` accepts all three. Measured on the pinned `pydantic 2.13.4`, before the fix: `Millimeters` accepted `NaN`, `±inf`, `"12.5"` and `True`; the four non-negative units accepted `+inf`. Their partial protection was **accidental** — `ge=0` happens to filter `NaN` (every comparison with it is false) and `-inf`, while `+inf >= 0` passes. So `src/units.ts` carries `minimum`/`maximum` at `±Number.MAX_VALUE`, which **is** the set of finite doubles. Those bounds are a no-op on the Zod side; that is exactly why they are easy to delete and must not be. `CLAUDE.md` puts the stakes plainly: a slicer result is an exact number or absent, never an unbounded one, and these five are the quantities that flow into money — produced by the side that has no Zod.
+- **The input type.** pydantic's lax mode reads `"12.5"` and `True` as floats, and `"2"` and `True` as ints; Zod rejects all four. `datamodel-codegen --strict-types str bytes int float bool` closes it. An `int` is still accepted for a `float`, because `z.number()` accepts one — the fix must not become a reverse divergence.
+
+The one place this leaves Python **stricter** than Zod is `Money.exponent`, which rejects `2.0`: JavaScript has a single number type, so `z.number().int()` sees `2.0` as `2` and takes it. It is unreachable on the wire — `JSON.stringify(2)` emits `2`, never `2.0` — and it is asserted rather than left to be discovered.
+
 ### What does not cross
 
 Three things, and each one is a property of the boundary rather than a defect to fix:
@@ -258,6 +267,8 @@ Three things, and each one is a property of the boundary rather than a defect to
 - **`\d`.** ASCII-only in JavaScript, any Unicode decimal digit in Python. A pattern containing one makes the generated model strictly **more permissive** than Zod: `"3٥٠"` is accepted and read as `350`. `src/money.ts` writes `[0-9]` for this reason. Zod's own built-in formats (`z.e164()`, `z.iso.datetime()`, …) carry `\d` and cannot be edited here; [ADR-0027](./adr/0027-python-toolchain.md) decided against rewriting them in the emitter, so `apps/workers/packages/metrika_core/tests/test_generated_contracts.py` carries a rejection test per pattern-carrying model instead.
 
 The Python suite **instantiates and validates**, never merely imports. ADR-0027 measured a generated model that passed `ruff`, `ruff format`, `mypy --strict` and `import` at exit 0 and then raised an uncaught `TypeError` on every payload.
+
+It also reads the **generated source** rather than `model_json_schema()` when asking which patterns crossed. Measured with `z.iso.datetime()` in the emitted set: the generator writes `Annotated[AwareDatetime, Field(pattern="^\d{4}-…")]`, pydantic cannot apply a string pattern to a datetime, and it **discards the constraint without error** — the round-tripped schema comes back with no `pattern` at all, so a guard built on that view goes quiet on exactly the models that are broken. `test_every_pattern_in_the_generated_source_was_actually_applied` compares the two views and fails on the gap.
 
 ---
 

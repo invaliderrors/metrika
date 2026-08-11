@@ -32,6 +32,7 @@ this file.
 from __future__ import annotations
 
 import re
+import sys
 import tomllib
 from collections.abc import Mapping
 from enum import Enum
@@ -88,7 +89,11 @@ def _generated_enums() -> dict[str, type[Enum]]:
 
 
 def _patterns(node: object) -> list[str]:
-    """Every `pattern` anywhere in a model's own JSON Schema."""
+    """Every `pattern` anywhere in a model's ROUND-TRIPPED JSON Schema.
+
+    Used ONLY to answer "did pydantic actually apply this constraint", never to
+    answer "what patterns crossed the boundary". See `_source_patterns`.
+    """
     if isinstance(node, list):
         return [found for item in node for found in _patterns(item)]
     if isinstance(node, Mapping):
@@ -96,6 +101,47 @@ def _patterns(node: object) -> list[str]:
         here = [pattern] if isinstance(pattern, str) else []
         return here + [found for value in node.values() for found in _patterns(value)]
     return []
+
+
+_CLASS_LINE = re.compile(r"^class (\w+)\(")
+_SOURCE_PATTERN = re.compile(r'pattern="((?:[^"\\]|\\.)*)"')
+
+
+def _source_patterns() -> dict[str, list[str]]:
+    r"""Every `pattern=` in the GENERATED SOURCE, by the class it appears under.
+
+    Read from the file rather than from `model_json_schema()`, and that is the
+    difference between a guard and a decoration.
+
+    MEASURED, with `z.iso.datetime()` added to the emitted set: the generator
+    writes `Annotated[AwareDatetime, Field(pattern="^\d{4}-...")]`, pydantic
+    CANNOT apply a string pattern to a datetime, and it drops the constraint
+    SILENTLY -- `Timestamp.model_json_schema()` comes back as
+    `{"format": "date-time", "title": "Timestamp", "type": "string"}` with no
+    `pattern` at all. A guard reading the round-tripped schema therefore sees
+    nothing and passes, against a model that raises `TypeError` on every payload.
+    `z.iso.date()` and `z.iso.time()` are in the same blind spot; only
+    `z.e164()`, which is a plain string, would have been caught.
+
+    The generated file is also the artefact CI byte-diffs, so this reads exactly
+    what is under review.
+
+    The regex tolerates a `\"` escape inside the literal for completeness; no
+    emitted pattern contains one today, and one that did would be visible as an
+    unexpected entry rather than a silently truncated one.
+    """
+    found: dict[str, list[str]] = {}
+    current = ""
+
+    for line in GENERATED.read_text(encoding="utf-8").splitlines():
+        class_line = _CLASS_LINE.match(line)
+        if class_line:
+            current = class_line.group(1)
+            continue
+        for pattern in _SOURCE_PATTERN.findall(line):
+            found.setdefault(current, []).append(pattern)
+
+    return found
 
 
 # A valid payload for EVERY generated model, so that "instantiate and validate"
@@ -149,6 +195,46 @@ ASCII_TWINS: dict[str, object] = {
     **{name: VALID_UUID for name in VALID_PAYLOADS if name.endswith("Id")},
 }
 
+# The five branded units, which are the ones CLAUDE.md says flow into money, and
+# which the Python side PRODUCES rather than merely reads -- a geometry or slicer
+# worker is where a volume or a mass comes from in the first place.
+NUMERIC_MODELS = (
+    "Millimeters",
+    "SquareMillimeters",
+    "CubicMillimeters",
+    "Grams",
+    "Seconds",
+)
+
+# Everything `z.number()` rejects and a bare pydantic `float` does not.
+#
+# MEASURED before the fix, on the pinned pydantic 2.13.4:
+#
+#   Millimeters  NaN=ACCEPT  +inf=ACCEPT  -inf=ACCEPT  "12.5"=ACCEPT  True=ACCEPT
+#   Grams        NaN=reject  +inf=ACCEPT  -inf=reject  "12.5"=ACCEPT  True=ACCEPT
+#
+# and the four non-negative units' partial protection was ACCIDENTAL: `ge=0`
+# happens to filter NaN (every comparison with it is false) and `-inf`, while
+# `+inf >= 0` passes. `Millimeters` has no lower bound and so had none of it.
+#
+# Two changes close this, and neither is expressible without the other:
+#   * `units.ts` carries `minimum`/`maximum` at ±Number.MAX_VALUE, which is
+#     exactly the set of finite doubles. JSON Schema has no `finite` keyword;
+#     these two it does have.
+#   * `--strict-types` stops "12.5" and True being read as floats.
+NON_FINITE_AND_COERCED: tuple[tuple[str, object], ...] = (
+    ("NaN", float("nan")),
+    ("+inf", float("inf")),
+    ("-inf", float("-inf")),
+    ("numeric string", "12.5"),
+    ("bool", True),
+)
+
+# What a unit must still ACCEPT afterwards. `z.number()` takes any finite
+# number, so an int is valid input and a model that rejected one would be a
+# reverse divergence -- Python refusing a payload TypeScript emits.
+FINITE_ACCEPTED: tuple[object, ...] = (0, 12, 12.5, 1.0e300)
+
 
 def test_the_reflection_finds_the_generated_module() -> None:
     """Non-vacuity. Every test below is driven by the walk above."""
@@ -190,12 +276,95 @@ def test_every_generated_model_validates_a_real_payload(name: str) -> None:
         )
 
 
-@pytest.mark.parametrize("enum_name", ["CurrencyCode", "DomainErrorCode"])
-def test_every_generated_enum_round_trips_a_member(enum_name: str) -> None:
+@pytest.mark.parametrize("enum_name", sorted(_generated_enums()))
+def test_every_generated_enum_round_trips_a_member_and_rejects_a_stranger(
+    enum_name: str,
+) -> None:
+    """Parametrized over what the module ACTUALLY defines, not a hard-coded pair.
+
+    A hard-coded list means a new enum crosses the boundary with no behavioural
+    assertion at all, and nothing on this side says so.
+    """
     enum = _generated_enums()[enum_name]
     member = next(iter(enum))
 
     assert enum(member.value) is member
+    with pytest.raises(ValueError, match="is not a valid"):
+        enum("__NOT_A_MEMBER__")
+
+
+def test_the_enum_walk_is_not_empty() -> None:
+    """The parametrization above is silently vacuous if the walk finds nothing."""
+    assert set(_generated_enums()) >= {"CurrencyCode", "DomainErrorCode"}
+
+
+# ------------------------- numbers, and finiteness ---------------------------
+
+
+def test_the_numeric_model_list_is_every_numeric_model() -> None:
+    """Non-vacuity for the two tests below.
+
+    Derived from the models rather than trusted: a sixth unit added to
+    `units.ts` must appear here, or the probes below silently stop covering the
+    whole set.
+    """
+    numeric = {
+        name
+        for name, model in _generated_models().items()
+        if isinstance(VALID_PAYLOADS.get(name), float)
+    }
+
+    assert numeric == set(NUMERIC_MODELS)
+
+
+@pytest.mark.parametrize("name", NUMERIC_MODELS)
+@pytest.mark.parametrize(
+    "value",
+    [pytest.param(value, id=label) for label, value in NON_FINITE_AND_COERCED],
+)
+def test_no_numeric_model_accepts_a_non_finite_or_coerced_value(name: str, value: object) -> None:
+    """The finiteness half of the boundary, and it is the same family as `\\d`.
+
+    `z.number()` rejects NaN, +inf, -inf, "12.5" and True. A bare pydantic float
+    accepts all five, so the generated model would be strictly more permissive
+    than the schema defining it -- on the five quantities that flow into money,
+    produced by the side that has no Zod. `units.ts` says it plainly: a slicer
+    result must be an exact number or absent, never an unbounded one. A NaN
+    millimetre reaching the pricing kernel is what this whole boundary exists to
+    prevent.
+    """
+    with pytest.raises(ValidationError):
+        _generated_models()[name].model_validate(value)
+
+
+@pytest.mark.parametrize("name", NUMERIC_MODELS)
+def test_every_numeric_model_still_accepts_finite_numbers(name: str) -> None:
+    """The other direction, which is what stops the fix being a bigger bug.
+
+    A model that rejected `12` or `1e300` would refuse payloads TypeScript
+    happily emits -- the `brand.ts` `/i` failure, in numbers. `Millimeters` takes
+    negatives (coordinates); the other four are non-negative by their own Zod
+    schema, so they are exercised on the non-negative subset.
+    """
+    model = _generated_models()[name]
+    for value in FINITE_ACCEPTED:
+        model.model_validate(value)
+    if name == "Millimeters":
+        model.model_validate(-12.5)
+
+
+@pytest.mark.parametrize("name", NUMERIC_MODELS)
+def test_every_numeric_model_carries_the_finite_bounds(name: str) -> None:
+    """The bounds are a no-op on the Zod side, which is how they get deleted.
+
+    They are the ONLY thing carrying finiteness across, so this asserts they
+    arrived rather than trusting the behavioural tests to notice a schema whose
+    author thought `.max(Number.MAX_VALUE)` was noise.
+    """
+    schema = _generated_models()[name].model_json_schema()
+
+    assert schema.get("maximum") == sys.float_info.max, schema
+    assert schema.get("minimum") == (-sys.float_info.max if name == "Millimeters" else 0.0), schema
 
 
 # --------------------------------- money -------------------------------------
@@ -247,6 +416,37 @@ def test_money_rejects_an_out_of_range_exponent(exponent: int) -> None:
         Money(amountMinor="350000", currency=CurrencyCode.COP, exponent=exponent)
 
 
+@pytest.mark.parametrize("exponent", ["2", True])
+def test_money_does_not_coerce_a_string_or_bool_into_the_exponent(exponent: object) -> None:
+    """`z.number().int()` rejects both; lax pydantic reads them as 2 and 1.
+
+    An exponent is how many minor units make one major unit -- reading `True` as
+    `1` would render COP with one decimal place, silently, on a stored quote.
+    `--strict-types` is what closes this.
+    """
+    with pytest.raises(ValidationError):
+        Money(amountMinor="350000", currency=CurrencyCode.COP, exponent=exponent)
+
+
+def test_the_one_place_this_side_is_stricter_than_zod_is_named() -> None:
+    """`exponent=2.0` is rejected here and ACCEPTED by Zod, and that is on purpose.
+
+    JavaScript has one number type, so `z.number().int()` sees `2.0` as `2` and
+    takes it. Python does not, and `StrictInt` refuses a float. That is a reverse
+    divergence -- the direction that broke `brand.ts` -- so it is asserted rather
+    than left to be discovered.
+
+    It is UNREACHABLE ON THE WIRE, which is why it is an acceptable price for the
+    two coercions above: `JSON.stringify(2)` emits `2`, never `2.0`, so no
+    payload TypeScript produces can carry the rejected shape. Measured:
+    `Money.model_validate_json('{"…","exponent":2}')` is accepted.
+    """
+    with pytest.raises(ValidationError):
+        Money(amountMinor="350000", currency=CurrencyCode.COP, exponent=2.0)
+
+    Money.model_validate_json('{"amountMinor":"350000","currency":"COP","exponent":2}')
+
+
 def test_money_forbids_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         Money.model_validate(
@@ -285,11 +485,52 @@ def test_the_domain_error_codes_crossed_intact() -> None:
 # ----------------------- the backslash-d divergence family --------------------
 
 
-def test_the_probe_table_covers_every_pattern_carrying_model() -> None:
-    """Non-vacuity for the two tests below, and what must not silently shrink."""
-    with_patterns = {
-        name for name, model in _generated_models().items() if _patterns(model.model_json_schema())
+def test_the_source_scan_finds_the_patterns_it_claims_to_find() -> None:
+    """Non-vacuity for the scan itself, before anything is built on it."""
+    found = _source_patterns()
+
+    assert "Money" in found
+    assert found["Money"] == ["^(0|-?[1-9][0-9]*)$"]
+    assert len(found) >= 12
+    assert all(patterns for patterns in found.values())
+
+
+def test_every_pattern_in_the_generated_source_was_actually_applied() -> None:
+    r"""A constraint the generator wrote and pydantic silently dropped.
+
+    THE FAILURE THIS EXISTS FOR, measured with `z.iso.datetime()` in the emitted
+    set: the generated source says
+    `Annotated[AwareDatetime, Field(pattern="^\d{4}-...")]`, pydantic cannot
+    apply a string pattern to a datetime, and it discards it WITHOUT ERROR --
+    `model_json_schema()` comes back with no `pattern` key at all. The file
+    imports cleanly, `ruff`, `ruff format` and `mypy --strict` are all green, and
+    every payload then raises an uncaught `TypeError`.
+
+    Comparing the two views is what makes that visible: the source says a
+    constraint is there, the round-tripped schema says it is not, and the gap
+    between them is a constraint that is not being enforced.
+    """
+    dropped = {
+        name: patterns
+        for name, patterns in _source_patterns().items()
+        if not _patterns(_generated_models()[name].model_json_schema())
     }
+
+    assert dropped == {}, (
+        "pydantic discarded a pattern the generator emitted, silently. The model still "
+        f"imports and still typechecks, and it enforces nothing: {dropped}"
+    )
+
+
+def test_the_probe_table_covers_every_pattern_carrying_model() -> None:
+    """Non-vacuity for the two tests below, and what must not silently shrink.
+
+    Read from the GENERATED SOURCE, not from `model_json_schema()`. The
+    round-tripped schema omits any pattern pydantic could not apply, so a guard
+    built on it goes quiet on exactly the models that are broken -- which is the
+    opposite of what a guard is for. See `_source_patterns`.
+    """
+    with_patterns = set(_source_patterns())
 
     assert with_patterns == set(NON_ASCII_DIGIT_PROBES), (
         "a model carrying a regex crossed the boundary with no non-ASCII-digit probe. "
@@ -335,11 +576,19 @@ def test_no_emitted_pattern_spells_a_digit_class_as_backslash_d() -> None:
     not to delete this assertion: it is to add a behavioural probe above for that
     format (MEASURED on zod 4.4.3, `z.e164()` accepts a phone number with
     Arabic-Indic digits here and Zod rejects it) and to record the decision.
+
+    READS THE GENERATED SOURCE, and an earlier version of this test did not --
+    it read `model_json_schema()`, which omits any pattern pydantic could not
+    apply. Measured: with `z.iso.datetime()` emitted, that version passed against
+    a model that raises on every payload, so it was blind to three of the four
+    built-ins its own docstring names. The source literal survives regardless of
+    whether pydantic could use it, which is precisely why it is the right thing
+    to read.
     """
     offenders = {
-        name: found
-        for name, model in _generated_models().items()
-        if (found := [p for p in _patterns(model.model_json_schema()) if re.search(r"\\d", p)])
+        name: [p for p in patterns if re.search(r"\\d", p)]
+        for name, patterns in _source_patterns().items()
+        if any(re.search(r"\\d", p) for p in patterns)
     }
 
     assert offenders == {}, (
@@ -418,8 +667,15 @@ def test_only_the_generated_module_is_exempt_from_disallow_any_explicit() -> Non
     are where humans write code and an explicit `Any` there is a real smell, so
     the flag stays on for them and this list stays exactly one module long.
     """
-    overrides = _workspace_table("tool", "mypy")["overrides"]
-    assert isinstance(overrides, list)
+    # `.get`, not `[...]`: DELETING the overrides block is as much a change to
+    # this exemption as widening it, and a bare `KeyError` would fail with a
+    # traceback instead of the message written for whoever did it.
+    overrides = _workspace_table("tool", "mypy").get("overrides", [])
+    assert isinstance(overrides, list), (
+        "apps/workers/pyproject.toml declares no [[tool.mypy.overrides]] at all. The "
+        "generated contracts module needs exactly one; see the comment above "
+        "`disallow_any_explicit`"
+    )
 
     relaxed = [
         entry
@@ -427,7 +683,10 @@ def test_only_the_generated_module_is_exempt_from_disallow_any_explicit() -> Non
         if isinstance(entry, dict) and entry.get("disallow_any_explicit") is False
     ]
 
-    assert len(relaxed) == 1, f"expected exactly one relaxing override, got {overrides}"
+    assert len(relaxed) == 1, (
+        "expected exactly one override relaxing `disallow_any_explicit`, for "
+        f"{MODULE}, and found {len(relaxed)}: {overrides}"
+    )
     assert relaxed[0]["module"] == [MODULE], (
         "the explicit-Any exemption has been widened beyond the generated module; a "
         "hand-written model can carry a justified inline explicit-any suppression, and must"

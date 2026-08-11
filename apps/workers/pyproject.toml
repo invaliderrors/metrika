@@ -21,21 +21,34 @@ target-version = "py312"
 # 100 to match Prettier's `printWidth` — one wrap width for the repository
 # rather than one per language.
 #
-# READ BEFORE CHANGING ANY KEY IN THIS SECTION, `line-length` above all.
+# READ BEFORE CHANGING ANY KEY IN ANY `[tool.ruff*]` TABLE IN THIS FILE.
 # This configuration is an INPUT TO GENERATED CODE. `contracts:emit` runs
 # `datamodel-codegen --formatters ruff-format ruff-check`, so the committed
 # pydantic models in `packages/metrika_core/src/metrika_core/contracts/` are a
-# function of this file, of the
-# pinned `ruff`, and of `--target-python-version` — not of the JSON Schema
-# alone. ADR-0027 measured it: adding a `line-length` reflowed the output from
+# function of this file, of the pinned `ruff`, and of
+# `--target-python-version` — not of the JSON Schema alone. CI diffs them
+# against the committed copy, so an edit here turns that gate red in files this
+# commit never touched, on a pull request about something else. Regenerate and
+# commit the models in the SAME commit as any change (ADR-0027 obligation 6). A
+# diff gate that goes red for reasons unrelated to its subject is a gate that
+# gets disabled.
 #
-#     amountMinor: Annotated[str, Field(pattern="^(0|-?[1-9][0-9]*)$")]
+# MEASURED against the committed 216-line model, so the sizes are known rather
+# than feared. The largest mover is NOT in this table:
 #
-# to a three-line form. CI diffs those generated files against the committed
-# copy, so an edit here turns that gate red in files this commit never touched,
-# on a pull request about something else. Regenerate and commit the models in
-# the SAME commit as any change below (ADR-0027 obligation 6). A diff gate that
-# goes red for reasons unrelated to its subject is a gate that gets disabled.
+#   [tool.ruff.format] quote-style = "single"  →  46 lines rewritten
+#   [tool.ruff] line-length = 60               →  25 lines rewritten, +32 lines
+#   [tool.ruff] line-length = 88               →   7 lines rewritten, +10 lines
+#   [tool.ruff.lint.isort] known-first-party   →  byte-identical TODAY, and
+#       load-bearing the moment a generated model carries an absolute
+#       intra-package import. None does; the day one does, this key decides
+#       which block it sorts into and a blank line appears.
+#
+# THE FIRST LINE IS THE POINT. There is deliberately no `[tool.ruff.format]`
+# table, and someone adding one writes it at the BOTTOM of this file — nowhere
+# near this comment, and it is the single biggest byte-mover of the four. There
+# is a matching warning where it would go, after
+# `[tool.ruff.lint.per-file-ignores]`.
 line-length = 100
 
 [tool.ruff.lint]
@@ -129,6 +142,23 @@ known-first-party = ["metrika_core"]
 # excuse for a camelCase attribute; a file nobody may edit by hand has nothing
 # else it could do.
 "packages/metrika_core/src/metrika_core/contracts/**" = ["N815"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELIBERATELY NO `[tool.ruff.format]` TABLE, and this is where you were about
+# to add one.
+#
+# `contracts:emit` runs `datamodel-codegen --formatters ruff-format ruff-check`,
+# so ruff's FORMATTER settings are an input to a file this repository commits
+# and CI byte-diffs. MEASURED on the 216-line generated model: adding
+# `quote-style = "single"` rewrites **46 of its lines**. That is the largest
+# single byte-mover in this file — more than double what `line-length = 88`
+# does — and it is the one furthest from the warning that explains it, which is
+# why this block exists here as well as at the top.
+#
+# Adding a `[tool.ruff.format]` table is fine. Adding one WITHOUT re-running
+# `pnpm contracts:emit` in the same commit turns CI's `contracts` job red on the
+# next unrelated pull request. ADR-0027 obligation 6.
+# ─────────────────────────────────────────────────────────────────────────────
 
 [tool.mypy]
 strict = true

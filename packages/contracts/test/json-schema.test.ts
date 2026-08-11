@@ -61,6 +61,40 @@ describe('emitJsonSchemas', () => {
   it('is deterministic across two calls', () => {
     expect(JSON.stringify(emitJsonSchemas())).toBe(JSON.stringify(emitJsonSchemas()));
   });
+
+  // JSON Schema has no `finite` keyword, and a bare `{ "type": "number" }`
+  // generates a pydantic float that ACCEPTS NaN, +inf and -inf — measured, on
+  // the five quantities CLAUDE.md says flow into money, on the side that
+  // PRODUCES them. `minimum`/`maximum` do cross, and ±Number.MAX_VALUE is
+  // exactly the set of finite doubles.
+  //
+  // These bounds are a no-op on this side, which is precisely why they need a
+  // test: nothing else here would notice them being deleted as redundant.
+  describe.each([
+    ['Millimeters', -Number.MAX_VALUE],
+    ['SquareMillimeters', 0],
+    ['CubicMillimeters', 0],
+    ['Grams', 0],
+    ['Seconds', 0],
+  ])('%s carries the finite bounds', (name, minimum) => {
+    it('emits both, so finiteness survives the crossing', () => {
+      const unit = schemas[name] as { minimum?: number; maximum?: number };
+
+      expect(unit.minimum).toBe(minimum);
+      expect(unit.maximum).toBe(Number.MAX_VALUE);
+    });
+  });
+
+  it('rejects the values those bounds exist to exclude, on this side too', () => {
+    // The Zod schemas already reject all three without the bounds. That is the
+    // trap: the bounds look like noise here and are load-bearing there.
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(contracts.Millimeters.safeParse(bad).success).toBe(false);
+      expect(contracts.Grams.safeParse(bad).success).toBe(false);
+    }
+    expect(contracts.Millimeters.safeParse(-12.5).success).toBe(true);
+    expect(contracts.Grams.safeParse(12).success).toBe(true);
+  });
 });
 
 /**
@@ -203,6 +237,26 @@ describe('the committed pydantic models still match these schemas', () => {
     const missing = patterns.filter((pattern) => !source.includes(`"${pattern}"`));
 
     expect(missing, 'a regex changed on the Zod side and was never re-emitted').toEqual([]);
+  });
+
+  it('carries every emitted numeric bound', () => {
+    const source = pythonSource();
+    // `ge=`/`le=` is how `--use-annotated` writes `minimum`/`maximum`. Asserted
+    // on the FULL PRECISION literal, because a bound rounded on the way across
+    // is a bound that no longer means "finite".
+    expect(source).toContain('le=1.7976931348623157e308');
+    expect(source).toContain('ge=-1.7976931348623157e308');
+    expect(source).toContain('ge=0.0, le=1.7976931348623157e308');
+  });
+
+  it('keeps the strict scalar types, which are what stop lax coercion', () => {
+    // Without them pydantic reads "12.5" and True as floats, and "2" and True
+    // as ints, where Zod rejects all four.
+    const source = pythonSource();
+
+    expect(source).toContain('RootModel[StrictFloat]');
+    expect(source).toContain('StrictStr');
+    expect(source).toContain('StrictInt');
   });
 
   it('carries every emitted enum member', () => {

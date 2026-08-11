@@ -15,6 +15,19 @@
 #   REGEX FLAGS. z.toJSONSchema() emits a pattern's source and drops its flags
 #   silently, which is why the UUID pattern spells its case classes out.
 #
+# And two things that cross ONLY because they were made to. Removing either
+# reopens a hole that is invisible from the TypeScript side:
+#
+#   FINITENESS. JSON Schema cannot say "finite", and a bare pydantic float
+#   ACCEPTS NaN, +inf and -inf where z.number() rejects all three. The units
+#   therefore carry `minimum`/`maximum` at ±Number.MAX_VALUE, which IS the set
+#   of finite doubles — ±inf fall outside it and NaN fails every comparison.
+#   The bounds read like a no-op on the Zod side. They are not one here.
+#
+#   THE INPUT TYPE. pydantic's lax mode reads "12.5" and True as floats and
+#   "2" and True as ints; Zod rejects all four. `--strict-types` is what closes
+#   that, and an int is still accepted for a float, because Zod accepts one.
+#
 # And one thing that crosses but means something DIFFERENT on this side:
 #
 #   `\d` is ASCII-only in JavaScript and matches any Unicode decimal digit in
@@ -28,7 +41,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictFloat, StrictInt, StrictStr
 
 
 class MetrikaContracts(BaseModel):
@@ -37,8 +50,8 @@ class MetrikaContracts(BaseModel):
     )
 
 
-class CubicMillimeters(RootModel[float]):
-    root: Annotated[float, Field(ge=0.0)]
+class CubicMillimeters(RootModel[StrictFloat]):
+    root: Annotated[StrictFloat, Field(ge=0.0, le=1.7976931348623157e308)]
 
 
 class CurrencyCode(StrEnum):
@@ -79,35 +92,35 @@ class DomainErrorCode(StrEnum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
-class Grams(RootModel[float]):
-    root: Annotated[float, Field(ge=0.0)]
+class Grams(RootModel[StrictFloat]):
+    root: Annotated[StrictFloat, Field(ge=0.0, le=1.7976931348623157e308)]
 
 
-class MaterialId(RootModel[str]):
+class MaterialId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class Millimeters(RootModel[float]):
-    root: float
+class Millimeters(RootModel[StrictFloat]):
+    root: Annotated[StrictFloat, Field(ge=-1.7976931348623157e308, le=1.7976931348623157e308)]
 
 
-class ModelId(RootModel[str]):
+class ModelId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class ModelVersionId(RootModel[str]):
+class ModelVersionId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
@@ -118,85 +131,85 @@ class Money(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    amountMinor: Annotated[str, Field(pattern="^(0|-?[1-9][0-9]*)$")]
+    amountMinor: Annotated[StrictStr, Field(pattern="^(0|-?[1-9][0-9]*)$")]
     currency: CurrencyCode
-    exponent: Annotated[int, Field(ge=0, le=4)]
+    exponent: Annotated[StrictInt, Field(ge=0, le=4)]
 
 
-class OrderId(RootModel[str]):
+class OrderId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class OrganizationId(RootModel[str]):
+class OrganizationId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class PrintJobId(RootModel[str]):
+class PrintJobId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class PrinterProfileVersionId(RootModel[str]):
+class PrinterProfileVersionId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class ProjectId(RootModel[str]):
+class ProjectId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class QuoteId(RootModel[str]):
+class QuoteId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class Seconds(RootModel[float]):
-    root: Annotated[float, Field(ge=0.0)]
+class Seconds(RootModel[StrictFloat]):
+    root: Annotated[StrictFloat, Field(ge=0.0, le=1.7976931348623157e308)]
 
 
-class SliceJobId(RootModel[str]):
+class SliceJobId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
     ]
 
 
-class SquareMillimeters(RootModel[float]):
-    root: Annotated[float, Field(ge=0.0)]
+class SquareMillimeters(RootModel[StrictFloat]):
+    root: Annotated[StrictFloat, Field(ge=0.0, le=1.7976931348623157e308)]
 
 
-class UserId(RootModel[str]):
+class UserId(RootModel[StrictStr]):
     root: Annotated[
-        str,
+        StrictStr,
         Field(
             pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         ),
