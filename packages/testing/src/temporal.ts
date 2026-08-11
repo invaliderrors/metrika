@@ -310,12 +310,19 @@ async function startContainers(): Promise<TemporalHandle> {
     .withNetworkAliases(TEMPORAL_ALIAS)
     .withEnvironment({
       DB: 'postgres12',
-      // FIVE variables, not four. `DB_PORT` defaults to **3306** — MySQL's
-      // port — and omitting it does not fail: auto-setup.sh loops
+      // SIX variables. ADR-0027 says five and says it as a complete count;
+      // ADR-0028 corrects that with `BIND_ON_IP` below, which this harness
+      // needs even more than compose does. Both have to be read together, and
+      // this file is one of the three places the count is written down —
+      // `infra/docker/docker-compose.yml` and ADR-0028's own table are the
+      // others, and nothing mechanically keeps the three in agreement.
+      //
+      // `DB_PORT` is the fifth, and it defaults to **3306** — MySQL's port.
+      // Omitting it does not fail: auto-setup.sh loops
       // `until nc -z "${POSTGRES_SEEDS}" 3306`, so the container sits `Up`
       // logging "Waiting for PostgreSQL" until this harness's startup timeout
       // expires, three minutes later, with a message about a wait strategy
-      // rather than about a port. See ADR-0027.
+      // rather than about a port. See ADR-0027 for that one.
       DB_PORT: '5432',
       POSTGRES_SEEDS: POSTGRES_ALIAS,
       POSTGRES_USER: OWNER,
