@@ -41,6 +41,22 @@ import { CubicMillimeters, Grams, Millimeters, Seconds, SquareMillimeters } from
  *     not here. ADR-0018's guarantee stops at this boundary and cannot be made
  *     to cross it. Same for the branded numeric units.
  *
+ * AND A WHOLE FAMILY THAT VANISHES WITHOUT SAYING SO. `z.toJSONSchema()` throws
+ * on `.transform()`, `z.bigint()` and `z.date()` — those are safe, because a
+ * loud failure is a failure somebody fixes. It does NOT throw on `.refine()`,
+ * `.superRefine()`, `.trim()`, `.toLowerCase()` or `z.coerce.*`, all of which
+ * emit as if the constraint had never been written, and it DEGRADES `.catch(x)`
+ * into a non-validating `default: x`. MEASURED: a `.refine()` added to
+ * `Money.amountMinor` leaves the generated pydantic file BYTE-IDENTICAL, so
+ * `pnpm contracts:emit`, CI's `git diff --exit-code` and every test on both
+ * sides stay green while Python accepts what Zod rejects.
+ *
+ * Nothing downstream of this function can see that, because a dropped check and
+ * an absent check are the same JSON Schema. `test/json-schema.test.ts` therefore
+ * walks the Zod internals of every schema in `EMITTED` against an ALLOWLIST of
+ * node kinds and checks. Adding a construct to that allowlist is the review step
+ * that says it was measured across the boundary.
+ *
  * `\d` IS NOT ALLOWED IN ANY PATTERN THAT REACHES HERE. In JavaScript it is
  * ASCII-only; in Python — both `re` and the Rust engine pydantic uses — it
  * matches any Unicode decimal digit, so the generated model would be strictly
@@ -61,8 +77,18 @@ import { CubicMillimeters, Grams, Millimeters, Seconds, SquareMillimeters } from
  *
  * `brandedUuid` is absent because it is a factory, not a schema; every ID it
  * builds is here.
+ *
+ * EXPORTED for `test/json-schema.test.ts` only, and not through `index.ts` —
+ * see the note there about keeping this module off every consumer's import
+ * path. The test walks these schemas' Zod internals against an allowlist of
+ * constructs that survive `z.toJSONSchema()`, which it can only do on the
+ * schema objects themselves: by the time they are JSON Schema, a `.refine()`
+ * that was silently dropped is indistinguishable from one that was never
+ * written. Reconstructing the table from `index.ts`'s exports instead would
+ * have walked a set this file does not define — the whole point of the
+ * hand-written list above.
  */
-const EMITTED = {
+export const EMITTED = {
   CubicMillimeters,
   CurrencyCode,
   DomainErrorCode,

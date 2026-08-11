@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import * as contracts from '../src/index.js';
-import { contractsJsonSchemaDocument, emitJsonSchemas } from '../src/json-schema.js';
+import { EMITTED, contractsJsonSchemaDocument, emitJsonSchemas } from '../src/json-schema.js';
 
 describe('emitJsonSchemas', () => {
   const schemas = emitJsonSchemas();
@@ -177,6 +177,335 @@ describe('emitted patterns are engine-independent', () => {
       offenders,
       "write `[0-9]` — Python's `\\d` matches any Unicode decimal digit, so the generated model accepts money TypeScript rejects. If this is a Zod built-in whose pattern cannot be edited, see ADR-0027 and add a Python-side rejection test for it.",
     ).toEqual([]);
+  });
+});
+
+/**
+ * A DIVERGENCE FAMILY WITH NO LIVE INSTANCE — which is exactly why it gets a
+ * fixture rather than a paragraph. (Deliberately not given an ordinal: the
+ * numbering in the block above is this file's own, ADR-0027 does not enumerate
+ * these, and a count stated in three places is a count that goes wrong in one.)
+ *
+ * `z.toJSONSchema()` fails LOUDLY on `.transform()`, `z.bigint()` and
+ * `z.date()`: it throws, `pnpm contracts:emit` dies, and somebody fixes it.
+ * Those are safe. It fails SILENTLY on everything below, every one measured on
+ * the pinned `zod@4.4.3` by the test at the end of this block:
+ *
+ *   `.refine()`, `.superRefine()`   emitted as if never written
+ *   `.trim()`, `.toLowerCase()`     emitted as if never written
+ *   `z.coerce.*`                    emits the bare target type
+ *   `.optional()`                   the property leaves `required`, nothing else
+ *   `.catch(x)`                     DEGRADED to a non-validating `default: x`
+ *
+ * PROVEN END TO END on `Money.amountMinor`: with a `.refine()` capping the digit
+ * count, `pnpm contracts:emit` produced a BYTE-IDENTICAL pydantic file, CI's
+ * `git diff --exit-code` exited 0, this package's suite passed 213/213 at 100%
+ * coverage and `apps/workers` passed 165 — while Zod rejected a 40-digit
+ * `amountMinor` and the generated model accepted it.
+ *
+ * Every other guard on this boundary is a POSITIVE assertion: this pattern is
+ * present, this bound arrived, this enum member crossed. Nothing asserted the
+ * absence of a construct that cannot cross, and `EMITTED` reviews *which*
+ * schemas cross, never *what about them* does. No contract triggers this today;
+ * the next one added would look exactly like the four defects this branch has
+ * already found, and this repository's own standard is that a control without a
+ * fixture asserting rejection is an intention.
+ *
+ * AN ALLOWLIST, NOT A DENYLIST, for the reason Task 7 established: a denylist
+ * leaves every construct nobody thought of reachable, and the list of things
+ * `z.toJSONSchema()` drops is a property of a library this repository does not
+ * own and does not control across versions. Adding a node kind or a check here
+ * is the review step that says somebody measured it across the boundary and
+ * wrote the Python-side test proving it landed.
+ *
+ * `.optional()` IS REJECTED OUTRIGHT, and that is a decision rather than an
+ * oversight. MEASURED: `memo: z.string().optional()` generates
+ * `memo: StrictStr | None = None`, which ACCEPTS an explicit `"memo": null` on
+ * the wire where Zod rejects it — optional and nullable are the same thing in
+ * pydantic and are not in Zod. It could instead be admitted with a Python-side
+ * probe pinning that behaviour, and it is not, because NO SCHEMA IN `EMITTED`
+ * USES IT: admitting a construct with no user and no test would be adding the
+ * intention this whole block exists to refuse. The day a contract needs an
+ * optional field, adding it here alongside a `test_generated_contracts.py` case
+ * for the `null` payload is a small, deliberate change — which is the point.
+ */
+describe('every emitted schema is built only from constructs that survive emission', () => {
+  /** A Zod 4 check's internals, narrowed to what this walk reads. */
+  interface CheckInternals {
+    readonly _zod: { readonly def: { readonly check: string; readonly format?: string } };
+  }
+
+  /**
+   * A Zod 4 schema's internals, narrowed to what this walk reads.
+   *
+   * `check`/`format` appear TWICE in this shape, and both positions are
+   * load-bearing. `z.string().regex(…)` puts a `string_format` check in
+   * `def.checks[]`, while a built-in format constructor — `z.email()`,
+   * `z.uuid()`, `z.iso.datetime()` — IS the node: `def.check` is
+   * `'string_format'` and `def.checks` is empty. Reading only the array made
+   * `z.email()` walk through clean, which is how this was found.
+   */
+  interface SchemaInternals {
+    readonly _zod: {
+      readonly def: {
+        readonly type: string;
+        readonly coerce?: boolean;
+        readonly check?: string;
+        readonly format?: string;
+        readonly checks?: readonly CheckInternals[];
+        readonly shape?: Readonly<Record<string, z.ZodType>>;
+      };
+    };
+  }
+
+  function definitionOf(schema: z.ZodType): SchemaInternals['_zod']['def'] {
+    return (schema as unknown as SchemaInternals)._zod.def;
+  }
+
+  /**
+   * `def.type` for every node an emitted schema may be built from. `object` is
+   * the only container: everything else is a leaf, which is what makes the
+   * descent below complete.
+   */
+  const ALLOWED_NODE_KINDS = new Set(['object', 'string', 'number', 'enum']);
+
+  /**
+   * Every constraint an emitted schema may carry. `number_format` is `.int()`,
+   * `greater_than`/`less_than` are `.min()`/`.max()`/`.nonnegative()`, and
+   * `string_format` is `.regex()` — see below.
+   *
+   * Constraints that DO cross are absent too when nothing uses them —
+   * `min_length`, `max_length`, `multipleOf`. That is the allowlist working as
+   * intended rather than an omission: the list is what has been measured across
+   * the boundary AND pinned by a `test_generated_contracts.py` case, not what
+   * could plausibly work. Adding one is two small deliberate edits.
+   */
+  const ALLOWED_CHECKS = new Set(['string_format', 'number_format', 'greater_than', 'less_than']);
+
+  /**
+   * `regex` and nothing else, and the restriction is measured rather than
+   * cautious. Zod's built-in string formats are NOT uniform: `z.email()` emits a
+   * `pattern` beside its `format`, while `z.jwt()` and `z.url()` emit a bare
+   * `format` with NO pattern at all — so the constraint reaches a generator that
+   * understands the format keyword and vanishes for one that does not. That is
+   * the same silent-drop shape as the rest of this block. The built-in formats
+   * also carry `\d` in their patterns, which is the divergence the block above
+   * reports rather than fails on; a new one arriving should be a decision here,
+   * not a line in a report nobody reads.
+   */
+  const ALLOWED_STRING_FORMATS = new Set(['regex']);
+
+  const NODE_KIND_NAMES: Readonly<Record<string, string>> = {
+    optional: '`.optional()`',
+    nullable: '`.nullable()`',
+    default: '`.default()`',
+    catch: '`.catch()`',
+    pipe: '`.pipe()` / `.transform()`',
+  };
+
+  const CHECK_NAMES: Readonly<Record<string, string>> = {
+    custom: '`.refine()` / `.superRefine()`',
+    overwrite: '`.trim()` / `.toLowerCase()` / another value mutation',
+  };
+
+  /**
+   * Every construct in `schema` that cannot cross, and every node it visited on
+   * the way. The visited list is what keeps an empty offender list from being
+   * vacuous — a walk that reaches nothing reports nothing.
+   */
+  function walk(
+    schema: z.ZodType,
+    at: string,
+  ): { readonly offenders: readonly string[]; readonly visited: readonly string[] } {
+    const definition = definitionOf(schema);
+    const offenders: string[] = [];
+    const visited: string[] = [at];
+
+    function offenceIn(kind: string, format: string | undefined): string | undefined {
+      if (!ALLOWED_CHECKS.has(kind)) {
+        return `${at}: ${CHECK_NAMES[kind] ?? `a \`${kind}\` check`}`;
+      }
+      if (kind === 'string_format' && !ALLOWED_STRING_FORMATS.has(format ?? '')) {
+        return `${at}: the \`${format ?? 'unnamed'}\` string format`;
+      }
+      return undefined;
+    }
+
+    if (!ALLOWED_NODE_KINDS.has(definition.type)) {
+      offenders.push(
+        `${at}: ${NODE_KIND_NAMES[definition.type] ?? `a \`${definition.type}\` node`}`,
+      );
+    }
+    if (definition.coerce === true) {
+      offenders.push(`${at}: \`z.coerce.${definition.type}()\``);
+    }
+    // The node's own check, which is where a built-in format constructor lives.
+    if (definition.check !== undefined) {
+      const offence = offenceIn(definition.check, definition.format);
+      if (offence !== undefined) offenders.push(offence);
+    }
+    for (const check of definition.checks ?? []) {
+      const offence = offenceIn(check._zod.def.check, check._zod.def.format);
+      if (offence !== undefined) offenders.push(offence);
+    }
+
+    // `object` is the only container on the allowlist, so descending through
+    // its shape reaches every node a PASSING schema can have. A container that
+    // is not on the list has already been reported by the time we are here, and
+    // its children are unreachable from a schema this test lets through.
+    for (const [key, child] of Object.entries(definition.shape ?? {})) {
+      const inner = walk(child, `${at}.${key}`);
+      offenders.push(...inner.offenders);
+      visited.push(...inner.visited);
+    }
+
+    return { offenders, visited };
+  }
+
+  function walkEmitted(): { readonly offenders: readonly string[]; readonly visited: string[] } {
+    const offenders: string[] = [];
+    const visited: string[] = [];
+    for (const [name, schema] of Object.entries(EMITTED)) {
+      const result = walk(schema, name);
+      offenders.push(...result.offenders);
+      visited.push(...result.visited);
+    }
+    return { offenders, visited };
+  }
+
+  it('reaches every emitted schema and descends into their properties', () => {
+    const { visited } = walkEmitted();
+
+    expect(visited).toContain('Money');
+    expect(visited).toContain('Money.amountMinor');
+    expect(visited).toContain('Money.currency');
+    expect(visited).toContain('Money.exponent');
+    // Every schema in the table, plus `Money`'s three properties — the only
+    // nested nodes in the package today. An exact count rather than a lower
+    // bound, so that a schema growing a nested object nobody walked shows up
+    // here rather than passing by not being looked at.
+    expect(visited.length).toBe(Object.keys(EMITTED).length + 3);
+  });
+
+  it('finds nothing unsurvivable in the tree as it stands', () => {
+    expect(
+      walkEmitted().offenders,
+      "this construct is not on the allowlist of things measured to survive `z.toJSONSchema()`. Most of what is missing is dropped in SILENCE — the generated pydantic model then accepts what Zod rejects, and `pnpm contracts:emit`, CI's `git diff --exit-code` and every test on both sides stay green. Rewrite the schema; or, if it does cross, measure it, add the `test_generated_contracts.py` case proving it landed on the Python side, and add it to the allowlist above in the same commit.",
+    ).toEqual([]);
+  });
+
+  // The fixtures. Each one is a construct that emits a schema indistinguishable
+  // from a schema that never carried it, wrapped in an object so the report has
+  // a property path to name — which is the half a failing developer needs.
+  const REJECTED: [string, z.ZodType, string][] = [
+    [
+      '.refine()',
+      z.object({ amountMinor: z.string().refine((value) => value.length <= 30) }),
+      'Probe.amountMinor: `.refine()` / `.superRefine()`',
+    ],
+    [
+      '.superRefine()',
+      z.object({ amountMinor: z.string().superRefine(() => undefined) }),
+      'Probe.amountMinor: `.refine()` / `.superRefine()`',
+    ],
+    [
+      '.trim()',
+      z.object({ currency: z.string().trim() }),
+      'Probe.currency: `.trim()` / `.toLowerCase()` / another value mutation',
+    ],
+    [
+      '.toLowerCase()',
+      z.object({ currency: z.string().toLowerCase() }),
+      'Probe.currency: `.trim()` / `.toLowerCase()` / another value mutation',
+    ],
+    ['.optional()', z.object({ memo: z.string().optional() }), 'Probe.memo: `.optional()`'],
+    ['.nullable()', z.object({ memo: z.string().nullable() }), 'Probe.memo: `.nullable()`'],
+    ['.default()', z.object({ memo: z.string().default('') }), 'Probe.memo: `.default()`'],
+    ['.catch()', z.object({ memo: z.string().catch('') }), 'Probe.memo: `.catch()`'],
+    [
+      'z.coerce.string()',
+      z.object({ amountMinor: z.coerce.string() }),
+      'Probe.amountMinor: `z.coerce.string()`',
+    ],
+    [
+      'z.coerce.number()',
+      z.object({ exponent: z.coerce.number() }),
+      'Probe.exponent: `z.coerce.number()`',
+    ],
+    // A built-in format IS the node — `def.check`, not `def.checks[]` — so this
+    // pair is the fixture for the position the first draft of the walk missed.
+    [
+      'a built-in string format',
+      z.object({ memo: z.email() }),
+      'Probe.memo: the `email` string format',
+    ],
+    [
+      "Zod's own uuid, which brand.ts deliberately does not use",
+      z.object({ memo: z.uuid() }),
+      'Probe.memo: the `uuid` string format',
+    ],
+    // Crosses perfectly well, and is still reported: nothing uses it and no
+    // Python-side test pins it. Fails closed, on purpose.
+    [
+      'a length bound nothing has measured yet',
+      z.object({ memo: z.string().min(1) }),
+      'Probe.memo: a `min_length` check',
+    ],
+    [
+      'an unlisted node kind',
+      z.object({ memo: z.array(z.string()) }),
+      'Probe.memo: a `array` node',
+    ],
+  ];
+
+  describe.each(REJECTED)('rejects %s', (_construct, schema, expected) => {
+    it('names the construct and the property carrying it', () => {
+      expect(walk(schema, 'Probe').offenders).toEqual([expected]);
+    });
+  });
+
+  it('accepts a schema built only from what `Money` and the IDs already use', () => {
+    // The positive control. Without it, a walk that reported everything would
+    // pass every test above and fail the one that matters on the first change.
+    const clean = z.object({
+      amountMinor: z.string().regex(/^[0-9]+$/),
+      currency: z.enum(['COP', 'USD']),
+      exponent: z.number().int().min(0).max(4),
+      length: z.number().nonnegative().max(Number.MAX_VALUE),
+    });
+
+    expect(walk(clean, 'Probe').offenders).toEqual([]);
+  });
+
+  it('measures that the emitter really is blind to all of them', () => {
+    // The justification for this entire block, asserted rather than asserted-in-
+    // prose. If a future Zod starts representing any of these, this test goes red
+    // and the corresponding entry can be reconsidered on evidence.
+    const bare = JSON.stringify(z.toJSONSchema(z.string()));
+
+    expect(JSON.stringify(z.toJSONSchema(z.string().refine(() => false)))).toBe(bare);
+    expect(JSON.stringify(z.toJSONSchema(z.string().superRefine(() => undefined)))).toBe(bare);
+    expect(JSON.stringify(z.toJSONSchema(z.string().trim()))).toBe(bare);
+    expect(JSON.stringify(z.toJSONSchema(z.string().toLowerCase()))).toBe(bare);
+    expect(JSON.stringify(z.toJSONSchema(z.coerce.string()))).toBe(bare);
+    expect(JSON.stringify(z.toJSONSchema(z.string().optional()))).toBe(bare);
+
+    // Worse than dropped: `.catch()` becomes a `default`, which is documentation
+    // rather than validation — the generated model would carry a fallback value
+    // and validate nothing.
+    expect(z.toJSONSchema(z.string().catch('fallback'))).toMatchObject({
+      type: 'string',
+      default: 'fallback',
+    });
+  });
+
+  it('does not duplicate what `z.toJSONSchema()` already fails loudly on', () => {
+    // These three throw, so `pnpm contracts:emit` dies and somebody fixes it.
+    // They are not this test's job, and pinning that is what stops the allowlist
+    // being widened on the theory that Zod catches everything.
+    expect(() => z.toJSONSchema(z.string().transform((value) => value))).toThrow();
+    expect(() => z.toJSONSchema(z.bigint())).toThrow();
+    expect(() => z.toJSONSchema(z.date())).toThrow();
   });
 });
 
