@@ -25,9 +25,13 @@ harnesses must not do is DIVERGE, so:
 - `BIND_ON_IP` and `DB_PORT` are set for the reasons
   [ADR-0028](../../../../../docs/adr/0028-temporal-bind-on-ip.md) and ADR-0027
   measured, and the comments below say which failure each prevents. They are
-  not copied hopefully from the harness; without `BIND_ON_IP` this suite fails
-  in exactly the way ADR-0028 describes, because testcontainers-python attaches
-  an aliased container to the default bridge as well as to ours.
+  not copied hopefully from the harness; this fixture was run WITHOUT
+  `BIND_ON_IP` to check. It fails — the wait strategy times out and the
+  container's own log shows the server serving normally on `172.19.0.3:7234`,
+  one interface that is not loopback and therefore not the one the readiness
+  probe can reach. (The address there is the custom network's rather than the
+  default bridge's, which is where the Node harness's version of this landed;
+  the interface it picks does not matter, only that it picks exactly one.)
 
 MARKED `integration` per test rather than per module, unlike `test_storage.py`:
 the image-parity assertion needs no daemon, and a drift check that only runs
@@ -126,6 +130,16 @@ def temporal_address() -> Iterator[str]:
     construction: the network cannot be removed while a container is still
     attached to it, and a `finally` that gets that order wrong leaves a network
     behind on every failing run.
+
+    **Each `stop` is registered BEFORE its `start`, which is the opposite of the
+    obvious order and is the version that cleans up.** MEASURED, by deleting
+    `BIND_ON_IP` to check that this fixture really needs it: the wait strategy
+    times out INSIDE `start()`, so a callback registered after it never exists —
+    leaving a running container attached to a network that then cannot be
+    removed (`403 … has active endpoints`), on the failure path, which is the
+    one path that matters for cleanup. `DockerContainer.stop` is a no-op when
+    `self._container` is `None`, so registering it early is safe when the
+    container was never created at all.
     """
     with ExitStack() as stack:
         network = Network()
@@ -141,8 +155,8 @@ def temporal_address() -> Iterator[str]:
             .with_env("POSTGRES_DB", _BOOTSTRAP_DATABASE)
             .with_exposed_ports(_POSTGRES_PORT)
         )
-        postgres.start()
         stack.callback(postgres.stop, force=True, delete_volume=True)
+        postgres.start()
 
         temporal = (
             DockerContainer(TEMPORAL_IMAGE)
@@ -198,8 +212,8 @@ def temporal_address() -> Iterator[str]:
                 ).with_startup_timeout(_STARTUP_TIMEOUT_S)
             )
         )
-        temporal.start()
         stack.callback(temporal.stop, force=True, delete_volume=True)
+        temporal.start()
 
         host = temporal.get_container_host_ip()
         port = temporal.get_exposed_port(_FRONTEND_PORT)
