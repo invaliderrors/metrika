@@ -1010,9 +1010,32 @@ git commit -m "feat(eslint-config): add the workflow determinism profile"
 
 Note the two `NEXT_PUBLIC_*` keys live in a **workflow-level `env:` block** so every job inherits them — a job that sets what it needs locally is the trap the last plan walked into. If your job needs Python-specific configuration, follow the same placement rule.
 
-- [ ] **Step 2: Add the `workers` job**
+- [ ] **Step 2: Do NOT add a `workers` job — verify that it would be redundant, then say so**
 
-Model it on the existing jobs. It needs `uv` — install it the way ADR-0027 recorded — then `ruff check`, `ruff format --check`, `mypy --strict`, and `pytest`. Anything needing Temporal or MinIO belongs in the `integration` job, not here.
+This step inverted during execution and the reasoning is worth keeping.
+
+Tasks 2–5 each wired the CI they needed as they went, so by the time this task
+runs, `apps/workers` is **already fully covered**. MEASURED with
+`turbo run <task> --dry=json`:
+
+```
+lint          workers: uv run --locked --all-packages ruff check .
+typecheck     workers: uv run --locked --all-packages mypy .
+test:unit     workers: uv run --locked --all-packages pytest
+format:check  workers: uv run --locked --all-packages ruff format --check .
+```
+
+All four are steps of the existing `verify` job, which already installs `uv`.
+`integration` installs it for the MinIO and Temporal suites, and `contracts`
+installs it for `datamodel-codegen`.
+
+A separate `workers` job would re-run every one of those on a second runner —
+slower CI for no additional coverage, and a second place to forget a pin.
+
+So: re-run the measurement above to confirm it still holds, and if it does,
+add nothing. Record in `docs/INFRASTRUCTURE.md` §4 that Python is covered by
+`verify` rather than by a job of its own, so the next person does not read the
+absence of a `workers` job as an omission.
 
 - [ ] **Step 3: Prove the job would fail**
 
