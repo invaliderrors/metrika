@@ -126,12 +126,27 @@ VALID_PAYLOADS: dict[str, object] = {
     "PrinterProfileVersionId": VALID_UUID,
 }
 
-# A value that must be REJECTED by every pattern-carrying model, built from the
-# valid one by swapping its ASCII digits for Arabic-Indic ones. Zod rejects each
-# of these; a `\d` anywhere in the emitted pattern would make Python accept it.
-NON_ASCII_DIGIT_PROBES: dict[str, str] = {
-    "Money": ARABIC_INDIC_MONEY,
+# A payload that must be REJECTED by every pattern-carrying model, and its ASCII
+# TWIN, which must be accepted. The pair is the whole design: the probe differs
+# from the twin only in which digits it spells, so a rejection here can only be
+# about the digits.
+#
+# CAUGHT BY A MUTATION, and recorded because it is the shape this repository
+# keeps meeting. The Money probe was first written as the bare string
+# "3\u0665\u0660". `Money` is an OBJECT model, so `model_validate` rejected it as
+# `model_attributes_type` -- the right exception for the wrong reason -- and this
+# test passed under a mutation that put `\d` back into the pattern. Measured
+# separately on the pinned pydantic 2.13.4: with `\d`, the default rust-regex
+# engine AND `python-re` AND `re.match` all ACCEPT "3\u0665\u0660", and `int()`
+# reads it as 350. The twin is what makes a wrong-shaped probe impossible to miss.
+NON_ASCII_DIGIT_PROBES: dict[str, object] = {
+    "Money": {"amountMinor": ARABIC_INDIC_MONEY, "currency": "COP", "exponent": 0},
     **{name: _to_arabic_indic(VALID_UUID) for name in VALID_PAYLOADS if name.endswith("Id")},
+}
+
+ASCII_TWINS: dict[str, object] = {
+    "Money": {"amountMinor": "350", "currency": "COP", "exponent": 0},
+    **{name: VALID_UUID for name in VALID_PAYLOADS if name.endswith("Id")},
 }
 
 
@@ -293,9 +308,18 @@ def test_no_generated_model_accepts_non_ascii_digits(name: str) -> None:
     pattern is spelling a digit class in a way that means something different in
     the two engines, and the Python side has become strictly more permissive than
     the TypeScript side that defines it.
+
+    The ASCII twin is validated FIRST, and it is not decoration: without it a
+    probe of the wrong SHAPE is rejected for a reason that has nothing to do with
+    digits, and this test passes while proving nothing. That is not hypothetical
+    -- it is what the first version of this file did, and a mutation found it.
     """
+    model = _generated_models()[name]
+
+    model.model_validate(ASCII_TWINS[name])
+
     with pytest.raises(ValidationError):
-        _generated_models()[name].model_validate(NON_ASCII_DIGIT_PROBES[name])
+        model.model_validate(NON_ASCII_DIGIT_PROBES[name])
 
 
 def test_no_emitted_pattern_spells_a_digit_class_as_backslash_d() -> None:
