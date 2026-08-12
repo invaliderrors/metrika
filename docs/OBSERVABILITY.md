@@ -144,7 +144,8 @@ Structured JSON everywhere. Pino (Node), structlog (Python). Never `console.log`
 names_, not of Pino paths: `pnpm contracts:emit` carries it into
 `metrika_core.contracts` as a `StrEnum`, so the Python side reads the same list
 as generated code and CI fails on a diff. `isRedactedKey` is the decision each
-sink makes about a key it has reached, and all four call it.
+sink makes about a key it has reached, and all four call it — as does the span
+processor below, which is a fifth caller and not a fifth sink.
 
 What differs per sink is TRAVERSAL, and only traversal — Pino needs a path per
 name (`password` and `*.password` are two rules), structlog walks a flat event
@@ -166,6 +167,50 @@ It does now.
 | Sentry, `apps/web` | `packages/contracts/src/sentry-event.ts`, both `Sentry.init` calls | yes       | the same 956 rows through the walk, `packages/contracts/test/sentry-event.test.ts` |
 | Sentry, `apps/api` | the same module, `tracing.ts`'s `beforeSend: redactSentryEvent`    | yes       | `apps/api/test/sentry-redaction.test.ts`, against a real DSN                       |
 
+#### A fifth guarded path, which is not a fifth sink
+
+Data leaves this process by one more door than the four above, and it is not a
+log or error sink: **OpenTelemetry spans**. A span attribute set is a flat
+string-keyed map — OpenTelemetry does not permit a nested one — so **the walk
+does not run on spans and there is nothing here for it to walk.** What is shared
+is the KEY DECISION, `isRedactedKey`, and nothing else. One `SpanProcessor` sits
+upstream of both destinations rather than a hook at each seam, because every
+processor is handed the same `Span` instance:
+
+| Sink                                                                         | State                                                                                                                                                                                                                                                                                                                                                                                                              | What is not covered                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **OpenTelemetry spans** (`apps/api` → OTLP endpoint and Sentry transactions) | **Guarded** by `RedactingSpanProcessor`, one hook upstream of both destinations: the shared `isRedactedKey` over attribute keys, plus a positional close on `url.full` / `url.query` / `http.url` / `http.target` and on the `sentry.url` trace-state entry. Graded at the export boundary by a real outbound fetch to a signed URL, observed in the bytes a real OTLP receiver and a real Sentry ingest received. | Span **names** and **events** are not walked — no instrumentation here puts a URL in either, and neither is asserted. The key half has no live fixture, because nothing sets `headersToSpanAttributes` today; it is graded by unit test. Query strings are removed wholesale, so benign outbound parameters are lost with the credentials. |
+
+**This guard is `apps/api`'s, and `apps/workers` exports spans too.** Nothing
+equivalent runs there, and nothing needs to yet: that package pins
+`opentelemetry-api`, `-sdk` and the OTLP exporter and **no auto-instrumentation
+at all**, so its spans come from the Temporal interceptor and carry no URL. The
+asymmetry is worth knowing because of how the `apps/api` leak arrived — a
+transitive instrumentation setting `url.full` on every outbound call, which no
+log sink could see. Adding `opentelemetry-instrumentation-botocore` or anything
+like it to the worker, where `metrika_core.storage` already talks to S3 with
+presigned URLs, reopens exactly that class on a pipeline with no processor in
+front of it.
+
+`url.full` is not a spelling of `url` and `isRedactedKey` correctly returns
+`false` for it, so the URL close is POSITIONAL — the third in this repository
+after `frames[].filename` and `exception.values[].value`, and the easy one: a
+span attribute map is written entirely by instrumentations this bootstrap chose,
+so unlike a Sentry event there is no customer data that could forge the position
+and no marker is needed to gate it.
+
+**A second copy of the credential lived in the trace state, and it is the
+clearest example in this plan of a probe blind to what sat beside it.** With
+every parsed attribute clean, the raw OTLP body still carried
+`"traceState":"sentry.url=…X-Amz-Signature=…"`, written by
+`@sentry/opentelemetry` and serialised beside the attributes. An attribute-shaped
+probe cannot see that; a probe that greps the bytes that actually left can, which
+is why the fixture reads the raw export body rather than the parsed span. The
+entry is **unset rather than censored**: `REDACTION_CENSOR`'s brackets are
+outside the `tracestate` character set, so writing the marker there would emit a
+header a conformant receiver may reject, and the value duplicates `url.full`,
+which survives in redacted form.
+
 **One traversal, in one module, for both Sentry clients.** The walk was
 `apps/web`'s and now lives in `packages/contracts/src/sentry-event.ts` (558
 lines), so wiring the second client added an import rather than a second copy —
@@ -178,7 +223,7 @@ Two things that walk does which no key-name list could:
   message, and the walk redacts by key NAME, so it went straight past it.
   Measured leaving `apps/api`'s own client with `extra`, `tags` and `contexts`
   already correctly censored. Adding `value` to the shared list was rejected as
-  far too generic a name for a list four sinks read. The decisive argument is
+  far too generic a name for a list five call sites read. The decisive argument is
   consistency inside one process: the Pino sink already censors `err.message` and
   keeps the frames, so sending the same string to Sentry would let the secret
   leave by the other door. The cost is real and is not hidden — every Sentry

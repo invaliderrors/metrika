@@ -37,6 +37,13 @@ open there is a thrown **plain object**, whose properties reach
 `event.extra.__serialized__` filtered by key name only, where Pino's
 `serialiseError` reduces the same throw to four fields.
 
+**A fifth guarded path is not a sink:** OpenTelemetry spans leave by their own
+door, and `RedactingSpanProcessor` guards it — one processor upstream of both the
+OTLP exporter and Sentry transactions. It reuses `isRedactedKey` and adds **no**
+traversal: a span attribute map is flat, so only the key decision is shared. Any
+new export path is the thing to check next — the leak it closed was an outbound
+`fetch` URL that all four log sinks were correctly silent about.
+
 Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
 which phase and which sub-plan the work belongs to.
 
