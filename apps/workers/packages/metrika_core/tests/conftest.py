@@ -1,9 +1,17 @@
 """Fixtures shared by `metrika_core`'s suite.
 
-Only one, and it exists because `WorkerSettings` reads a whole namespace rather
-than the six names it declares: a developer with `METRIKA_WORKER_LOG_LEVEL`
-exported would otherwise see tests fail for a reason that has nothing to do
-with the code under test.
+One is defined here, and it exists because `WorkerSettings` reads a whole
+namespace rather than the names it declares: a developer with
+`METRIKA_WORKER_LOG_LEVEL` exported would otherwise see tests fail for a reason
+that has nothing to do with the code under test.
+
+The other two are IMPORTED, from `_temporal_server.py`. pytest shares fixtures
+only through a `conftest.py`, and it collects them from this module's namespace
+whether they were defined here or imported into it — so re-exporting is how
+`test_temporal.py` and `test_telemetry.py` come to share ONE `auto-setup`
+container for the session instead of booting one each. They are not defined
+inline because the container configuration is sixty lines of measured detail
+with a docstring per decision, and this file would then be that file.
 """
 
 from __future__ import annotations
@@ -11,6 +19,8 @@ from __future__ import annotations
 import os
 
 import pytest
+
+from _temporal_server import settings, temporal_address  # noqa: F401  # isort: skip
 
 # `METRIKA_WORKER_`, deliberately narrower than the `METRIKA_` this file used to
 # clear. Two reasons, and the second is the interesting one.
