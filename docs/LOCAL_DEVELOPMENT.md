@@ -40,7 +40,7 @@ whole namespace, so an unrecognised variable in it is a startup error — right
 for a typo, hostile over a prefix somebody else writes to. `METRIKA_` is shared:
 `packages/testing` publishes `METRIKA_TEST_DATABASE_URL`, and measured under the
 wider prefix, a shell that had run the Node integration harness could not
-construct worker settings at all. The six variables are documented in
+construct worker settings at all. The seven variables are documented in
 `.env.example`; none of them is a database URL, and none ever will be
 (ADR-0007).
 
@@ -288,6 +288,8 @@ METRIKA_WORKER_TEMPORAL_TASK_QUEUE=geometry-small METRIKA_WORKER_S3_BUCKET=metri
 ```
 
 Both processes refuse to start without those two variables rather than defaulting — a worker polling a queue nobody publishes to looks exactly like an idle system. `Ctrl-C` (or SIGTERM) shuts one down gracefully; ignoring SIGTERM would mean every deploy killing a worker mid-poll, so `metrika_core.temporal.run_worker` handles it.
+
+**Telemetry needs no local collector.** `METRIKA_WORKER_OTLP_ENDPOINT` is unset by default and no exporter is constructed without it, so a worker run this way emits spans nowhere and still writes `requestId`, `traceId` and `spanId` onto every log line inside an activity — those come from the live OpenTelemetry context, not from an exporter. Set the variable only when there is something listening on `/v1/traces`.
 
 _(Plan 0B-3, intended and not yet done)_ — `debugpy` in dev mode, with the corresponding attach configuration committed.
 

@@ -34,6 +34,7 @@ from temporalio.common import RetryPolicy
 # exists to avoid; a name is also what a TypeScript workflow in `apps/api` will
 # have, so this is the shape that matters.
 PROBE_ACTIVITY = "metrika_core.tests.probe"
+TELEMETRY_ACTIVITY = "metrika_core.tests.telemetry_probe"
 
 
 @workflow.defn(name="metrika_core.tests.ProbeWorkflow")
@@ -57,3 +58,32 @@ class ProbeWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
         return result
+
+
+@workflow.defn(name="metrika_core.tests.TelemetryProbeWorkflow")
+class TelemetryProbeWorkflow:
+    """The middle leg of the correlation chain `test_telemetry.py` asserts.
+
+    Separate from `ProbeWorkflow` rather than parameterised onto it, for the
+    same reason the two suites use two task queues: a workflow shared between a
+    "which queue did this land on" test and a "did the trace context survive"
+    test can pass one while breaking the other, and the failure would name the
+    wrong thing.
+
+    It exists at all because Temporal has no API for invoking an activity
+    directly, and because the trace context has to cross TWO hops — client to
+    workflow, workflow to activity — to be worth asserting. A test that started
+    the activity's span itself would prove nothing about either.
+    """
+
+    @workflow.run
+    async def run(self, activity_task_queue: str, signed_url: str) -> dict[str, str]:
+        observed: dict[str, str] = await workflow.execute_activity(
+            TELEMETRY_ACTIVITY,
+            args=[signed_url],
+            task_queue=activity_task_queue,
+            schedule_to_start_timeout=timedelta(seconds=30),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+        return observed
