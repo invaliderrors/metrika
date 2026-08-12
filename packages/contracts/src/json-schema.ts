@@ -14,6 +14,7 @@ import {
   UserId,
 } from './ids.js';
 import { CurrencyCode, Money } from './money.js';
+import { RedactedFieldName } from './redaction.js';
 import { CubicMillimeters, Grams, Millimeters, Seconds, SquareMillimeters } from './units.js';
 
 /**
@@ -109,6 +110,7 @@ export const EMITTED = {
   PrinterProfileVersionId,
   ProjectId,
   QuoteId,
+  RedactedFieldName,
   Seconds,
   SliceJobId,
   SquareMillimeters,
