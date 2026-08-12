@@ -1,10 +1,19 @@
 # ADR-0032 — Sentry's Fastify collision is swallowed, so ADR-0029 obligation 2's severity is wrong on `@sentry/node`
 
-**Status:** Accepted · **Date:** 2026-08-12 · **Corrects** the severity claim in
-obligation 2 of [ADR-0029](./0029-observability-stack.md). The **decision** that
-obligation makes — `defaultIntegrations: false` plus an explicit allowlist, in
-the allowlist direction — is unchanged and is what `apps/api` ships. Only the
-failure mode it names moves, from loud to silent.
+**Status:** Superseded by [ADR-0033](./0033-sentry-fastify-collision-measured-with-sentry-on.md) · **Date:** 2026-08-12
+
+> **This document is wrong, and the body below is kept as written.** Every
+> measurement in it was taken with `SENTRY_DSN` empty, and `@sentry/node` builds
+> no integrations at all for a client with no DSN — so the mutation it rests on
+> removed an allowlist from a process that had nothing to allow. With a DSN
+> configured, the application exits 1 exactly as ADR-0029 obligation 2 says.
+> ADR-0033 has the 2×2 and the reason this is kept rather than deleted.
+
+· **Corrects** the severity claim in obligation 2 of
+[ADR-0029](./0029-observability-stack.md). The **decision** that obligation
+makes — `defaultIntegrations: false` plus an explicit allowlist, in the allowlist
+direction — is unchanged and is what `apps/api` ships. Only the failure mode it
+names moves, from loud to silent.
 
 ## Context
 
