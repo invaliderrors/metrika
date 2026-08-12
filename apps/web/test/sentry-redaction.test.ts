@@ -318,14 +318,30 @@ describe('the depth cap', () => {
     expect(JSON.stringify(cleaned(event))).not.toContain('tok_1');
   });
 
-  it('does not censor anything that fits inside the cap', () => {
-    const event = { request: { data: nest(3, { password: 'hunter2', modelId: 'mv_1' }) } };
-    const walked = cleaned(event);
+  /**
+   * THE BOUNDARY, in both directions, because the cost of the cap is DESTRUCTION
+   * and not merely a missed redaction: past it, a benign sibling of the secret
+   * goes too. Ten wrappers put the leaf object at depth 12 and it survives
+   * whole; eleven put it at 13 and the entire subtree becomes the censor,
+   * `modelId` included.
+   *
+   * Pinning both sides means raising `MAX_DEPTH` is a deliberate edit with a red
+   * test in front of it, rather than a number somebody nudges.
+   */
+  it('keeps a benign sibling at the deepest surviving level', () => {
+    const event = { request: { data: nest(10, { password: 'hunter2', modelId: 'mv_1' }) } };
+    const walked = JSON.stringify(cleaned(event));
 
-    // `modelId` survives at that depth, so the case above is about the CAP and
-    // not about the walker having stopped somewhere shallower.
-    expect(JSON.stringify(walked)).not.toContain('hunter2');
-    expect(JSON.stringify(walked)).toContain('mv_1');
+    expect(walked).not.toContain('hunter2');
+    expect(walked).toContain('mv_1');
+  });
+
+  it('destroys a benign sibling one level past it, which is the cost of the number', () => {
+    const event = { request: { data: nest(11, { password: 'hunter2', modelId: 'mv_1' }) } };
+    const walked = JSON.stringify(cleaned(event));
+
+    expect(walked).not.toContain('hunter2');
+    expect(walked).not.toContain('mv_1');
   });
 
   /**
@@ -420,6 +436,197 @@ describe('unwritable properties', () => {
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
+ * ALIASES OF AN UNCLEANABLE NODE
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * The cases the block above CANNOT catch, and the regression that got through
+ * because of it: every fixture up there holds a single reference, so a walk that
+ * censored the first encounter and returned every later one verbatim passed all
+ * of them.
+ *
+ * Measured at the transport before the fix, with
+ * `const F = Object.freeze({ password: 'hunter2' })`: four aliases of `F`
+ * produced one `[REDACTED]` and three verbatim copies. The premise was that
+ * entering a node implies cleaning it — true for the depth path once it censors,
+ * false for every path where the node cannot be written to at all.
+ *
+ * These live in `request` and in `frames[].vars` deliberately. `extra` and
+ * `contexts` cannot reproduce it: Sentry's `normalize` REBUILDS them before
+ * `beforeSend`, so what arrives there is a fresh unfrozen tree with the aliasing
+ * already gone — measured, an `extra` alias is `{aliased: false, frozen: false}`
+ * inside this hook while a `request` alias is `{aliased: true, frozen: true}`.
+ * A fixture written in `extra` would be green for a reason that has nothing to
+ * do with this code.
+ *
+ * React freezes props in development, so a frozen object reaching a stack
+ * frame's locals is ordinary rather than adversarial.
+ */
+describe('aliases of a node that cannot be cleaned', () => {
+  function frozenSecret(): Record<string, unknown> {
+    return Object.freeze({ password: 'hunter2', modelId: 'mv_1' });
+  }
+
+  function getterSecret(): Record<string, unknown> {
+    const node: Record<string, unknown> = { modelId: 'mv_1' };
+    Object.defineProperty(node, 'password', { get: () => 'hunter2', enumerable: true });
+    return node;
+  }
+
+  /**
+   * Uncleanable through the READ rather than the write, which is a different
+   * code path — and `boom` is defined FIRST on purpose. `Object.keys` is
+   * insertion-ordered, so the throw happens before the walk reaches `password`;
+   * with the key order reversed the secret would already have been censored and
+   * the case would pass without exercising anything.
+   */
+  function throwingGetterSecret(): Record<string, unknown> {
+    const node: Record<string, unknown> = {};
+    Object.defineProperty(node, 'boom', {
+      get: () => {
+        throw new Error('getter exploded');
+      },
+      enumerable: true,
+    });
+    node['password'] = 'hunter2';
+    node['modelId'] = 'mv_1';
+    return node;
+  }
+
+  const shapes: readonly [string, () => Record<string, unknown>][] = [
+    ['a frozen object', frozenSecret],
+    ['a setter-less getter', getterSecret],
+    ['a getter that throws', throwingGetterSecret],
+  ];
+
+  describe.each(shapes)('%s', (_label, make) => {
+    it('is censored at a sibling alias, whichever comes first', () => {
+      const node = make();
+
+      expect(JSON.stringify(cleaned({ request: { x: node, y: { z: node } } }))).not.toContain(
+        'hunter2',
+      );
+      expect(JSON.stringify(cleaned({ request: { a: { z: make() }, b: make() } }))).not.toContain(
+        'hunter2',
+      );
+    });
+
+    it('is censored at a nested alias in the reversed order', () => {
+      const node = make();
+
+      expect(JSON.stringify(cleaned({ request: { a: { z: node }, b: node } }))).not.toContain(
+        'hunter2',
+      );
+    });
+
+    it('is censored across separate stack frames', () => {
+      const node = make();
+      const event = {
+        exception: {
+          values: [
+            {
+              stacktrace: {
+                frames: [{ vars: { a: node } }, { vars: { b: node } }],
+              },
+            },
+          ],
+        },
+      };
+
+      expect(JSON.stringify(cleaned(event))).not.toContain('hunter2');
+    });
+
+    /**
+     * The count, not just the absence: the measured failure produced ONE
+     * `[REDACTED]` and three verbatim copies, so an assertion that only greps
+     * for the secret would have caught it — but an assertion that counts says
+     * what the fix actually guarantees.
+     */
+    it('censors every alias, not only the first', () => {
+      const node = make();
+      const walked = cleaned({ request: { w: node, x: node, y: node, z: node } });
+      const request = walked.request as Record<string, unknown>;
+
+      expect(Object.values(request)).toStrictEqual([
+        REDACTION_CENSOR,
+        REDACTION_CENSOR,
+        REDACTION_CENSOR,
+        REDACTION_CENSOR,
+      ]);
+    });
+  });
+
+  /**
+   * The ARRAY branch keeps its own copy of the outcome record, and it fails in
+   * its own way — which is why it needs its own fixtures rather than riding on
+   * the object ones.
+   *
+   * A frozen array is NOT enough on its own: an element that is merely censored
+   * in place keeps its identity, nothing is written, and the walk succeeds. It
+   * takes an element that must be REPLACED — a frozen object, or an index whose
+   * getter throws — for the array itself to become uncleanable.
+   */
+  const arrayShapes: readonly [string, () => unknown[]][] = [
+    [
+      'a frozen array holding a frozen object',
+      () => Object.freeze([Object.freeze({ password: 'hunter2' })]) as unknown as unknown[],
+    ],
+    [
+      'an array whose index getter throws',
+      () => {
+        const items: unknown[] = [];
+        Object.defineProperty(items, 0, {
+          get: () => {
+            throw new Error('index exploded');
+          },
+          enumerable: true,
+          configurable: true,
+        });
+        items[1] = { password: 'hunter2' };
+        return items;
+      },
+    ],
+  ];
+
+  describe.each(arrayShapes)('%s', (_label, make) => {
+    it('is censored at every alias', () => {
+      const items = make();
+
+      expect(JSON.stringify(cleaned({ request: { x: items, y: { z: items } } }))).not.toContain(
+        'hunter2',
+      );
+      expect(JSON.stringify(cleaned({ request: { a: { z: make() }, b: make() } }))).not.toContain(
+        'hunter2',
+      );
+    });
+
+    it('is censored across separate stack frames', () => {
+      const items = make();
+      const event = {
+        exception: {
+          values: [{ stacktrace: { frames: [{ vars: { a: items } }, { vars: { b: items } }] } }],
+        },
+      };
+
+      expect(JSON.stringify(cleaned(event))).not.toContain('hunter2');
+    });
+  });
+
+  /**
+   * The other direction, so the outcome map cannot be "censor everything seen
+   * twice": a CLEAN node reached through several aliases stays itself.
+   */
+  it('leaves a clean node alone at every alias', () => {
+    const node: Record<string, unknown> = { modelId: 'mv_1' };
+    const walked = cleaned({ request: { x: node, y: { z: node } } });
+    const request = walked.request as { x: unknown; y: { z: unknown } };
+
+    expect(request.x).toBe(node);
+    expect(request.y.z).toBe(node);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
  * THE INTEGRATION ALLOWLIST, GRADED AGAINST THE ARRAY `init` ACTUALLY PASSES
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -440,6 +647,16 @@ describe('unwritable properties', () => {
  * `sdkAlreadyInitialized()`, so a second `init` in the same process is silently
  * skipped and the callback is never called. Measured — in-process, the second
  * and third captures came back empty.
+ *
+ * **THE EXACT COUNTS BELOW (11 / 13 / 17 / 18 / 44) ARE DELIBERATE, AND THEY
+ * WILL REDDEN ON A BENIGN UPSTREAM PATCH.** That is the trade this file makes on
+ * purpose, and it is the same one `redaction-corpus.json` makes: what a Sentry
+ * release adds to the default set is precisely what an allowlist exists to keep
+ * out, so "the set changed" has to reach a human rather than be absorbed. The
+ * cost is a red test on a version bump that added something harmless; the
+ * alternative is an upgrade that quietly starts producing spans from `apps/web`.
+ * If that trade is ever judged wrong, replace the counts with named-membership
+ * assertions — do not delete them.
  *
  * The CJS build, at an absolute path, because the ESM build imports
  * `next/constants` extensionlessly and Node's resolver rejects it
