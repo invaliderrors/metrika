@@ -154,16 +154,36 @@ async def test_an_activity_runs_inside_the_callers_trace_and_logs_its_correlatio
 
     The caller starts a span and puts a request ID in baggage; a workflow
     dispatches an activity onto the queue this worker polls; the activity logs.
-    Three things must then be true, and each of them is a different mechanism:
+    Three things must then be true, and each is a different mechanism:
 
-      * the activity's log line carries the caller's `requestId` — that is the
-        BAGGAGE propagation, and it is the one ADR-0029 measured Sentry's
-        propagator dropping;
-      * the same log line carries the caller's `traceId` — that is the TRACE
-        CONTEXT propagation reaching structlog;
       * the activity's span has the workflow's span as a REMOTE parent on the
-        caller's trace — that is the trace context reaching the tracer, which is
-        not the same claim as the line above and fails separately.
+        caller's trace — the TRACE CONTEXT reaching the tracer;
+      * the activity can read the caller's `requestId` — the BAGGAGE entry, and
+        the one ADR-0029 measured Sentry's propagator dropping;
+      * both are on the LOG LINE — the structlog processors, which is a third
+        thing and fails on its own.
+
+    **THE ORDER OF THE ASSERTIONS BELOW IS THE RESULT OF A MEASUREMENT, not a
+    preference.** Three mutations were run against a real server, and each
+    breaks a different one of the three:
+
+        propagator without W3CBaggagePropagator  span keeps its remote parent on
+                                                 the caller's trace; requestId
+                                                 and organizationId are EMPTY
+        propagator without TraceContext          span is a ROOT on a new trace,
+                                                 and baggage does not survive
+                                                 either — see below
+        no tracing interceptor on the client     NO activity span at all
+
+    The middle row is worth reading twice, because it corrects the obvious
+    expectation: dropping the *baggage* half does NOT make the span a root, and
+    dropping the *trace-context* half takes the baggage with it. Measured on
+    `temporalio@1.31.0` — the workflow leg re-injects the activity's headers from
+    a context it rebuilds around the extracted span, so with no span to extract
+    there is nothing left carrying the baggage across the second hop. So
+    "requestId arrived" is NOT evidence that the trace joined, and asserting it
+    first would report a missing request ID for a broken trace context. The span
+    goes first; it is the assertion whose failure explains the other two.
     """
     exported_spans.clear()
     configure_logging("info")
@@ -204,24 +224,9 @@ async def test_an_activity_runs_inside_the_callers_trace_and_logs_its_correlatio
 
     expected_trace_id = format(caller_trace_id, "032x")
 
-    # What the activity could see of the caller, from inside the worker leg.
-    assert observed["requestId"] == request_id
-    assert observed["organizationId"] == organization_id
-    assert observed["traceId"] == expected_trace_id
-
-    # What it wrote down. This is the assertion `docs/OBSERVABILITY.md` §3's
-    # example log line describes, and the camelCase spellings are the contract:
-    # a Grafana query for `requestId` has to match Pino's lines and structlog's.
-    line = _probe_line(capsys.readouterr().out)
-    assert line["requestId"] == request_id
-    assert line["traceId"] == expected_trace_id
-    assert line["organizationId"] == organization_id
-    assert line["spanId"] == observed["spanId"]
-    assert line["workflowId"] is not None
-    assert line["activityType"] == TELEMETRY_ACTIVITY
-
-    # The span, which is the half the log line cannot prove. A worker that
-    # started a fresh trace would still log a `traceId` — its own.
+    # 1. THE SPAN. The half a log line cannot prove: a worker that started a
+    #    fresh trace would still log a `traceId` — its own — so a test that only
+    #    read the log line would call that a pass.
     span = _activity_span(exported_spans)
     assert span.parent is not None, (
         "the activity span is a ROOT: the caller's trace context did not reach the worker, so "
@@ -230,6 +235,25 @@ async def test_an_activity_runs_inside_the_callers_trace_and_logs_its_correlatio
     assert span.parent.is_remote, "the parent was created in this process, not extracted"
     assert format(span.context.trace_id, "032x") == expected_trace_id
     assert span.parent.trace_id == caller_trace_id
+
+    # 2. THE BAGGAGE, as the activity itself could read it. Separate from the
+    #    span above because a propagator can carry one and drop the other, and
+    #    separate from the log line below because a processor that never ran
+    #    would leave this half intact.
+    assert observed["requestId"] == request_id
+    assert observed["organizationId"] == organization_id
+    assert observed["traceId"] == expected_trace_id
+
+    # 3. THE LOG LINE. What `docs/OBSERVABILITY.md` §3's example describes, and
+    #    the camelCase spellings are the contract: one Grafana query for
+    #    `requestId` has to match Pino's lines and structlog's.
+    line = _probe_line(capsys.readouterr().out)
+    assert line["requestId"] == request_id
+    assert line["traceId"] == expected_trace_id
+    assert line["organizationId"] == organization_id
+    assert line["spanId"] == observed["spanId"]
+    assert line["workflowId"] is not None
+    assert line["activityType"] == TELEMETRY_ACTIVITY
 
 
 @pytest.mark.integration
