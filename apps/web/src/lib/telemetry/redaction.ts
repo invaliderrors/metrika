@@ -51,9 +51,23 @@ export const REDACTION_CENSOR = '[REDACTED]';
  *
  * A cap is still needed, because a walk without one turns a deeply nested
  * object into a stack overflow inside `beforeSend` — a dropped event, at
- * exactly the moment something is already going wrong. 12 is well past the
- * deepest path a real event has (`exception.values[0].stacktrace.frames[0]
- * .vars.x` is 6).
+ * exactly the moment something is already going wrong.
+ *
+ * **12, AND THE COST OF THE NUMBER IS DESTRUCTION RATHER THAN EXPOSURE.** Past
+ * the cap the subtree is replaced by the censor, so everything below it is gone
+ * — not merely unredacted. Measured, and stated because the first version of
+ * this comment described the cost as if it were confined to shared nodes:
+ * `request.data` nested eleven objects deep loses a `modelId` sitting beside the
+ * secret, and any unaliased object at depth 13 goes the same way.
+ *
+ * The number is chosen against the deepest path a REAL event has, which is
+ * deeper than the first count here claimed: an object holding a local variable
+ * sits at **depth 8** — `event`(0) `exception`(1) `values`(2) `values[0]`(3)
+ * `stacktrace`(4) `frames`(5) `frames[0]`(6) `vars`(7) `vars.local`(8) — so a
+ * frame's locals get four levels of their own structure and a request body gets
+ * ten. `test/sentry-redaction.test.ts` pins the boundary in both directions, so
+ * raising this is a deliberate edit with a red test in front of it rather than a
+ * number somebody nudges.
  */
 const MAX_DEPTH = 12;
 
@@ -77,47 +91,105 @@ function write(container: object, key: string | number, next: unknown): boolean 
 }
 
 /**
+ * What is known about a node. TWO states, not three.
+ *
+ * A `walking` state was written first, to keep the optimistic mark below from
+ * claiming a node is clean before it is known to be — and it was removed
+ * because no mutation of this file could redden it. Under depth-first traversal
+ * a node can only be re-entered while its own walk is in progress from INSIDE
+ * its own subtree, i.e. through a cycle, and the two states are then
+ * indistinguishable: both hand the same object back, and if the walk goes on to
+ * fail, the node is replaced in its parent and the whole subtree — cyclic
+ * reference included — becomes unreachable. A third state whose behaviour no
+ * test can separate from a second is decoration.
+ */
+type WalkOutcome = 'clean' | 'censored';
+
+/**
  * Returns what the parent should store in place of `value` — the same object
  * when the walk completed, `REDACTION_CENSOR` when it could not.
  *
- * Returning a REPLACEMENT rather than mutating in place is the whole of the
+ * Returning a REPLACEMENT rather than mutating in place is the first half of the
  * fix. A void walk can only stop; it cannot tell its caller "I did not examine
  * this", so every limit it hits leaves the subtree behind intact.
  *
- * **`seen` POISONING is closed by the same change, and the mechanism is worth
- * writing down because the obvious fix is a different one.** With the old
- * fail-open cap, a node walked AT the cap was marked visited while its children
- * were abandoned intact, so a later, shallower path to the same node skipped
- * them. MEASURED, and key-order dependent:
- * `{ request: { aDeep: <10 wrappers>→shared, zShallow: shared } }` left
- * `zShallow.inner.password` in the clear, and redacted it when the two keys were
- * swapped. Now a node that is walked has every child either walked or CENSORED,
- * so "already visited" means "already clean" and a plain `WeakSet` is sound —
- * tracking the depth each node was reached at and re-walking on a shallower one
- * would add a mechanism no mutation of this file can redden, which is its own
- * kind of defect.
+ * **RECORDING THE OUTCOME rather than the visit is the second half, and it is
+ * what this module got wrong twice.** The premise behind a `WeakSet` is that
+ * entering a node implies cleaning it. That premise fails on every path where a
+ * node CANNOT be cleaned, and the first version of this comment asserted it
+ * outright — "already visited means already clean". Measured at the transport
+ * with `const F = Object.freeze({ password: 'hunter2' })`:
  *
- * The residual is stated rather than hidden: a shared node first reached at the
- * cap keeps the censor on children a shallower path could have walked. That is
- * over-redaction, never a leak, and it needs an aliased node at depth 12.
+ *   - `{ request: { x: F, y: { z: F } } }` shipped `"password":"hunter2"`
+ *   - `{ request: { a: { z: F }, b: F } }` leaked, in both key orders
+ *   - `frames: [{ vars: { a: F } }, { vars: { b: F } }]` leaked
+ *   - four aliases produced one `[REDACTED]` and three verbatim copies
+ *
+ * The first alias was censored and every later one returned verbatim, because
+ * `seen` said "visited" and the walk read that as "clean". React freezes props
+ * in development, so the `frames` case is not exotic. It lands ONLY in the
+ * regions this module argues have no other protection — `extra` and `contexts`
+ * are immune because Sentry's `normalize` REBUILDS them before `beforeSend`,
+ * measured: inside this hook an `extra` alias is `{aliased: false, frozen:
+ * false}` while a `request` alias is `{aliased: true, frozen: true}`.
+ *
+ * So a node is marked `censored` on failure and every later encounter — alias or
+ * not — gets the censor.
+ *
+ * **Depth is deliberately NOT tracked, and the reason changed under
+ * measurement.** An earlier version of this comment claimed a depth-aware map
+ * would mask the fail-open-cap mutation; it does not — `request.data` nested
+ * fifteen deep stays red either way. The real reason is simpler and stronger:
+ * this walk censors DESTRUCTIVELY, so a node re-reached at a shallower depth
+ * finds `[REDACTED]` already written into it and recovers nothing. Depth
+ * tracking would buy work, not coverage.
  */
-function redactValue(value: unknown, seen: WeakSet<object>, depth: number): unknown {
+function redactValue(value: unknown, seen: WeakMap<object, WalkOutcome>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value;
 
   // FAIL CLOSED. Returning here would hand the parent back a subtree this
   // function never looked inside.
   if (depth > MAX_DEPTH) return REDACTION_CENSOR;
 
-  // Sentry events can be cyclic — `hint.originalException` graphs and framework
-  // objects both manage it — and a cycle here is an infinite loop inside the
-  // error path.
-  if (seen.has(value)) return value;
-  seen.add(value);
+  // THE OUTCOME, not the visit. A node that could not be cleaned hands back the
+  // censor at every later alias; only a node known clean hands back itself.
+  const outcome = seen.get(value);
+  if (outcome === 'censored') return REDACTION_CENSOR;
+  if (outcome === 'clean') return value;
+
+  // Marked BEFORE the walk, which is what terminates a cycle — Sentry events can
+  // be cyclic (`hint.originalException` graphs and framework objects both
+  // manage it) and a cycle here is an infinite loop inside the error path. The
+  // optimism is safe for exactly one reason, and it is the reason the state
+  // machine has two entries rather than three: every failure path below
+  // OVERWRITES this with `censored` before returning, and the only encounter
+  // that can read it in the meantime is a cycle from inside this node's own
+  // subtree — which the parent's replacement subsumes.
+  seen.set(value, 'clean');
 
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) {
-      const next = redactValue(value[index], seen, depth + 1);
-      if (next !== value[index] && !write(value, index, next)) return REDACTION_CENSOR;
+      let next: unknown;
+      try {
+        // Read once, inside the guard, for the same two reasons as the object
+        // branch below. An array index can be an accessor too — `Object.
+        // defineProperty(arr, 0, { get })` is legal — and the previous version
+        // of this branch read it twice and read it outside any `try`.
+        // Annotated `unknown`, because `Array.isArray` narrows to `any[]` and an
+        // element would otherwise be `any` — which this repository does not
+        // allow anywhere, least of all in the one function that decides what
+        // leaves the browser.
+        const current: unknown = value[index];
+        next = redactValue(current, seen, depth + 1);
+        if (next === current) continue;
+      } catch {
+        seen.set(value, 'censored');
+        return REDACTION_CENSOR;
+      }
+      if (!write(value, index, next)) {
+        seen.set(value, 'censored');
+        return REDACTION_CENSOR;
+      }
     }
     return value;
   }
@@ -135,9 +207,13 @@ function redactValue(value: unknown, seen: WeakSet<object>, depth: number): unkn
       next = isRedactedKey(key) ? REDACTION_CENSOR : redactValue(current, seen, depth + 1);
       if (next === current) continue;
     } catch {
+      seen.set(value, 'censored');
       return REDACTION_CENSOR;
     }
-    if (!write(record, key, next)) return REDACTION_CENSOR;
+    if (!write(record, key, next)) {
+      seen.set(value, 'censored');
+      return REDACTION_CENSOR;
+    }
   }
   return value;
 }
@@ -171,6 +247,6 @@ function redactValue(value: unknown, seen: WeakSet<object>, depth: number): unkn
  * which is the correct outcome for an event this function was unable to clean.
  */
 export function redactSentryEvent<TEvent>(event: TEvent): TEvent | null {
-  const result = redactValue(event, new WeakSet<object>(), 0);
+  const result = redactValue(event, new WeakMap<object, WalkOutcome>(), 0);
   return result === event ? event : null;
 }

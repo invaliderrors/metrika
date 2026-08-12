@@ -72,13 +72,20 @@ export function apiUrl(path: string): string {
  * it, a caller's `headers` key would overwrite the whole object and the header
  * would silently vanish.
  *
- * **`redirect: 'error'` is the other half of `apiUrl`'s origin guard**, and it
- * sits BEFORE the spread rather than after, which makes it a default rather
- * than a rule. Following a redirect is a legitimate thing for some future
- * endpoint to need; doing it by accident is not, because a cross-origin
- * redirect carries `X-Request-Id` — and every header this wrapper grows later —
- * to whatever answered. A caller that needs to follow one writes
- * `redirect: 'follow'` and the decision is visible in review.
+ * **`redirect: 'error'` is the other half of `apiUrl`'s origin guard.** Following
+ * a redirect is a legitimate thing for some future endpoint to need; doing it by
+ * accident is not, because a cross-origin redirect carries `X-Request-Id` — and
+ * every header this wrapper grows later — to whatever answered. A caller that
+ * needs to follow one writes `redirect: 'follow'` and the decision is visible in
+ * review.
+ *
+ * Destructured with a DEFAULT rather than written before the `...init` spread,
+ * and the difference is a real hole rather than a style question: with
+ * `{ redirect: 'error', ...init }`, a caller passing `redirect: undefined`
+ * explicitly — which is what an options object built from optional fields
+ * produces — spreads the key back in as `undefined` and silently restores
+ * following. A default only fires on `undefined`, so both spellings of "I did
+ * not choose" land on `'error'`.
  *
  * The cost, so it is not a surprise at the first 308: a redirect now rejects
  * with a `TypeError` instead of being followed. For an API on our own origin
@@ -88,5 +95,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const headers = new Headers(init?.headers);
   headers.set(REQUEST_ID_HEADER, currentRequestId());
 
-  return fetch(apiUrl(path), { redirect: 'error', ...init, headers });
+  const { redirect = 'error' } = init ?? {};
+
+  return fetch(apiUrl(path), { ...init, redirect, headers });
 }

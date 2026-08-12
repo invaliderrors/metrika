@@ -220,6 +220,25 @@ describe('apiFetch', () => {
   });
 
   /**
+   * The spelling that defeated the first version of this: written as
+   * `{ redirect: 'error', ...init }`, an explicit `undefined` — what an options
+   * object assembled from optional fields produces — spreads the key back in and
+   * restores following. A destructuring default fires on `undefined` and this
+   * case lands on `'error'` like any other unstated one.
+   */
+  it('treats an explicit undefined as not choosing, rather than as choosing to follow', async () => {
+    // Asserted through a cast because `exactOptionalPropertyTypes` forbids
+    // WRITING this literal — which is a large part of why the hazard survived
+    // review. TypeScript cannot express the value; a JavaScript caller, a
+    // `JSON.parse`d options object and a conditional spread all produce it.
+    const explicitUndefined = { redirect: undefined } as unknown as RequestInit;
+
+    await apiFetch('/quotes', explicitUndefined);
+
+    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe('error');
+  });
+
+  /**
    * THE CONTROL, and it is asserted as an ABSENCE.
    *
    * `NO_REQUEST_ID` is inside the acceptable character class, so the API rejects
