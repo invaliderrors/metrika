@@ -107,6 +107,20 @@ const ORGANIZATION_ID = 'org-correlation-0001';
 const PROBE_ROUTE = '/telemetry-probe';
 const PROBE_PREFIX = 'probe: ';
 
+/**
+ * The outbound call the probe route makes is to a PRESIGNED-SHAPED URL, because
+ * that is the shape this repository decided is a credential: `url` is on the
+ * shared redaction list, and its own comment says a signed URL is a bearer token
+ * for the object until it expires.
+ *
+ * `@opentelemetry/instrumentation-undici` puts the whole URL on the span as
+ * `url.full` and its query as `url.query`, so without a redactor in the span
+ * pipeline this string leaves the process on the OTLP wire AND inside a Sentry
+ * transaction envelope — measured, both, before `span-redaction.ts` existed.
+ */
+const OUTBOUND_SIGNATURE = 'AKIAIOSFODNN7EXAMPLE-SIGNATURE-abc123def456';
+const SIGNED_QUERY = `X-Amz-Signature=${OUTBOUND_SIGNATURE}&X-Amz-Expires=900`;
+
 // ---------------------------------------------------------------------------
 // The OTLP/HTTP receiver and the outbound echo.
 // ---------------------------------------------------------------------------
@@ -167,11 +181,19 @@ interface Receiver {
   readonly url: string;
   readonly spans: () => readonly ReceivedSpan[];
   readonly resourceAttributes: () => ReadonlyMap<string, unknown>;
+  /**
+   * Every request body verbatim. The parsed view above is shaped by this file's
+   * own Zod schema, so a secret in a field the schema does not model would be
+   * invisible to it — and "the fields I thought to look at are clean" is not the
+   * claim a leak fixture should be making.
+   */
+  readonly raw: () => readonly string[];
   readonly close: () => Promise<void>;
 }
 
 async function startOtlpReceiver(): Promise<Receiver> {
   const spans: ReceivedSpan[] = [];
+  const bodies: string[] = [];
   const resourceAttributes = new Map<string, unknown>();
 
   const server = createServer((request, response) => {
@@ -180,6 +202,7 @@ async function startOtlpReceiver(): Promise<Receiver> {
       body += chunk.toString('utf8');
     });
     request.on('end', () => {
+      bodies.push(body);
       const payload = OtlpPayload.parse(JSON.parse(body));
       for (const resourceSpan of payload.resourceSpans ?? []) {
         for (const attribute of resourceSpan.resource?.attributes ?? []) {
@@ -211,6 +234,7 @@ async function startOtlpReceiver(): Promise<Receiver> {
     url: `http://127.0.0.1:${String(portOf(server))}/v1/traces`,
     spans: () => spans,
     resourceAttributes: () => resourceAttributes,
+    raw: () => bodies,
     close: async (): Promise<void> => closeServer(server),
   };
 }
@@ -240,7 +264,7 @@ async function startEcho(): Promise<Echo> {
   });
   await listen(server);
   return {
-    url: `http://127.0.0.1:${String(portOf(server))}/echo`,
+    url: `http://127.0.0.1:${String(portOf(server))}/download?${SIGNED_QUERY}`,
     headers: () => seen,
     close: async (): Promise<void> => closeServer(server),
   };
@@ -267,13 +291,20 @@ async function startEcho(): Promise<Echo> {
  */
 interface SentrySink {
   readonly dsn: string;
+  /** Every envelope body verbatim — the second export path a span leaves by. */
+  readonly envelopes: () => readonly string[];
   readonly close: () => Promise<void>;
 }
 
 async function startSentrySink(): Promise<SentrySink> {
+  const envelopes: string[] = [];
   const server = createServer((request, response) => {
-    request.resume();
+    let body = '';
+    request.on('data', (chunk: Buffer) => {
+      body += chunk.toString('utf8');
+    });
     request.on('end', () => {
+      envelopes.push(body);
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end('{}');
     });
@@ -281,6 +312,7 @@ async function startSentrySink(): Promise<SentrySink> {
   await listen(server);
   return {
     dsn: `http://0123456789abcdef0123456789abcdef@127.0.0.1:${String(portOf(server))}/1`,
+    envelopes: () => envelopes,
     close: async (): Promise<void> => closeServer(server),
   };
 }
@@ -297,6 +329,18 @@ function portOf(server: Server): number {
     throw new Error('server did not bind to a TCP port');
   }
   return address.port;
+}
+
+/**
+ * A failure that names WHERE, rather than `expected true to be false`. A leak
+ * fixture whose failure does not say which field carried the secret sends the
+ * next reader back to the same measurement this one already did.
+ */
+function excerptAround(needle: string): (body: string) => string | undefined {
+  return (body) => {
+    const at = body.indexOf(needle);
+    return at === -1 ? undefined : `…${body.slice(Math.max(0, at - 220), at + 60)}…`;
+  };
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -841,6 +885,54 @@ describe('sampling at TRACES_SAMPLE_RATE=0', () => {
   it('lets a sentry-trace caller force tracing ON at rate 0', () => {
     const spans = zeroReceiver.spans().filter((span) => span.traceId === SENTRY_ON_TRACE_ID);
     expect(spans.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * THE SPAN PIPELINE IS A SINK, and it was the one no per-task review covered:
+ * every other redaction fixture in this repository grades a LOG sink, and a span
+ * leaves by neither of them.
+ *
+ * Asserted at the EXPORT BOUNDARY — a real outbound `fetch` to a URL carrying a
+ * signature, observed in the bodies a real OTLP receiver and a real Sentry ingest
+ * actually received — rather than on the return value of the redacting function.
+ * A walk can be perfect and still be wired after the exporter.
+ *
+ * Each case asserts the span ARRIVED as well as that it is clean. Without that,
+ * every one of them would pass if the outbound span stopped being produced at
+ * all, which is the same shape as the fixture that measured a Sentry client with
+ * no integrations and reached an ADR.
+ */
+describe('the span pipeline, at both export boundaries', () => {
+  function outboundSpan(): ReceivedSpan | undefined {
+    return receiver.spans().find((span) => span.scope.includes('instrumentation-undici'));
+  }
+
+  it('exports the outbound span at all, so the assertions below can fail', () => {
+    expect(outboundSpan()).toBeDefined();
+    expect(sentry.envelopes().length).toBeGreaterThan(0);
+  });
+
+  it('keeps the host and path of the outbound URL, and censors the query', () => {
+    const attributes = outboundSpan()?.attributes;
+    expect(attributes?.get('url.full')).toEqual({
+      stringValue: `${new URL(echo.url).origin}/download?[REDACTED]`,
+    });
+    expect(attributes?.get('url.query')).toEqual({ stringValue: '[REDACTED]' });
+  });
+
+  /**
+   * THE BYTES, not the parsed view. This is the assertion that found the second
+   * copy: with every parsed attribute clean, the OTLP body still carried
+   * `"traceState":"sentry.url=…?X-Amz-Signature=…"`, which the attribute-shaped
+   * check above cannot see and which `OtlpPayload` does not even model.
+   */
+  it('sends the signature to the OTLP endpoint nowhere in any body', () => {
+    expect(receiver.raw().map(excerptAround(OUTBOUND_SIGNATURE)).filter(Boolean)).toEqual([]);
+  });
+
+  it('sends the signature to Sentry nowhere in any envelope', () => {
+    expect(sentry.envelopes().map(excerptAround(OUTBOUND_SIGNATURE)).filter(Boolean)).toEqual([]);
   });
 });
 

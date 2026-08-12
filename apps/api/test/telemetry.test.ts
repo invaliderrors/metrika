@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { isRedactedKey } from '@metrika/contracts';
 import * as Sentry from '@sentry/node';
+import {
+  RedactingSpanProcessor,
+  SENTRY_URL_TRACE_STATE_KEY,
+  redactSpanAttributes,
+  redactSpanTraceState,
+  redactUrlValue,
+} from '../src/infrastructure/telemetry/span-redaction.js';
 import {
   BAGGAGE_REQUEST_ID,
   FIELD_REQUEST_ID,
@@ -298,5 +306,138 @@ describe('the field names apps/workers reads', () => {
    */
   it('keeps the Pino keys camelCase rather than the instrumentation`s default', () => {
     expect(LOG_KEYS).toEqual({ traceId: 'traceId', spanId: 'spanId', traceFlags: 'traceFlags' });
+  });
+});
+
+/**
+ * The span pipeline's redaction, at the level the integration suite cannot reach.
+ *
+ * `test/telemetry.integration.test.ts` grades this at the export boundary with a
+ * real outbound fetch, which is the assertion that matters — but it can only
+ * exercise the attributes an instrumentation actually emits. The KEY half of the
+ * rule has no live fixture for that reason: nothing here sets
+ * `headersToSpanAttributes`, so no span carries a redacted NAME today. It is
+ * graded here instead, and the gap is stated rather than left to look covered.
+ */
+describe('span attribute redaction', () => {
+  it('censors an attribute whose NAME is on the shared list', () => {
+    const attributes: Record<string, unknown> = {
+      'http.request.header.authorization': 'Bearer sk-live-1234',
+      'http.route': '/quotes/:id',
+    };
+    redactSpanAttributes(attributes);
+
+    expect(attributes['http.request.header.authorization']).toBe('[REDACTED]');
+    // The negative, so this is not a fixture that would pass by censoring
+    // everything: a route template is not a secret and must survive.
+    expect(attributes['http.route']).toBe('/quotes/:id');
+  });
+
+  it('keeps the host and path of a URL value and censors its query', () => {
+    const attributes: Record<string, unknown> = {
+      'url.full': 'https://bucket.s3.amazonaws.com/models/m1.stl?X-Amz-Signature=deadbeef',
+      'url.query': '?X-Amz-Signature=deadbeef',
+      'url.path': '/models/m1.stl',
+    };
+    redactSpanAttributes(attributes);
+
+    expect(attributes['url.full']).toBe('https://bucket.s3.amazonaws.com/models/m1.stl?[REDACTED]');
+    expect(attributes['url.query']).toBe('[REDACTED]');
+    expect(attributes['url.path']).toBe('/models/m1.stl');
+  });
+
+  /**
+   * `url.full` is NOT a redacted name — `isRedactedKey` returns false for it, and
+   * correctly, since it is not a spelling of `url`. That is why the URL close is
+   * positional, and this asserts the two halves are really two.
+   */
+  it('is a positional rule, not a name on the shared list', () => {
+    expect(isRedactedKey('url.full')).toBe(false);
+    expect(isRedactedKey('url.query')).toBe(false);
+  });
+
+  it('leaves a URL with no query untouched, marker included', () => {
+    expect(redactUrlValue('https://example.com/a/b')).toBe('https://example.com/a/b');
+  });
+
+  it('censors a fragment as well as a query', () => {
+    expect(redactUrlValue('https://example.com/a#token=abc')).toBe(
+      'https://example.com/a?[REDACTED]',
+    );
+  });
+
+  /**
+   * `http.target` is relative by definition, so `new URL(...)` would throw on it.
+   * A redaction control that can throw on the export path is worse than the leak
+   * it closes, which is why the implementation scans the string.
+   */
+  it('handles a relative target without throwing', () => {
+    expect(redactUrlValue('/models/m1.stl?sig=abc')).toBe('/models/m1.stl?[REDACTED]');
+  });
+
+  it('leaves a non-string value alone rather than coercing it', () => {
+    const attributes: Record<string, unknown> = { 'url.full': 42 };
+    redactSpanAttributes(attributes);
+    expect(attributes['url.full']).toBe(42);
+  });
+});
+
+describe('span trace state redaction', () => {
+  function traceStateOf(entries: Record<string, string>): {
+    get: (key: string) => string | undefined;
+    unset: (key: string) => unknown;
+  } {
+    const state = { ...entries };
+    return {
+      get: (key) => state[key],
+      unset: (key) => {
+        const { [key]: _removed, ...rest } = state;
+        return traceStateOf(rest);
+      },
+    };
+  }
+
+  it('removes sentry.url, which is a second copy of the outbound URL', () => {
+    const context = {
+      traceState: traceStateOf({
+        [SENTRY_URL_TRACE_STATE_KEY]: 'https://x/y?X-Amz-Signature=deadbeef',
+        other: 'kept',
+      }),
+    };
+    redactSpanTraceState(context);
+
+    expect(context.traceState.get(SENTRY_URL_TRACE_STATE_KEY)).toBeUndefined();
+    expect(context.traceState.get('other')).toBe('kept');
+  });
+
+  it('leaves a trace state that never carried it alone', () => {
+    const before = traceStateOf({ other: 'kept' });
+    const context = { traceState: before };
+    redactSpanTraceState(context);
+    expect(context.traceState).toBe(before);
+  });
+
+  it('does nothing when there is no trace state at all', () => {
+    const context: { traceState?: ReturnType<typeof traceStateOf> } = {};
+    expect(() => {
+      redactSpanTraceState(context);
+    }).not.toThrow();
+  });
+});
+
+describe('the redacting span processor', () => {
+  /**
+   * The processor is a `SpanProcessor` rather than a `beforeSendTransaction` plus
+   * an exporter wrapper because ONE hook has to cover two destinations. Its
+   * lifecycle methods are asserted because `NodeSDK` calls all four, and one that
+   * threw would take the export path down with it.
+   */
+  it('implements the whole SpanProcessor contract without throwing', async () => {
+    const processor = new RedactingSpanProcessor();
+    expect(() => {
+      processor.onStart();
+    }).not.toThrow();
+    await expect(processor.forceFlush()).resolves.toBeUndefined();
+    await expect(processor.shutdown()).resolves.toBeUndefined();
   });
 });

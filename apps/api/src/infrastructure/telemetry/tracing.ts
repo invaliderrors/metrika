@@ -34,6 +34,7 @@ import {
   setupEventContextTrace,
 } from '@sentry/opentelemetry';
 import type { Env } from '../../config/env.js';
+import { RedactingSpanProcessor } from './span-redaction.js';
 import { getRequestId } from '../../shared/request-context/request-context.js';
 
 /**
@@ -490,7 +491,22 @@ export function startTelemetry(
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: env.NODE_ENV,
     }),
     sampler: new SentrySampler(client),
-    spanProcessors: flushable,
+    // ONE HOOK FOR TWO DESTINATIONS, which is why this is a `SpanProcessor`
+    // rather than a `beforeSendTransaction` plus an exporter wrapper: every
+    // processor is handed the same `Span` instance, so rewriting it here reaches
+    // both Sentry's processor and the OTLP exporter. `span-redaction.ts` has what
+    // leaves without it — measured on both wires.
+    //
+    // FIRST — but the position is NOT what makes it work, and an earlier version
+    // of this comment claimed it was. MEASURED by moving it last: the suite stays
+    // green, because neither configured processor reads the span during `onEnd`
+    // (`BatchSpanProcessor` queues it and serialises at export; Sentry's converts
+    // when the root span ends), so the rewrite lands before either looks. It is
+    // first anyway because that is the only order that is also correct for a
+    // processor that DOES read eagerly — a `SimpleSpanProcessor` is exactly that
+    // — and because a control whose correctness depends on nobody adding one is
+    // not worth the two characters saved.
+    spanProcessors: [new RedactingSpanProcessor(), ...flushable],
     // THROUGH the SDK's registration. `propagation.setGlobalPropagator(...)`
     // after `start()` is a silent no-op — registration has already installed
     // one, and `registerGlobal` refuses the second while writing to `diag`.
