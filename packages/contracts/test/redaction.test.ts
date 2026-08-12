@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { RedactedFieldName } from '../src/redaction.js';
+import { RedactedFieldName, isRedactedKey, redactionCorpus } from '../src/redaction.js';
 
 /**
  * The TypeScript half of the redaction agreement. The Python half is
@@ -80,4 +82,65 @@ describe('RedactedFieldName', () => {
     expect(names.size).toBe(RedactedFieldName.options.length);
     expect(names.size).toBeGreaterThan(10);
   });
+});
+
+/**
+ * The matcher, and the corpus that keeps its Python port honest.
+ *
+ * `RedactedFieldName` made the key LIST one source. The matching RULE was still
+ * two hand-written implementations of one algorithm, and review measured 27 of
+ * 140 probe names disagreeing between `apps/workers` and `apps/web` — including
+ * `signedURLs`, which one side redacted and the other let through, in exactly
+ * the class a round of review had just been raised to close.
+ *
+ * `redaction-corpus.json` is the structural close. It is emitted from
+ * `redactionCorpus()` by `pnpm contracts:emit`, CI diffs it, this file asserts
+ * `isRedactedKey` reproduces every row, and
+ * `apps/workers/.../test_redaction_corpus.py` asserts the Python matcher does
+ * too. A change to one rule without the other goes red — which is a stronger
+ * property than each side agreeing with itself.
+ */
+describe('isRedactedKey', () => {
+  const corpus: readonly { key: string; redacted: boolean }[] = JSON.parse(
+    readFileSync(path.join(import.meta.dirname, '..', 'redaction-corpus.json'), 'utf8'),
+  ) as { key: string; redacted: boolean }[];
+
+  it('the committed corpus is the one this rule generates', () => {
+    // The CI `contracts` job re-emits and diffs, so this is the same guarantee
+    // from inside the test suite — a developer who edits the table above and
+    // does not re-run `pnpm contracts:emit` sees it here first.
+    expect(corpus).toEqual(redactionCorpus());
+  });
+
+  it('is not vacuous, in both directions', () => {
+    expect(corpus.filter((row) => row.redacted).length).toBeGreaterThan(100);
+    expect(corpus.filter((row) => !row.redacted).length).toBeGreaterThan(20);
+  });
+
+  it.each(
+    ['signedURLs', 'downloadURLs', 'presignedURLs', 'URLs', 'signedURL', 'signedURL2'].map(
+      (key) => [key] as const,
+    ),
+  )('reaches the acronym spelling %s', (key) => {
+    // The regression this test exists for. `[A-Z]+(?![a-z])` backtracks off the
+    // lowercase `s` and yields `['ur','ls']`, so an acronym plural matched
+    // nothing at all — a batch step logging `signedURLs` leaked a bearer
+    // credential with the whole gate green. The fix is one alternation branch,
+    // `[A-Z]+s(?![a-z])`, tried FIRST.
+    expect(isRedactedKey(key)).toBe(true);
+  });
+
+  it.each([['HTTPStatus'], ['AWSRegion'], ['curl'], ['cacheKeys'], ['statuses']])(
+    'does not take %s, which the acronym branch could have',
+    (key) => {
+      expect(isRedactedKey(key)).toBe(false);
+    },
+  );
+
+  it.each(corpus.map((row) => [row.key, row.redacted] as const))(
+    'agrees with the corpus on %j',
+    (key, redacted) => {
+      expect(isRedactedKey(key)).toBe(redacted);
+    },
+  );
 });
