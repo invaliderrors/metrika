@@ -133,6 +133,32 @@ if (!existsSync(distEntry)) {
 
 const { contractsJsonSchemaDocument } = await import(pathToFileURL(distEntry).href);
 
+// THE SECOND EMITTED ARTEFACT, and it carries a rule rather than a shape.
+//
+// `RedactedFieldName` made the redaction KEY LIST one source. The MATCHING RULE
+// was still two hand-written implementations of one algorithm — one in
+// `apps/workers`, one in `apps/web` — and review measured 27 of 140 probe names
+// disagreeing between them, including an acronym plural (`signedURLs`) that one
+// side redacted and the other let through. Nothing compared them, so nothing
+// could have found it.
+//
+// This closes that structurally: `redactionCorpus()` declares what every
+// spelling of every name must do, this writes it out, CI diffs it, and both
+// sides assert their own matcher reproduces every row. A change to one rule
+// without the other goes red — which is a stronger property than each side
+// agreeing with itself, and it is the property that was missing.
+//
+// Committed, unlike the intermediate JSON Schema, because it is not an
+// intermediate: it is the artefact the Python suite reads. It lives beside the
+// rule that generates it rather than inside `apps/workers`, so that both
+// consumers reach across into one place rather than one of them owning it.
+const { redactionCorpus } = await import(
+  pathToFileURL(distEntry.replace('json-schema.js', 'redaction.js')).href
+);
+const corpus = path.join(repoRoot, 'packages/contracts/redaction-corpus.json');
+writeFileSync(corpus, `${JSON.stringify(redactionCorpus(), null, 2)}\n`, 'utf8');
+process.stdout.write(`contracts:emit — redaction corpus written to ${corpus}\n`);
+
 const scratch = mkdtempSync(path.join(tmpdir(), 'metrika-contracts-'));
 const document = path.join(scratch, 'contracts.schema.json');
 writeFileSync(document, `${JSON.stringify(contractsJsonSchemaDocument(), null, 2)}\n`, 'utf8');
