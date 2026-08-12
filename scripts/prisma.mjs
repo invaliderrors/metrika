@@ -3,12 +3,23 @@
 //
 // Two problems it solves, both of which produce confusing failures otherwise:
 //
-// 1. Prisma's dotenv search never reaches the repository root (it looks beside
-//    the schema and in the cwd), and the root `.env` is the only environment
-//    file this project has. Node's `--env-file-if-exists` in the shebang line
-//    of the npm script loads it into process.env before this file runs, and
-//    real environment variables always win over dotenv — so CI, which sets
-//    DATABASE_ADMIN_URL directly and has no `.env` at all, behaves identically.
+// 1. Prisma 7 does no dotenv loading AT ALL — not beside the schema, not in
+//    the cwd, not anywhere. (Prisma 6 looked beside the schema and in the cwd,
+//    which already never reached the repository root; 7 removed the search
+//    rather than widening it.) The root `.env` is the only environment file
+//    this project has, so Node's `--env-file-if-exists` in the npm script is
+//    now the ONLY thing that puts it into process.env, and it runs before this
+//    file does. Real environment variables always win over dotenv — so CI,
+//    which sets DATABASE_ADMIN_URL directly and has no `.env` at all, behaves
+//    identically. Without it, `prisma.config.ts`'s `env('DATABASE_ADMIN_URL')`
+//    fails before any database is contacted. Measured on 7.9.1, from
+//    packages/database with the variable unset:
+//
+//      Failed to load config file "…/packages/database" as a
+//      TypeScript/JavaScript module. Error: PrismaConfigEnvError: Cannot
+//      resolve environment variable: DATABASE_ADMIN_URL.
+//
+//    See ADR-0037.
 // 2. `--schema` is passed explicitly, so the command works from any cwd and
 //    `pnpm db:migrate` at the root means the same thing as it does anywhere
 //    else.
@@ -20,6 +31,20 @@
 //    Verified on pnpm 11.20.0. The root `.env` is already loaded into
 //    process.env by `--env-file-if-exists` before this file runs, and the
 //    child inherits it, so moving the cwd costs nothing.
+//
+//    On Prisma 7 this cwd is load-bearing a SECOND time, and this one is not
+//    about pnpm: `prisma.config.ts` is discovered RELATIVE TO CWD, and
+//    `--schema` does not find it. Measured on 7.9.1, `prisma validate` both
+//    ways with DATABASE_ADMIN_URL unset:
+//
+//      cwd=repo root, --schema packages/database/prisma/schema.prisma
+//        → "The schema … is valid" — the config file was never loaded
+//      cwd=packages/database, --schema prisma/schema.prisma
+//        → PrismaConfigEnvError — the config file WAS loaded
+//
+//    So a future "simplification" that drops the cwd and keeps `--schema`
+//    would run Migrate with no datasource URL and no migrations path at all.
+//    See ADR-0037.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -57,8 +57,10 @@ Working today: `verify` (format:check + build + lint + typecheck + test:unit),
 `build`, `dev`, `test:integration` (Docker required), `infra:up`/`infra:down`/`infra:reset`,
 `db:generate`/`db:migrate`/`db:deploy`/`db:reset`/`db:studio` (all from the
 repository root — they load the root `.env` and pass `--schema` explicitly; a
-bare `pnpm exec prisma` inside `packages/database` cannot find
-`DATABASE_ADMIN_URL`).
+bare `pnpm exec prisma` inside `packages/database` still cannot find
+`DATABASE_ADMIN_URL`, and on Prisma 7 for a stronger reason than before: 7 does
+no dotenv loading at all, so `--env-file-if-exists` in those scripts is the only
+thing that sets it. See [ADR-0037](./docs/adr/0037-prisma-7-driver-adapter.md)).
 `test:e2e` exists as a **package** script only, deliberately: a root one would
 put a chromium download in everyone's inner loop. Run it as
 `pnpm --filter @metrika/web test:e2e`.
@@ -143,11 +145,15 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
   `pnpm build` fails with `Cyclic dependency detected`. That is why
   `startDatabase()` takes the migrations location as an option and
   `withDatabase()` takes a client factory.
-- **Every Prisma CLI call goes through the root `db:*` scripts.** Prisma's
-  dotenv search never reaches the repository root, so
+- **Every Prisma CLI call goes through the root `db:*` scripts.** Prisma 7 does
+  no dotenv loading whatsoever, so the root `.env` reaches it only through
+  `--env-file-if-exists` in those scripts, and
   `cd packages/database && pnpm exec prisma …` fails with
-  `Environment variable not found: DATABASE_ADMIN_URL` on a correctly
-  configured machine.
+  `PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_ADMIN_URL`
+  on a correctly configured machine. The scripts also run their child with
+  `cwd = packages/database`, which is where `prisma.config.ts` is discovered —
+  `--schema` alone does not find it. See
+  [ADR-0037](./docs/adr/0037-prisma-7-driver-adapter.md).
 - Soft-deleted rows are revealed by `withDeleted(fn)` — a scoped function, so
   "forgot to turn filtering back on" is not a reachable state. Do not add a
   flag or a second client.
