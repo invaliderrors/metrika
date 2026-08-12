@@ -230,7 +230,9 @@ Note the message no longer carries the `ERROR: ` prefix. `packages/database/src/
 - [ ] **Step 8: Verify the whole database package**
 
 Run: `cd packages/database && pnpm test:integration`
-Expected: `Test Files 5 passed (5)`, `Tests 37 passed (37)`
+Expected: **4 files, 24 tests, all passing.**
+
+The spike reported "37/37" — that was 24 real tests plus a 13-test throwaway probe it wrote for the gaps the suite does not cover, then destroyed. Only the 24 are in the tree. If you see 37, something is generating files that should not exist.
 
 - [ ] **Step 9: Commit**
 
