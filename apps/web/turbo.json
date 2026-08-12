@@ -14,7 +14,25 @@
       //
       // `$TURBO_ROOT$` is what lets a package's inputs reach outside its own
       // directory.
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.env.example"]
+      //
+      // test/request-id.test.ts reads apps/api's request-context module for the
+      // same reason: the value `newRequestId()` produces has to satisfy
+      // `normaliseRequestId`'s allowlist and must not be the `NO_REQUEST_ID`
+      // sentinel, and the only way to assert that against the REAL rule rather
+      // than a second copy of it is to read the file. apps/web must not import
+      // apps/api, so it reads it as text.
+      //
+      // MEASURED here, both directions: with only the two entries above, editing
+      // `request-context.ts` and re-running `turbo run test:unit
+      // --filter=@metrika/web` reports `cache hit, replaying logs` and the gate
+      // never runs; with the two below, the same edit reports `cache miss,
+      // executing`.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.env.example",
+        "$TURBO_ROOT$/apps/api/src/shared/request-context/request-context.ts",
+        "$TURBO_ROOT$/apps/api/src/shared/request-context/request-context.middleware.ts"
+      ]
     }
   }
 }

@@ -17,11 +17,15 @@ python -m metrika_geometry   # polls METRIKA_WORKER_TEMPORAL_TASK_QUEUE for geom
 python -m metrika_slicer     # the same process, registering slicer.* instead
 ```
 
-The two entry points are the same fifteen lines and differ in **exactly one
-import** — the activities they register. The queue is not in either file; it is
+The two entry points are the same sixteen lines and differ in **one import and
+one string** — the activities they register and the service name they report to
+OpenTelemetry. The queue is in neither file; it is
 `METRIKA_WORKER_TEMPORAL_TASK_QUEUE`, so the same image can be deployed against
-`geometry-small` and `geometry-large` without a code change. Everything else a
-worker process does — connecting, polling, shutting down on SIGTERM — lives in
+`geometry-small` and `geometry-large` without a code change. The service name is
+a literal for the opposite reason: it says which of the two workers this is,
+which is a property of the code, and an environment variable set wrongly would
+file every span under the other worker with nothing to catch it. Everything else
+a worker process does — connecting, polling, shutting down on SIGTERM — lives in
 `metrika_core.temporal`, because two entry points that each grew their own
 client setup would drift on precisely the details nobody looks at until an
 incident.
@@ -45,11 +49,37 @@ incident.
   variable under `METRIKA_WORKER_` instead, and to `.env.example` in the same
   commit.
 
-- `logging.py` — JSON to stdout through `structlog`, with redaction as a
-  processor. `REDACTED_KEYS` and `REDACTED_SUFFIXES` cover presigned URLs and
-  file names, because a signed URL in a log is a credential in a log
-  (`SECURITY.md`). `cache_key` is deliberately not redacted: it is
-  content-addressed, and it is how a stuck job gets debugged.
+- `logging.py` — JSON to stdout through `structlog`, with redaction and
+  correlation as processors.
+
+  **The redaction list is not in this file.** It is `RedactedFieldName` in
+  `packages/contracts/src/redaction.ts`, and it arrives here as generated code
+  through `pnpm contracts:emit`, which CI byte-diffs. Three sinks derive from
+  it — Pino in `apps/api`, structlog here, Sentry's `beforeSend` in `apps/web` —
+  and three hand-maintained copies of a security control is how one of them
+  silently stops matching. What is shared is the NAMES; each sink's matching is
+  its own, because Pino matches paths and this side matches a flat event dict's
+  keys. Here that means a WORD-suffix rule, so one camelCase list reaches
+  `signed_url`, `s3_url` and `downloadURL` alike. `cache_key` is deliberately
+  not redacted — it is content-addressed, and it is how a stuck job gets
+  debugged — and `curl` is the case that shows the rule is a word suffix and not
+  a character one.
+
+- `telemetry.py` — OpenTelemetry: the tracer provider, the Temporal tracing
+  interceptor, and the two processors that put `requestId`, `traceId`, `spanId`,
+  `organizationId`, `workflowId` and `activityType` on every line written inside
+  an activity. Those six are camelCase in a codebase whose every other log key
+  is snake_case, deliberately: they are the names one Grafana query has to match
+  across Pino and structlog (`docs/OBSERVABILITY.md` §3).
+
+  **No exporter is constructed unless `METRIKA_WORKER_OTLP_ENDPOINT` is set**,
+  so a worker run locally emits spans nowhere and still logs the full
+  correlation. **The propagator is set explicitly on the Temporal interceptor**,
+  which does not read OpenTelemetry's global one — ADR-0029 question 4 measured
+  a propagator that carries `traceparent` and drops `baggage`, and the outcome
+  is one request becoming three unrelated traces at exit 0 with every component
+  reporting success.
+
 - `storage.py` — `ObjectStore`, the only module on the Python side that names
   `boto3`. `get_object` raises for a missing key and never returns `b""`; a
   missing _bucket_ is a configuration fault and propagates as a `ClientError`.

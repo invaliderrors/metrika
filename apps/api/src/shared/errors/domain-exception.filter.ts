@@ -1,11 +1,7 @@
-import {
-  Catch,
-  HttpException,
-  Logger,
-  type ArgumentsHost,
-  type ExceptionFilter,
-} from '@nestjs/common';
+import { Catch, HttpException, type ArgumentsHost, type ExceptionFilter } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
+import type { Logger } from 'pino';
+import { toLoggableError } from '../../infrastructure/telemetry/redaction.js';
 import { isDomainError } from './domain-error.js';
 import {
   domainErrorResponse,
@@ -16,29 +12,27 @@ import {
 } from './error-response.js';
 import { getRequestId } from '../request-context/request-context.js';
 
-/**
- * What goes in the LOG. Never in the response, and never in the same string as
- * anything the client sees.
- *
- * NOTE FOR PLAN 0C: an `Error`'s stack carries its message, so the DSN this
- * filter now keeps out of the response is still written here. That is acceptable
- * only while the sink is stdout on a machine an operator already owns. Before 0C
- * ships a log sink or a Sentry DSN, this needs redaction — do not inherit it
- * silently on the grounds that it was "already like that".
- */
-function describeCause(exception: unknown): string {
-  if (exception instanceof Error) {
-    return exception.stack ?? `${exception.name}: ${exception.message}`;
-  }
-  // A thrown non-Error is arbitrary data — a plain object carrying a password is
-  // a real shape this has been probed with — so it is described, not
-  // stringified.
-  return `non-Error thrown (typeof ${typeof exception})`;
-}
-
 @Catch()
 export class DomainExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(DomainExceptionFilter.name);
+  private readonly logger: Logger;
+
+  /**
+   * Takes the sink rather than reaching for one, and is constructed by hand in
+   * `bootstrap.ts` rather than by DI — which is what makes `import type
+   * { Logger } from 'pino'` above safe. CLAUDE.md bans `import type` on a class
+   * used in Nest constructor injection because it erases `design:paramtypes`;
+   * nothing resolves this constructor, and pino's `Logger` is an interface with
+   * no runtime value to import in the first place.
+   *
+   * The `context` binding is what Nest's own `ConsoleLogger` and `nestjs-pino`
+   * both call the component that wrote a line, so it stays under that name. It
+   * is a CHILD binding, which `formatters.log` never sees — `REDACTION_PATHS`
+   * is what covers this shape, and `test/redaction.test.ts` asserts through it
+   * for that reason.
+   */
+  constructor(logger: Logger) {
+    this.logger = logger.child({ context: DomainExceptionFilter.name });
+  }
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
@@ -82,10 +76,25 @@ export class DomainExceptionFilter implements ExceptionFilter {
     // Logged HERE rather than left to Nest: `ExceptionsHandler` logs an
     // unhandled exception only when no custom filter handles it, and this filter
     // handles everything, so without this line an unexpected 500 produced
-    // literally zero bytes of output. MEASURED at 0. This is a deliberately
-    // plain `Logger.error`; structured logging, Sentry and redaction arrive with
-    // the telemetry bootstrap in Plan 0C.
-    this.logger.error(`Unhandled exception (requestId=${requestId})`, describeCause(exception));
+    // literally zero bytes of output. MEASURED at 0.
+    //
+    // `error({ err }, message)` — ADR-0030, and the shape matters more than it
+    // looks. The three-argument `Logger.error(message, stack, context)` that
+    // ADR-0029 originally recommended DISCARDS the cause entirely at this call
+    // site, and a raw-pino `LoggerService` discards the two-argument form's
+    // cause too; both exit 0 and emit a plausible-looking line. `{ err }` with
+    // an Error INSTANCE is the one shape measured clean under both candidate
+    // adapters — a STRING in `err` serialises as a scalar, which `err.message`
+    // and `err.stack` cannot match, and leaks with redaction on.
+    //
+    // `requestId` goes in the MESSAGE and not only in the field because it is
+    // the string a support ticket carries; nothing else about this exception is
+    // in `msg`, which is the rule that keeps untrusted text out of a field
+    // redaction can only censor wholesale.
+    this.logger.error(
+      { err: toLoggableError(exception) },
+      `Unhandled exception (requestId=${requestId})`,
+    );
     send(reply, internalErrorResponse(requestId));
   }
 }

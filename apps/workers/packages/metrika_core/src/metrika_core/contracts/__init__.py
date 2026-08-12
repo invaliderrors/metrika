@@ -198,6 +198,26 @@ class QuoteId(RootModel[StrictStr]):
     ]
 
 
+class RedactedFieldName(StrEnum):
+    authorization = "authorization"
+    cookie = "cookie"
+    downloadUrl = "downloadUrl"
+    fileName = "fileName"
+    filename = "filename"
+    originalFilename = "originalFilename"
+    password = "password"
+    paymentPayload = "paymentPayload"
+    presignedUrl = "presignedUrl"
+    projectName = "projectName"
+    providerPayload = "providerPayload"
+    secret = "secret"
+    signedUrl = "signedUrl"
+    token = "token"
+    uploadUrl = "uploadUrl"
+    url = "url"
+    webhookSecret = "webhookSecret"
+
+
 class Seconds(RootModel[StrictFloat]):
     root: Annotated[StrictFloat, Field(ge=0.0, le=1.7976931348623157e308)]
 

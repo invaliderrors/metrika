@@ -18,6 +18,75 @@ export const EnvSchema = z.object({
    * header hash-matches in DeepHealthGuard and /health/deep answers 200.
    */
   HEALTH_DEEP_TOKEN: z.string().min(16, 'must be at least 16 characters'),
+  /**
+   * Where this process sends error events. **Empty disables Sentry**, and that
+   * is the local default rather than a placeholder: a developer with no Sentry
+   * project boots without a transport.
+   *
+   * **It disables more than the transport, and that is worth knowing before
+   * concluding anything from a local run.** `@sentry/node` does not reach
+   * `_setupIntegrations()` for a client with no DSN, so with this empty the
+   * process constructs ZERO Sentry integrations — the allowlist below it is
+   * subtracted from an empty set, and the decorator collision that exits 1 with
+   * the defaults left on cannot happen. ADR-0034 records a whole ADR written from
+   * a measurement taken in that state. `test/telemetry.integration.test.ts` sets
+   * a real DSN against a local sink for exactly this reason.
+   *
+   * Not `z.url()`: a DSN is a URL with structure Sentry itself validates, and a
+   * second, weaker statement of that rule here would reject a valid DSN shape we
+   * had not thought of while accepting a malformed one we had.
+   */
+  SENTRY_DSN: z.string().default(''),
+  /**
+   * The full OTLP/HTTP **traces** endpoint — `.../v1/traces`, not a base URL.
+   *
+   * Deliberately NOT spelled `OTEL_EXPORTER_OTLP_ENDPOINT`: that name belongs to
+   * the OpenTelemetry SDK, which reads it from the environment itself and
+   * appends the signal path to it. Two different meanings under one name is how
+   * an endpoint ends up pointing one path segment away from a collector.
+   *
+   * Empty means no exporter is constructed at all, which is what a developer
+   * without a collector wants — the correlation fields still reach every log
+   * line, because they come from the live trace context rather than from the
+   * exporter. `apps/workers` carries the same switch as
+   * `METRIKA_WORKER_OTLP_ENDPOINT`.
+   */
+  OTLP_TRACES_ENDPOINT: z.string().default(''),
+  /**
+   * Head-based sampling, for BOTH sinks — it reaches OpenTelemetry through
+   * `SentrySampler`, which is the one sampler on the shared provider.
+   *
+   * `0` is not "off with the correlation intact": a dropped span still has a
+   * valid trace ID, so log lines keep `traceId` and `spanId` while nothing is
+   * ever exported. Set it to `0` only when that is what is wanted.
+   *
+   * **The default is `1`, and a deployment that leaves it there samples
+   * everything.** Kept, on the grounds that it is inert until somebody
+   * configures a sink — no OTLP endpoint and no DSN means nothing is sent at any
+   * rate — and that the act of configuring one is the moment to choose a rate.
+   * The trigger for making it required instead: the first deployment that sets
+   * `SENTRY_DSN` or `OTLP_TRACES_ENDPOINT` without setting this.
+   *
+   * **For a W3C-only caller it is a FLOOR, not a ceiling.** A `traceparent`
+   * arriving with the sampled flag SET is always honoured — exported even at `0`
+   * — because `getSamplingDecision` returns `true` for a set flag and
+   * `sampleSpan` inherits a defined `parentSampled` before it ever looks at this
+   * value. A CLEARED flag is not honoured: it reads as `undefined` and falls
+   * through to this rate. MEASURED at `0`: the `-01` traces exported in full
+   * (6 and 8 spans), the `-00` traces exported nothing.
+   *
+   * **On `sentry-trace` the caller decides OUTRIGHT, in both directions**, and it
+   * overrides an inbound `traceparent` either way — `SentryPropagator.extract`
+   * runs last in the composite and calls `trace.setSpanContext`. MEASURED:
+   * `sentry-trace: …-0` exports ZERO spans at a rate of `1`; `…-1` exports in
+   * full at a rate of `0`. `apps/web` ships `@sentry/nextjs`, so this is the path
+   * a browser's own sample rate takes into this process. ADR-0035 has the table
+   * and the reason the two propagators differ; ADR-0034 has the W3C half.
+   *
+   * All four directions are asserted in `test/telemetry.integration.test.ts`,
+   * the rate-0 ones in their own child.
+   */
+  TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

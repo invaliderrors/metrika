@@ -4,14 +4,16 @@ Digital manufacturing platform for professional 3D printing. Upload a 3D model, 
 
 Initial market: Colombia (`es-CO`, COP). Initial customers: architects and architecture studios. The architecture is internationalisation-ready and does not hardcode Colombia-specific business rules in the domain.
 
-> **Status: Phase 0A and Plans 0B-1 / 0B-2 complete.** The monorepo, the
-> quality-gate config packages (`packages/typescript-config`,
+> **Status: Phase 0A and Plans 0B-1 / 0B-2 / 0B-3 / 0C complete.** The monorepo,
+> the quality-gate config packages (`packages/typescript-config`,
 > `packages/eslint-config`), `packages/contracts`, `packages/database`,
-> `packages/testing`, `apps/api` (a health-probe skeleton) and `apps/web` (a
-> one-page localised shell) exist and are tested. `apps/workers` and the
-> remaining `packages/*` do not exist yet — see "Shape" below for the split. The
-> complete engineering plan lives in [`docs/`](./docs/) and is intended to be
-> executable without re-deriving fundamental decisions.
+> `packages/testing`, `apps/api` (health probes, OpenAPI 3.1, an OpenTelemetry
+> SDK and a redacting Pino sink), `apps/web` (a one-page localised shell) and
+> `apps/workers` (a uv workspace: `metrika_core` plus two entry points with a
+> stub activity each) exist and are tested. The remaining `packages/*` do not
+> exist yet — see "Shape" below for the split. The complete engineering plan
+> lives in [`docs/`](./docs/) and is intended to be executable without
+> re-deriving fundamental decisions.
 
 ---
 
@@ -50,9 +52,10 @@ infra/          terraform · docker
 ```
 
 That is the target shape. Built so far: `apps/api`, `apps/web` (a one-page
-localised shell — no `(admin)` group, no data fetching), and
-`packages/contracts`, `packages/database`, `packages/testing`,
-`packages/eslint-config`, `packages/typescript-config` and `infra/docker`.
+localised shell — no `(admin)` group, no data fetching), `apps/workers` (the
+runtime skeleton only — no geometry, no slicing), and `packages/contracts`,
+`packages/database`, `packages/testing`, `packages/eslint-config`,
+`packages/typescript-config` and `infra/docker`.
 
 Orchestrated by **Temporal Cloud**. Storage in **S3**. Data in **PostgreSQL** with row-level security.
 
@@ -78,8 +81,8 @@ pnpm --filter @metrika/web test:e2e   # Playwright; builds and starts apps/web i
 ```
 
 `pnpm db:seed` does not exist yet, and `pnpm dev` does not yet start the Python
-workers. CI runs five jobs on every pull request: `verify`, `integration`, `web`
-and `openapi`.
+workers. CI runs five jobs on every pull request: `verify`, `integration`, `web`,
+`openapi` and `contracts`.
 
 See [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md).
 

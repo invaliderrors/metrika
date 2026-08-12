@@ -483,11 +483,27 @@ jobs:
       # `@metrika/contracts` itself (it has to — it imports the emitted
       # `dist/json-schema.js`), and a full `pnpm build` would additionally run
       # `next build` for a job that never looks at apps/web.
-      - name: Regenerate the pydantic models
+      - name: Regenerate the pydantic models and the redaction corpus
         run: pnpm contracts:emit
 
       # The models are committed, so a Zod change that nobody re-emitted shows up
       # here rather than as a worker that rejects — or worse, silently accepts —
       # a payload the API now sends. See docs/CONTRACTS_AND_API.md §5.
-      - name: Fail if the committed models are stale
-        run: git diff --exit-code -- apps/workers/packages/metrika_core/src/metrika_core/contracts/
+      #
+      # THE SECOND PATH IS NOT DECORATION. `scripts/contracts-emit.mjs:158-159`
+      # writes `packages/contracts/redaction-corpus.json` as well as the models,
+      # and this step used to name only the models directory. MEASURED: delete a
+      # row from the corpus and the command below — with only the first path —
+      # exits **0**. The gate did not merely pass; the corpus was outside it.
+      #
+      # What that file is worth guarding: it is the 956 declared verdicts that
+      # `apps/api`, `apps/web` and `apps/workers` each grade their own redaction
+      # traversal against, and the Python side reads it FROM DISK. A stale copy
+      # is three sinks agreeing with a snapshot of a rule that has moved, which
+      # is precisely the drift `packages/contracts/src/redaction.ts` was created
+      # to make impossible.
+      - name: Fail if the committed models or corpus are stale
+        run: |
+          git diff --exit-code -- \
+            apps/workers/packages/metrika_core/src/metrika_core/contracts/ \
+            packages/contracts/redaction-corpus.json
