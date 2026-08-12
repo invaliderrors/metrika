@@ -157,11 +157,15 @@ def test_this_matcher_agrees_with_the_shared_corpus(key: str, redacted: bool) ->
 
 _SENTINEL = "leaked-value-9c4e2a"
 
-_CENSOR = "[redacted]"
+# The token every sink writes. `packages/contracts/test/censor-agreement.test.ts`
+# is what keeps this side and `REDACTION_CENSOR` the same string; this constant is
+# spelled out rather than imported from `metrika_core.logging` because a fixture
+# that read the value it grades would agree with it by construction.
+_CENSOR = "[REDACTED]"
 
 # The two keys structlog's own processors write, so a caller's value cannot
 # round-trip through them. Both are still graded on the VERDICT — a censored one
-# reads `[redacted]` — and only the value comparison is dropped:
+# reads `[REDACTED]` — and only the value comparison is dropped:
 #
 #   * `level` is set by `add_log_level`, which runs BEFORE `_redact`. The verdict
 #     assertion is real: were `level` on the list, the emitted value would be the
@@ -221,7 +225,7 @@ def test_the_sink_reproduces_every_corpus_verdict(
 
     The absence assertion is on the RAW line rather than on the parsed value: a
     traversal that censored the key while leaving the value somewhere else in the
-    record would satisfy `payload[key] == "[redacted]"` and still have written
+    record would satisfy `payload[key] == "[REDACTED]"` and still have written
     the secret down.
     """
     configure_logging("info")
@@ -260,7 +264,7 @@ def test_the_traversal_is_one_level_deep_which_is_the_declared_limit(
 
     The other two sinks do not share this limit: `apps/api`'s walk rebuilds the
     whole object graph and `apps/web`'s cleans an arbitrary event, both to a
-    declared depth. So `docs/OBSERVABILITY.md` §3's "one list, three sinks" is
+    declared depth. So `docs/OBSERVABILITY.md` §3's "one list, every sink" is
     true of the LIST and of the RULE, and this is where it stops being true of
     the reach.
 
@@ -284,12 +288,62 @@ def test_the_traversal_is_one_level_deep_which_is_the_declared_limit(
     assert payload["items"] == [{"signed_url": _SENTINEL}]
 
 
+def test_every_exc_info_shape_keeps_the_exception_message_off_the_wire(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`exc_info` is not a field NAME, so the shared list cannot reach it.
+
+    FOUR shapes, and this file's earlier characterisation of them — "diagnostic
+    loss rather than exposure, the traceback is not written down anywhere" — was
+    true of two and false of the other two. `JSONRenderer` renders an unknown
+    value with `default=repr`, so a tuple from `sys.exc_info()` or a bare
+    exception instance puts the whole message on the wire, DSN included. Both are
+    ordinary Python that any caller would write, and neither is exotic enough to
+    be called a corner.
+
+    All four are asserted here rather than the two that were broken, because the
+    boolean shapes are what make the censor's exemption meaningful: `"exc_info":
+    true` has to keep saying an exception was attached, or closing the leak would
+    have quietly removed the only signal this side emits about exceptions at all.
+
+    What is still owed is the RENDERING — `apps/api` keeps an exception's frames
+    and censors only the message, and this side emits no frames at all. That is
+    loss, it is declared, and it is not what this test is about.
+    """
+    dsn = "connect failed DB_DSN=postgres://user:HUNTER2@host/db"
+
+    def emit(build: object) -> str:
+        configure_logging("info")
+        try:
+            raise ValueError(dsn)
+        except ValueError as error:
+            payload = build(error) if callable(build) else build
+            structlog.get_logger().error("boom", exc_info=payload)
+        return capsys.readouterr().out.strip().splitlines()[-1]
+
+    # The two that were already safe, and must stay both safe AND informative.
+    for boolean in (True, False):
+        line = emit(boolean)
+        assert json.loads(line)["exc_info"] is boolean, line
+
+    # The two that were leaking, measured.
+    for label, build in (
+        ("sys.exc_info() tuple", lambda error: (type(error), error, error.__traceback__)),
+        ("the exception instance", lambda error: error),
+    ):
+        line = emit(build)
+        assert "HUNTER2" not in line, f"{label} put the exception message on the wire: {line}"
+        assert json.loads(line)["exc_info"] == _CENSOR, (
+            f"{label} must read as censored, so an operator can tell the control fired: {line}"
+        )
+
+
 def test_the_message_field_is_not_censored(capsys: pytest.CaptureFixture[str]) -> None:
     """`event` is a corpus row that cannot be a kwarg, so it is graded here.
 
     It is structlog's message field, and it is on the negative roster for a
     reason worth stating: a rule that matched it would replace the text of every
-    log line this runtime emits with `[redacted]`, which is indistinguishable
+    log line this runtime emits with `[REDACTED]`, which is indistinguishable
     from having no logs.
     """
     configure_logging("info")

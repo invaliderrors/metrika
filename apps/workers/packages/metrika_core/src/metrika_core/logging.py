@@ -163,7 +163,48 @@ _REDACTED_WORDS: frozenset[tuple[str, ...]] = frozenset(
     for candidate in (_words(name), ("".join(_words(name)),))
 )
 
-_REDACTED = "[redacted]"
+# THE SAME TOKEN THE OTHER TWO SINKS WRITE, and it used to be `[redacted]`.
+#
+# The divergence was an accident rather than a decision, and it cost exactly what
+# a divergent vocabulary costs: an operator grepping a mixed log stream for
+# `[REDACTED]` — which is what `packages/contracts`' `REDACTION_CENSOR` writes,
+# what both TypeScript sinks emit, and what `docs/OBSERVABILITY.md` §3's own
+# example line shows — silently matched no Python line at all. Nothing graded it,
+# and the corpus structurally cannot: it declares which KEYS are redacted, never
+# what the censor looks like.
+#
+# `packages/contracts/test/censor-agreement.test.ts` now reads this literal out of
+# this file and asserts it equals `REDACTION_CENSOR`, with the cross-package input
+# declared in `packages/contracts/turbo.json`. Changing one side alone is red.
+_REDACTED = "[REDACTED]"
+
+# `exc_info` IS NOT A FIELD NAME THE SHARED LIST CAN REACH, and two of its four
+# shapes put an exception's message on the wire. MEASURED, through this exact
+# pipeline, with `ValueError("connect failed DB_DSN=postgres://user:HUNTER2@host/db")`:
+#
+#     log.exception("boom")                    → "exc_info": true
+#     log.error("m", exc_info=True)            → "exc_info": true
+#     log.error("m", exc_info=sys.exc_info())  → the full repr, DSN included
+#     log.error("m", exc_info=<the exception>) → the full repr, DSN included
+#
+# The last two reach `JSONRenderer`, whose `default=repr` renders whatever it was
+# handed. So the honest description of this side is not "the traceback is lost" —
+# it is lost in two shapes and EXPOSED in the other two, and the exposed ones are
+# ordinary Python that any caller would write.
+#
+# A non-boolean value is therefore censored. A boolean is kept: it carries no
+# text, and `"exc_info": true` is what says an exception was attached — the same
+# reason `apps/api`'s `serialiseError` emits a censored `message` rather than
+# omitting the field. The control firing must be visible.
+#
+# WHAT THIS DOES NOT DO, so nobody reads it as more than it is: it does not
+# RENDER the traceback. `apps/api` keeps an exception's frames and censors only
+# its message (ADR-0030's frame-preserving serialiser), and the equivalent here is
+# a real exception renderer that emits frames without the message line. That is
+# owed; this closes the exposure in the meantime rather than leaving it open
+# behind a comment. Measured safe to change today: nothing in the repository
+# passes `exc_info` at all.
+_EXC_INFO_KEY = "exc_info"
 
 
 def is_redacted_key(key: str) -> bool:
@@ -189,6 +230,11 @@ def is_redacted_key(key: str) -> bool:
 def _redact(_logger: WrappedLogger, _method_name: str, event_dict: EventDict) -> EventDict:
     for key in list(event_dict):
         if is_redacted_key(key):
+            event_dict[key] = _REDACTED
+        elif key == _EXC_INFO_KEY and not isinstance(event_dict[key], bool):
+            # See `_EXC_INFO_KEY`: a tuple or an exception instance renders
+            # through `repr` and carries the message. A bool carries nothing and
+            # is what makes the attachment visible.
             event_dict[key] = _REDACTED
     return event_dict
 
