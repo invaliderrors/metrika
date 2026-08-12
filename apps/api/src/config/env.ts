@@ -67,20 +67,24 @@ export const EnvSchema = z.object({
    * The trigger for making it required instead: the first deployment that sets
    * `SENTRY_DSN` or `OTLP_TRACES_ENDPOINT` without setting this.
    *
-   * **It is a FLOOR, not a ceiling, and that is measured in both directions.**
-   * A `traceparent` arriving with the sampled flag SET is always honoured —
-   * exported even at `0` — because `getSamplingDecision` returns `true` for a set
-   * flag and `sampleSpan` inherits a defined `parentSampled` before it ever looks
-   * at this value. A CLEARED flag is not honoured: it reads as `undefined` and
-   * falls through to this rate. MEASURED at `0`: the `-01` traces exported in
-   * full (6 and 8 spans), the `-00` traces exported nothing.
+   * **For a W3C-only caller it is a FLOOR, not a ceiling.** A `traceparent`
+   * arriving with the sampled flag SET is always honoured — exported even at `0`
+   * — because `getSamplingDecision` returns `true` for a set flag and
+   * `sampleSpan` inherits a defined `parentSampled` before it ever looks at this
+   * value. A CLEARED flag is not honoured: it reads as `undefined` and falls
+   * through to this rate. MEASURED at `0`: the `-01` traces exported in full
+   * (6 and 8 spans), the `-00` traces exported nothing.
    *
-   * So this cannot hold sampling DOWN. Any caller that sends `-01` pins this API
-   * at 100%, and the header is caller-supplied. What it cannot do is drop a
-   * caller's sampled trace, so there is no orphaned-child failure here — which is
-   * the opposite of what this comment said before the measurement was taken
-   * (ADR-0034). Both directions are asserted in
-   * `test/telemetry.integration.test.ts`, the rate-0 half in its own child.
+   * **On `sentry-trace` the caller decides OUTRIGHT, in both directions**, and it
+   * overrides an inbound `traceparent` either way — `SentryPropagator.extract`
+   * runs last in the composite and calls `trace.setSpanContext`. MEASURED:
+   * `sentry-trace: …-0` exports ZERO spans at a rate of `1`; `…-1` exports in
+   * full at a rate of `0`. `apps/web` ships `@sentry/nextjs`, so this is the path
+   * a browser's own sample rate takes into this process. ADR-0035 has the table
+   * and the reason the two propagators differ; ADR-0034 has the W3C half.
+   *
+   * All four directions are asserted in `test/telemetry.integration.test.ts`,
+   * the rate-0 ones in their own child.
    */
   TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
 });
