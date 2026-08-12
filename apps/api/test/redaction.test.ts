@@ -520,6 +520,50 @@ describe('redactLogObject', () => {
     expect(walked.sneaky['keep']).toBe(1);
   });
 
+  /**
+   * THE ROW THAT MAKES THE PRE-MARK OBSERVABLE, and it is here because the last
+   * report called that mutation unkillable and was WRONG.
+   *
+   * The input measured then was `toJSON() { return this }`, where marking the
+   * node early and not marking it agree: both terminate, one via the map and one
+   * via the boundary catching a stack overflow. The distinguishing input returns
+   * a FRESH object that contains a self-reference — the map hit then decides
+   * whether the surrounding object survives at all:
+   *
+   *   with the pre-mark: `{ keep: 'yes', self: '[REDACTED]', password: '[REDACTED]' }`
+   *   without it:        `'[REDACTED]'` — the whole field, via the boundary
+   *
+   * "I could not construct a distinguishing input" is a claim about the person,
+   * not about the code, and it should have been written that way.
+   */
+  it('keeps the object around a self-reference its own toJSON returned', () => {
+    const node: Record<string, unknown> = { keep: 'yes' };
+    node['toJSON'] = (): unknown => ({ keep: 'yes', self: node, password: 'SECRET-VALUE' });
+
+    const walked = redactLogObject({ boom: node }) as { boom: Record<string, unknown> };
+
+    expect(walked.boom['keep'], 'the surrounding object must survive').toBe('yes');
+    expect(walked.boom['self']).toBe(REDACTION_CENSOR);
+    expect(walked.boom['password']).toBe(REDACTION_CENSOR);
+  });
+
+  it('invokes toJSON once for a node reached through several aliases', () => {
+    // `rebuilt.get(node) !== undefined` read a memo holding `undefined` as a
+    // MISS, so `{ toJSON: () => undefined }` behind three references was walked
+    // three times and its toJSON — application code — invoked three times.
+    let invocations = 0;
+    const value = {
+      toJSON: (): unknown => {
+        invocations += 1;
+        return undefined;
+      },
+    };
+
+    redactLogObject({ a: value, b: value, c: value });
+
+    expect(invocations).toBe(1);
+  });
+
   it('survives a toJSON that throws, and a toJSON that returns its own receiver', () => {
     const throwing = {
       toJSON: (): unknown => {
@@ -825,6 +869,48 @@ describe('a walk that cannot finish costs the field, not the line', () => {
     expect(captured.only()['boom']).toStrictEqual({ keep: 'yes' });
   });
 
+  /**
+   * RECORD THE OUTCOME, NOT THE VISIT — the same defect `apps/web`'s sink was
+   * fixed for, arriving here from the opposite direction. The per-entry boundary
+   * that stopped the walk losing the LINE gave it a way to lose a FIELD in
+   * silence: a node shared between two entries kept the half-built copy the
+   * failed entry abandoned, so the second entry read a fragment that looked
+   * complete.
+   *
+   * MEASURED before the fix: `"outer":"[REDACTED]","later":{"first":"A"}` —
+   * `second` gone, no censor beside it, nothing to tell an operator that `later`
+   * is not the whole object.
+   */
+  it('does not hand a later entry the fragment an earlier one abandoned', () => {
+    const captured = captureLogger();
+    let deep: Record<string, unknown> = { bottom: 1 };
+    for (let level = 0; level < 6000; level += 1) deep = { deep };
+    const shared = { first: 'A', boom: deep, second: 'B' };
+
+    captured.logger.info({ outer: { shared }, later: shared }, 'm');
+    const line = captured.only();
+
+    expect(line['outer']).toBe(REDACTION_CENSOR);
+    expect(line['later'], 'a partial copy here reads as the whole object').toBe(REDACTION_CENSOR);
+  });
+
+  it('still shares a node between entries when the walk succeeds', () => {
+    // The memo must keep working — recording the outcome is not "stop
+    // memoising". Baseline pino emits an aliased node in full at both keys, and
+    // so does this.
+    const captured = captureLogger();
+    const shared = { first: 'A', second: 'B' };
+
+    captured.logger.info({ outer: { shared }, later: shared }, 'm');
+    const line = captured.only();
+
+    expect(line['later']).toStrictEqual({ first: 'A', second: 'B' });
+    expect((line['outer'] as { shared: unknown }).shared).toStrictEqual({
+      first: 'A',
+      second: 'B',
+    });
+  });
+
   it('emits the line even when the pathological value is at the err key itself', () => {
     // The filter's own call shape. `serialiseError` runs as pino's serialiser
     // here, outside the walk's per-entry boundary, so its internal guards are
@@ -884,4 +970,142 @@ describe('pino reduces the top-level err itself, whatever its type', () => {
       expect(captured.raw()).not.toContain('PASSWORD');
     });
   }
+});
+
+/**
+ * THE POSITION SET, which was one key wide and is now six.
+ *
+ * `err` being a position was the right reframing; the set was just smaller than
+ * the shapes that reach a log line. `errors` is `AggregateError`'s own property
+ * name, `cause` is `Error`'s, and `errs` is the spelling THIS MODULE'S OWN
+ * documentation used for the AggregateError case — which is a fair measure of
+ * how reachable it was. All four went out verbatim through every binding route.
+ *
+ * The dimension is (position name) × (what sits in it) × (binding mechanism),
+ * and the cost of widening is asserted beside the widening, as
+ * `packages/contracts`' own `MUST_SURVIVE` table does: a control that turns
+ * `cause: 'user_cancelled'` into a shape has bought safety with debuggability.
+ */
+describe('the error positions', () => {
+  const DSN = 'DB_DSN=postgres://user:PASSWORD@host/db';
+  const POSITIONS = ['err', 'error', 'errors', 'errs', 'cause', 'exception'];
+
+  const CARRIED: Readonly<Record<string, () => unknown>> = {
+    'an error-shaped plain object': () => ({ message: DSN }),
+    'an array of them': () => [{ message: DSN }, { stack: DSN }],
+    'a real Error': () => new Error(DSN),
+    'an array of real Errors': () => [new Error(DSN), new Error(DSN)],
+  };
+
+  for (const position of POSITIONS) {
+    for (const [carried, build] of Object.entries(CARRIED)) {
+      it(`reduces ${carried} at ${position}, below the top level`, () => {
+        const captured = captureLogger();
+
+        captured.logger.info({ ctx: { [position]: build() } }, 'm');
+
+        expect(captured.raw()).not.toContain('PASSWORD');
+      });
+
+      it(`reduces ${carried} at a top-level ${position}`, () => {
+        const captured = captureLogger();
+
+        captured.logger.info({ [position]: build() }, 'm');
+
+        expect(captured.raw()).not.toContain('PASSWORD');
+      });
+
+      it(`reduces ${carried} at ${position} through child()`, () => {
+        const captured = captureLogger();
+
+        captured.logger.child({ [position]: build() }).info('m');
+
+        expect(captured.raw()).not.toContain('PASSWORD');
+      });
+
+      it(`reduces ${carried} at ${position} through setBindings()`, () => {
+        const captured = captureLogger();
+
+        captured.logger.setBindings({ [position]: build() });
+        captured.logger.info('m');
+
+        expect(captured.raw()).not.toContain('PASSWORD');
+      });
+    }
+  }
+
+  it('keeps the length of an aggregate, because "two things failed" is the diagnostic', () => {
+    const captured = captureLogger();
+
+    captured.logger.error({ ctx: { errors: [new Error(DSN), new Error(DSN)] } }, 'm');
+    const errors = (captured.only()['ctx'] as { errors: unknown[] }).errors;
+
+    expect(errors).toHaveLength(2);
+  });
+
+  it('keeps the frames of a real Error at any position', () => {
+    const captured = captureLogger();
+    function thrower(): never {
+      throw new Error(DSN);
+    }
+    try {
+      thrower();
+    } catch (error: unknown) {
+      captured.logger.error({ ctx: { cause: error } }, 'm');
+    }
+
+    const cause = (captured.only()['ctx'] as { cause: { frames: string[] } }).cause;
+    expect(cause.frames[0]).toContain('thrower');
+  });
+
+  /**
+   * THE COST, asserted rather than assumed. `err` is pino's designated error
+   * slot and ADR-0030 measured a STRING there leaking in full, so a string is
+   * reduced at `err`. The other five are ordinary English words with ordinary
+   * values, and reducing those would cost real debuggability for nothing.
+   */
+  it('reduces a string at err, because ADR-0030 measured one leaking', () => {
+    const captured = captureLogger();
+
+    captured.logger.info({ ctx: { err: DSN } }, 'm');
+
+    expect(captured.raw()).not.toContain('PASSWORD');
+  });
+
+  it.each([
+    ['cause', 'user_cancelled'],
+    ['error', 'not_found'],
+    ['errs', 'none'],
+  ])('leaves a plain string at %s alone', (position, value) => {
+    const captured = captureLogger();
+
+    captured.logger.info({ ctx: { [position]: value } }, 'm');
+
+    expect((captured.only()['ctx'] as Record<string, unknown>)[position]).toBe(value);
+  });
+
+  it.each([
+    ['errors', 3],
+    ['error', null],
+    ['exception', false],
+  ])('leaves %s alone when it cannot carry text', (position, value) => {
+    const captured = captureLogger();
+
+    captured.logger.info({ ctx: { [position]: value } }, 'm');
+
+    expect((captured.only()['ctx'] as Record<string, unknown>)[position]).toBe(value);
+  });
+
+  /**
+   * A guard for the next person to widen this set: an error position that is
+   * also a corpus row would make the corpus tables above disagree with
+   * themselves — the value would be reduced rather than surviving, and the
+   * MUST_SURVIVE half would go red for a reason that has nothing to do with the
+   * key rule.
+   */
+  it('names no key the shared corpus also declares a verdict for', () => {
+    const declared = new Set(CORPUS.map((row) => row.key));
+
+    expect(POSITIONS.filter((position) => declared.has(position))).toStrictEqual([]);
+  });
 });
