@@ -29,6 +29,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from metrika_core.settings import WorkerSettings
+from metrika_core.telemetry import temporal_tracing_interceptor
 
 # What a registered activity looks like from here: something `@activity.defn`
 # has been applied to. The parameters are deliberately unconstrained — each
@@ -68,10 +69,25 @@ async def build_client(settings: WorkerSettings) -> Client:
     and they are credentials, so they will arrive as a deployment concern
     through `WorkerSettings` — which is where every other piece of configuration
     already comes from, and which has the redaction rules pointed at it.
+
+    **The tracing interceptor is not optional, and it is registered HERE rather
+    than on the worker.** It is the only thing that carries the caller's trace
+    context and baggage across the process boundary, and a worker without it
+    fails silently and completely: every activity runs, every workflow
+    completes, exit 0, and a support ticket quoting a request ID resolves to a
+    trace that stops at the API. Making it a parameter would make it a thing a
+    deployment could turn off by accident.
+
+    On the client rather than on `build_worker` because `Worker` PREPENDS its
+    client's interceptors to its own, so a client-side registration is the one
+    that ends up outermost — which is what puts the activity's span in scope
+    before anything else in the chain runs, including the logging processors
+    that read it.
     """
     return await Client.connect(
         settings.temporal_address,
         namespace=settings.temporal_namespace,
+        interceptors=[temporal_tracing_interceptor()],
     )
 
 

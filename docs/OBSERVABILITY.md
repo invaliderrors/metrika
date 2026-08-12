@@ -53,7 +53,7 @@ Structured JSON everywhere. Pino (Node), structlog (Python). Never `console.log`
 ### Redaction — an allowlist mindset
 
 **The list is defined once, in `packages/contracts/src/redaction.ts`, as
-`RedactedFieldName`.** It is a set of *field names*, not of Pino paths: `pnpm
+`RedactedFieldName`.** It is a set of _field names_, not of Pino paths: `pnpm
 contracts:emit` carries it into `metrika_core.contracts` as a `StrEnum`, so the
 Python side reads the same list as generated code and CI fails on a diff. Each
 sink derives its own matcher from those names, because each runtime matches

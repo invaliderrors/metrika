@@ -70,6 +70,20 @@ class WorkerSettings(BaseSettings):  # type: ignore[explicit-any]  # -- see the 
     temporal_task_queue: str
     s3_bucket: str
     s3_endpoint_url: str | None = None
+    # Where spans go, and `None` means NOWHERE — no exporter is constructed at
+    # all. That default is two decisions at once. An OTLP endpoint is a
+    # deployment concern, so a developer running a worker locally should not
+    # need a collector; and Plan 0C forbids shipping a sink before the API's
+    # `Error`-message leak is closed, which a default endpoint would quietly
+    # ignore.
+    #
+    # No credential field beside it, deliberately. The OTLP exporter reads
+    # `OTEL_EXPORTER_OTLP_HEADERS` from the environment itself, so an
+    # authentication token never becomes an attribute of the object this class's
+    # own validation errors are built from — the same reasoning that keeps AWS
+    # credentials out of here, and the same reasoning `_VALUE_WITHHELD` exists
+    # for.
+    otlp_endpoint: str | None = None
     # A `Literal`, not `str`: `configure_logging` looks the level up in
     # `logging.getLevelNamesMapping()`, so `METRIKA_WORKER_LOG_LEVEL=verbose` used to
     # raise `KeyError` from inside the logging setup — an unhandled crash in the

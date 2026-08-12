@@ -27,7 +27,7 @@ def test_rejects_a_missing_bucket_and_names_it(monkeypatch: pytest.MonkeyPatch) 
         WorkerSettings()
 
 
-def test_declares_exactly_these_six_fields_and_nothing_else() -> None:
+def test_declares_exactly_these_seven_fields_and_nothing_else() -> None:
     """ADR-0007: a worker must have no database credentials.
 
     This is a security control, not a style rule — an attacker achieving code
@@ -86,6 +86,7 @@ def test_declares_exactly_these_six_fields_and_nothing_else() -> None:
         "temporal_task_queue",
         "s3_bucket",
         "s3_endpoint_url",
+        "otlp_endpoint",
         "log_level",
     }
 
