@@ -12,10 +12,17 @@ afterAll(async () => {
  * its default was `num_cpus * 2 + 1`. On Prisma 7 behind a driver adapter the
  * URL parameter is INERT — `pg` has never heard of it and Prisma no longer
  * parses it out — and the default is whatever `pg.Pool` uses, currently 10.
- * Measured, 20 parallel 300 ms queries on an 8-core host:
+ * Measured by the upgrade spike, 20 parallel 300 ms queries on an 8-core host:
  *
  *     prisma 7.9.1 : {"noLimit":10,"connectionLimit3":10}
  *     prisma 6.19.3: {"noLimit":17,"connectionLimit3":3}
+ *
+ * The 6.19.3 row is INHERITED and is not reproducible from this tree — that
+ * version is no longer installed, and `17` was a function of that host's core
+ * count besides. Only the 7.9.1 row is re-measured on every run, and this
+ * fixture uses 24 parallel queries rather than the spike's 20 (see
+ * PARALLEL_QUERIES below) — so the numbers above are the provenance of the
+ * finding, not a prediction of what this file will print.
  *
  * Nothing in the toolchain reports that change: `?connection_limit=3` is still
  * a legal URL, `pnpm verify` is green, and the only symptom is a service that

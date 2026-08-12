@@ -15,6 +15,10 @@ afterAll(async () => {
  *     prisma 7.9.1 : QUERY SUCCEEDED — ?schema= was IGNORED
  *     prisma 6.19.3: QUERY FAILED    — ?schema= was honoured
  *
+ * The 6.19.3 row is INHERITED from the upgrade spike and is not reproducible
+ * from this tree — that version is no longer installed. Only the 7.9.1 row is
+ * re-measured on every run, by the tests below.
+ *
  * Nothing in this repository breaks today, because every URL says
  * `?schema=public` and `public` is what `pg` would use anyway. It breaks
  * silently the first time a URL points somewhere else: no error, no warning,
@@ -22,6 +26,14 @@ afterAll(async () => {
  *
  * The schema now belongs to `PrismaPg`'s second argument, and that is what the
  * second test proves — by content, not by a query that merely succeeded.
+ *
+ * BOTH tests query through a MODEL delegate, never `$queryRaw`. That is not a
+ * style choice and it is the whole reason this file is trustworthy: the
+ * adapter's `schema` option qualifies GENERATED SQL and does not touch
+ * `search_path`, so raw SQL resolves identically whether a schema is honoured
+ * or ignored. A tripwire built on `SELECT 1` would have stayed green through
+ * exactly the change it exists to catch. See the positive control at the first
+ * test.
  */
 describe('the Prisma 7 driver adapter', () => {
   /**
@@ -29,6 +41,15 @@ describe('the Prisma 7 driver adapter', () => {
    * One container serves the whole run and nothing rolls back, so owning a
    * separate schema is also this suite's isolation: no other file can see
    * these rows, and this file writes exactly one row into `public`.
+   *
+   * The DDL in `beforeAll` spells `"metrika_adapter_probe"` out rather than
+   * interpolating this constant, and has to: a tagged template interpolates
+   * VALUES, not identifiers, and the alternative is `Prisma.raw`, which is the
+   * unsafe-SQL shape this package bans everywhere. Drift between the two
+   * spellings fails loudly and immediately — `findUnique` against a schema
+   * that was never created cannot pass — so the duplication is safe, but it
+   * is duplication and it is deliberate. Same constraint as the column-alias
+   * marker in pool.integration.test.ts.
    */
   const PROBE_SCHEMA = 'metrika_adapter_probe';
   /** Fixed rather than random, so a failure names a row you can go and find. */
@@ -109,10 +130,39 @@ describe('the Prisma 7 driver adapter', () => {
     expect(url.toString()).not.toContain('schema=public');
 
     const probe = createPrismaClient({ databaseUrl: url.toString() });
+    // The POSITIVE CONTROL, and the reason the assertion below is a model
+    // query rather than `$queryRaw`. `@prisma/adapter-pg@7.9.1` implements
+    // `schema` as `getConnectionInfo().schemaName` (dist/index.mjs:719): it
+    // QUALIFIES GENERATED SQL, it does not set `search_path`. Raw SQL is never
+    // qualified, so `SELECT 1` resolves whether the schema is honoured or
+    // ignored — it cannot tell the two apart, and a tripwire that cannot go
+    // red is not a tripwire. MEASURED against this same container:
+    //
+    //     $queryRaw`SELECT 1`      : RESOLVED under BOTH clients
+    //     healthCheck.findUnique() : RESOLVED ignored / THREW honoured
+    //
+    // So this client — the same nonexistent schema, reaching Prisma by the one
+    // route the adapter actually has — is what the red state looks like.
+    const honoured = new PrismaClient({
+      adapter: new PrismaPg(
+        { connectionString: applicationUrl },
+        { schema: 'definitely_not_a_real_schema' },
+      ),
+    });
+
     try {
-      await expect(probe.$queryRaw`SELECT 1 AS one`).resolves.toEqual([{ one: 1 }]);
+      await expect(honoured.healthCheck.findUnique({ where: { id: publicRowId } })).rejects.toThrow(
+        /definitely_not_a_real_schema/,
+      );
+
+      // And the finding: through the URL, the identical query resolves,
+      // against `public`, because the parameter never reached pg at all.
+      await expect(
+        probe.healthCheck.findUnique({ where: { id: publicRowId } }),
+      ).resolves.toMatchObject({ id: publicRowId });
     } finally {
       await probe.$disconnect();
+      await honoured.$disconnect();
     }
   });
 
