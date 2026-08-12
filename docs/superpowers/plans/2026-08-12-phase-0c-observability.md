@@ -102,9 +102,16 @@ Two spikes in this project have each paid for themselves several times over. Thi
 
 Log an `Error` whose message carries `DB_DSN=postgres://user:PASSWORD@host/db` and assert the password appears in **neither** `err.message`, `err.stack`, nor `msg` in the emitted line.
 
-**ADR-0029 measured this and the answer changes the approach.** Pino's `redact` reaches an `Error`'s own properties but **not** `message` or `stack` — and the current call is `logger.error(error.stack)`, which puts the secret in Pino's **`msg`** field, where no redact path, no wildcard and no custom serialiser reaches it.
+**Establish the mechanism yourself before choosing a fix — two prior readings of it were wrong, in opposite directions.**
 
-So there is no configuration that closes this. **The call site itself must change**: log a redacted, structured representation of the error rather than handing Pino a pre-formatted string. Any fix that only edits the redact list is not a fix, and the `msg` assertion above is what proves the difference.
+What is settled: Pino's `redact` reaches an `Error`'s **own enumerable properties** but not `message` or `stack`, so the blueprint's `*.password`-style list leaves a secret in the message text.
+
+What is **not** settled, and you must measure against the call that actually exists:
+
+- ADR-0029 claims no path, wildcard or serialiser reaches `msg`. Its reviewer disproved that with `paths:['msg']` and `serializers.msg` on a plain-string message; I then re-measured with `logger.error(new Error(...))` and got the opposite for both — only `paths:['*']` redacted, and that censors **every** message, so it is not a usable control. The behaviour is call-shape dependent.
+- ADR-0029 also describes the call site as `logger.error(error.stack)`. It is not: `domain-exception.filter.ts` calls Nest's two-argument `Logger.error(message, cause)`, and **where that second argument lands is decided by the `LoggerService` adapter this task writes**. Raw Pino discards a trailing argument; `nestjs-pino` routes it to a field, which `redact` reaches by path.
+
+So decide the approach against your own adapter, measured. The likely answer is still that the call site logs a structured, redacted representation rather than a pre-formatted string — but "no configuration can close this" is not established, and the `msg` assertion above is what tells you which you have.
 
 - [ ] **Step 3: Run both, watch them fail.**
 
