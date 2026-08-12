@@ -81,11 +81,22 @@ redact: {
 }
 ```
 
-What `apps/api` ships is **derived from `RedactedFieldName`, in code**, as two
+**`apps/api` has no logger and no `redact` configuration yet** — `grep -rn
+RedactedFieldName apps/api/src` returns nothing today, and the only mentions
+there are two "arrives later" comments in `domain-exception.filter.ts`. When it
+gets one, its paths must be **derived from `RedactedFieldName` in code**, as two
 paths per name — `name` and `*.name` — because `redact.paths` matches paths and
-neither form implies the other. Written out rather than generated, that list
-would be thirty-four entries and would go stale the first time the shared list
-moved; the point of deriving it is that it cannot.
+neither form implies the other. Written out rather than derived, that list would
+be thirty-four entries and would go stale the first time the shared list moved;
+the point of deriving it is that it cannot.
+
+The _key-matching rule_ is shared too, and separately: `isRedactedKey` in
+`packages/contracts/src/redaction.ts`. What differs per sink is TRAVERSAL — Pino
+walks paths, structlog walks a flat event dict, Sentry walks an arbitrary object
+graph. The decision "does this key name a redacted field?" is one algorithm, and
+copies of it drift exactly as copies of the list would: 27 of 140 probe names
+were measured disagreeing between two of the sinks before
+`redaction-corpus.json` was emitted to hold them together.
 
 One derived path has a cost worth deciding rather than discovering: `*.url`
 reaches `req.url` under `pino-http`'s default request serialiser, so every
