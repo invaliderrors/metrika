@@ -62,9 +62,14 @@ rules), structlog matches the event dict's keys and their word suffixes, and
 Sentry's `beforeSend` walks the event. They agree on the names; they cannot
 agree on the matching, and the module says so.
 
-The block below is the Pino shape those names are derived into.
+**The block below is the original blueprint list, kept for the record. Do not
+copy it into a Pino configuration.** It predates `RedactedFieldName` and is
+wrong in two ways that a copy would inherit silently: it omits `url`, `secret`
+and `fileName` entirely, and it names only the `*.`-wildcard form, so a
+top-level `password` on a log record goes through untouched.
 
 ```ts
+// SUPERSEDED — see `RedactedFieldName`. Retained to show what changed.
 redact: {
   paths: [
     'req.headers.authorization', 'req.headers.cookie', '*.password', '*.token',
@@ -75,6 +80,20 @@ redact: {
   censor: '[REDACTED]',
 }
 ```
+
+What `apps/api` ships is **derived from `RedactedFieldName`, in code**, as two
+paths per name — `name` and `*.name` — because `redact.paths` matches paths and
+neither form implies the other. Written out rather than generated, that list
+would be thirty-four entries and would go stale the first time the shared list
+moved; the point of deriving it is that it cannot.
+
+One derived path has a cost worth deciding rather than discovering: `*.url`
+reaches `req.url` under `pino-http`'s default request serialiser, so every
+request line would lose its path. The answer is for `apps/api` to emit the
+request path under a name that is not `url` — not to drop `url` from the shared
+list, which would narrow a control that was widened deliberately after
+`download_url`, `s3_url` and `upload_url` were measured going through
+untouched.
 
 Two categories deserve comment:
 
