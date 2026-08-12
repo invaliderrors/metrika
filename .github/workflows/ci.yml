@@ -59,7 +59,12 @@ env:
   # `emit-openapi.ts` never calls `app.init()`, so no lifecycle hook fires and
   # `PrismaService.$connect()` is never reached; the variables its own step sets
   # have to be present and well-formed, not reachable.
-  DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+  #
+  # No `?schema=public`. On Prisma 7 the `pg` driver adapter never sees that
+  # parameter — pinned by packages/database/test/adapter.integration.test.ts —
+  # so carrying it here would only teach the next reader that it does
+  # something. Same for the DATABASE_URL in the `openapi` job below. ADR-0037.
+  DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci
 
   # ── NEXT_PUBLIC_* ─────────────────────────────────────────────────────────
   # UNLIKE the variable above, these two ARE load-bearing.
@@ -436,7 +441,7 @@ jobs:
       # `openapi:emit` deliberately carries no `--env-file`.
       - name: Regenerate the OpenAPI document
         env:
-          DATABASE_URL: postgresql://metrika_app:metrika_app@127.0.0.1:5432/metrika_dev?schema=public
+          DATABASE_URL: postgresql://metrika_app:metrika_app@127.0.0.1:5432/metrika_dev
           HEALTH_DEEP_TOKEN: ci-health-deep-token-value
         run: pnpm --filter @metrika/api openapi:emit
 

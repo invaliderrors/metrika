@@ -23,6 +23,13 @@ export interface DatabaseConfig {
    * DDL rights the running process has no business having.
    */
   readonly databaseUrl: string;
+  /**
+   * Ceiling on concurrent backends. On Prisma 6 this was `?connection_limit=`
+   * in the URL; on 7 that parameter is inert and this is the only spelling
+   * that works. Absent means pg.Pool's own default of 10 — which is itself a
+   * change from Prisma 6's `num_cpus * 2 + 1`. See ADR-0037.
+   */
+  readonly maxPoolConnections?: number;
 }
 
 export function createPrismaClient(config: DatabaseConfig): PrismaClient {
@@ -31,7 +38,14 @@ export function createPrismaClient(config: DatabaseConfig): PrismaClient {
   // (spell it `new PrismaPg(url, { schema })`) and `?connection_limit=` (pass
   // pg.Pool options, or a pg.Pool). See ADR-0037.
   const base = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: config.databaseUrl }),
+    adapter: new PrismaPg({
+      connectionString: config.databaseUrl,
+      // Not `max: config.maxPoolConnections`. `exactOptionalPropertyTypes` is
+      // on, and a present key holding `undefined` is not the same thing as an
+      // absent one to pg.Pool — this spelling is what keeps "unset" meaning
+      // pg.Pool's own default.
+      ...(config.maxPoolConnections === undefined ? {} : { max: config.maxPoolConnections }),
+    }),
   });
 
   // `$extends` returns a structurally narrower client (it drops `$on` and
