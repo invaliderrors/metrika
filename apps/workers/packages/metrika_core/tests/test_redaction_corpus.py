@@ -1,4 +1,21 @@
-"""The redaction MATCHING RULE, graded against the same corpus the TypeScript side is.
+"""The redaction rule AND this runtime's sink, graded against the shared corpus.
+
+**Two things are graded here, and the second was missing.** The rule — is this
+key name sensitive? — is graded against `is_redacted_key` directly, which is what
+keeps this port in agreement with `packages/contracts`. That is a MATCHER-level
+check, and a matcher is not a sink: `_redact` could stop being reached, stop
+recursing, or stop being called for some class of key, and every assertion below
+the first heading would stay green because none of them emits a log line.
+
+The other two sinks were already graded through their own traversal — `apps/api`
+runs all 956 rows through the real `createLogger` in six binding shapes, and
+`apps/web` runs them through `redactSentryEvent` nested inside an event — and
+this side ran the corpus through the matcher only. `tests/test_logging.py` covers
+the behavioural half as seventeen names by fifteen spellings, which is a product
+rather than a sum but a SMALLER product than the corpus: it has no negative
+roster to speak of, so `curl`, `cache_keys`, `HTTPStatus`, `rev2` and
+`mysignedurl` were never asserted to survive a real emitted line. The second
+heading below closes that, on the same 956 rows the other two sinks answer for.
 
 `RedactedFieldName` made the redaction KEY LIST one source: it is declared in
 `packages/contracts` and reaches this side as generated code. The matching RULE
@@ -39,8 +56,9 @@ import json
 from pathlib import Path
 
 import pytest
+import structlog
 
-from metrika_core.logging import is_redacted_key
+from metrika_core.logging import configure_logging, is_redacted_key
 
 CORPUS = Path(__file__).resolve().parents[5] / "packages" / "contracts" / "redaction-corpus.json"
 
@@ -73,6 +91,8 @@ def _redacted(row: dict[str, object]) -> bool:
 
 
 CASES = [(_key(row), _redacted(row)) for row in _corpus()]
+
+# ─────────────────────────── the rule ────────────────────────────
 
 
 def test_the_corpus_exists_and_is_not_vacuous() -> None:
@@ -126,3 +146,154 @@ def test_this_matcher_agrees_with_the_shared_corpus(key: str, redacted: bool) ->
         "The rule lives in packages/contracts/src/redaction.ts and this is its Python port — "
         "if the rule changed, port the change; if it did not, this port has drifted"
     )
+
+
+# ─────────────────────────── the SINK ────────────────────────────
+#
+# Everything above grades `is_redacted_key`. Nothing above emits a log line, so
+# every assertion above stays green if `_redact` is removed from the processor
+# chain, stops being reached, or stops being called for some class of key. The
+# rule being right is not the property this control ships.
+
+_SENTINEL = "leaked-value-9c4e2a"
+
+_CENSOR = "[redacted]"
+
+# The two keys structlog's own processors write, so a caller's value cannot
+# round-trip through them. Both are still graded on the VERDICT — a censored one
+# reads `[redacted]` — and only the value comparison is dropped:
+#
+#   * `level` is set by `add_log_level`, which runs BEFORE `_redact`. The verdict
+#     assertion is real: were `level` on the list, the emitted value would be the
+#     censor.
+#   * `timestamp` is set by `TimeStamper`, which runs AFTER `_redact` and
+#     overwrites whatever it did. THE VERDICT ASSERTION IS VACUOUS FOR THIS ONE
+#     ROW, and it is named here rather than silently counted as coverage.
+_PIPELINE_OWNED = frozenset({"level", "timestamp"})
+
+# `BoundLogger.info(event, **kw)` — a kwarg spelled `event` is a TypeError raised
+# before any processor runs, so this row cannot be driven through the sink the
+# way the other 955 are. It is graded instead by
+# `test_the_message_field_is_not_censored`, which is the only shape it has.
+_UNREACHABLE_AS_A_KWARG = frozenset({"event"})
+
+SINK_CASES = [(key, redacted) for key, redacted in CASES if key not in _UNREACHABLE_AS_A_KWARG]
+
+
+def test_the_dropped_cells_are_still_in_the_corpus() -> None:
+    """A declared exclusion has to keep naming something, or it stops being one.
+
+    Both sets above are exclusions from a GENERATED list. If `event` left the
+    corpus, `_UNREACHABLE_AS_A_KWARG` would silently exclude nothing and the
+    comment explaining it would describe a row that no longer exists — which is
+    how a declared gap turns back into an undeclared one.
+    """
+    keys = {key for key, _ in CASES}
+
+    for dropped in _UNREACHABLE_AS_A_KWARG | _PIPELINE_OWNED:
+        assert dropped in keys, (
+            f"{dropped!r} is declared as a dropped or partial cell of the sink grading below, "
+            "and it is not in the corpus any more — remove the declaration or restore the row"
+        )
+
+    assert len(SINK_CASES) == len(CASES) - len(_UNREACHABLE_AS_A_KWARG)
+
+
+@pytest.mark.parametrize(
+    ("key", "redacted"), SINK_CASES, ids=[key or "<empty>" for key, _ in SINK_CASES]
+)
+def test_the_sink_reproduces_every_corpus_verdict(
+    key: str, redacted: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The corpus through the REAL pipeline, which is what the other two sinks do.
+
+    `apps/api` runs all 956 rows through the real `createLogger` in six binding
+    shapes; `apps/web` runs them through `redactSentryEvent` nested inside an
+    event. This runs them through `configure_logging` and reads the emitted JSON
+    — so a `_redact` that is removed, reordered after the renderer, or narrowed
+    to exact equality is red here, whatever the matcher still answers.
+
+    BOTH VERDICTS, and the negative half is the half `tests/test_logging.py`
+    could not reach: its behavioural table has fifteen survivors chosen by hand,
+    and the corpus has forty-odd including `curl`, `cache_keys`, `HTTPStatus`,
+    `rev2` and `mysignedurl`. A control that censors those costs real
+    debuggability, and nothing emitted a line to find out.
+
+    The absence assertion is on the RAW line rather than on the parsed value: a
+    traversal that censored the key while leaving the value somewhere else in the
+    record would satisfy `payload[key] == "[redacted]"` and still have written
+    the secret down.
+    """
+    configure_logging("info")
+    structlog.get_logger().info("probe", **{key: _SENTINEL})
+    line = capsys.readouterr().out.strip().splitlines()[-1]
+    payload = json.loads(line)
+
+    assert key in payload, f"{key!r} did not reach the emitted line at all"
+
+    if redacted:
+        assert payload[key] == _CENSOR, (
+            f"{key!r} is declared redacted by the shared corpus and this sink emitted "
+            f"{payload[key]!r}"
+        )
+        assert _SENTINEL not in line, (
+            f"{key!r} was censored in place and the value survived elsewhere: {line}"
+        )
+        return
+
+    assert payload[key] != _CENSOR, (
+        f"{key!r} is declared readable by the shared corpus and this sink censored it — "
+        "over-redaction costs the debuggability the negative roster exists to protect"
+    )
+    if key not in _PIPELINE_OWNED:
+        assert payload[key] == _SENTINEL, f"{key!r} reached the line as {payload[key]!r}"
+
+
+def test_the_traversal_is_one_level_deep_which_is_the_declared_limit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The one thing this sink does NOT reach, asserted so it is a decision.
+
+    `_redact` iterates the event dict's own keys and stops. A redacted name
+    nested inside a value — a dict, or a dict inside a list — is not visited, and
+    goes out verbatim. MEASURED, both shapes below, through the real pipeline.
+
+    The other two sinks do not share this limit: `apps/api`'s walk rebuilds the
+    whole object graph and `apps/web`'s cleans an arbitrary event, both to a
+    declared depth. So `docs/OBSERVABILITY.md` §3's "one list, three sinks" is
+    true of the LIST and of the RULE, and this is where it stops being true of
+    the reach.
+
+    Closing it is a traversal, not a line — the sibling walks carry cycle
+    handling, self-serialising values, per-entry fail-closed boundaries and a
+    depth cap because each of those was a measured defect. This test is here so
+    that whoever writes it starts from a red assertion rather than from a
+    surprise, and so that a caller reading `docs/OBSERVABILITY.md` knows to put
+    the sensitive field at the top level where the control can see it.
+    """
+    configure_logging("info")
+    structlog.get_logger().info(
+        "probe",
+        payload={"password": _SENTINEL},
+        items=[{"signed_url": _SENTINEL}],
+    )
+    line = capsys.readouterr().out.strip().splitlines()[-1]
+    payload = json.loads(line)
+
+    assert payload["payload"] == {"password": _SENTINEL}
+    assert payload["items"] == [{"signed_url": _SENTINEL}]
+
+
+def test_the_message_field_is_not_censored(capsys: pytest.CaptureFixture[str]) -> None:
+    """`event` is a corpus row that cannot be a kwarg, so it is graded here.
+
+    It is structlog's message field, and it is on the negative roster for a
+    reason worth stating: a rule that matched it would replace the text of every
+    log line this runtime emits with `[redacted]`, which is indistinguishable
+    from having no logs.
+    """
+    configure_logging("info")
+    structlog.get_logger().info("probe")
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+    assert payload["event"] == "probe"
