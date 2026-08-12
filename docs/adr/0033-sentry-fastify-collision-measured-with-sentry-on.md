@@ -1,6 +1,17 @@
 # ADR-0033 — ADR-0032 measured Sentry with Sentry switched off; obligation 2's severity is correct
 
-**Status:** Accepted, supersedes [ADR-0032](./0032-sentry-fastify-collision-is-swallowed.md) · **Date:** 2026-08-12 · **Restores** the
+**Status:** Superseded by [ADR-0034](./0034-sampling-is-a-floor-not-a-ceiling.md) · **Date:** 2026-08-12
+
+> **Two statements in this document are wrong, and the body below is kept as
+> written.** Its Consequences claim that a low `TRACES_SAMPLE_RATE` "cuts both
+> ways" and can drop a caller's sampled trace: measured at rate 0, a `-01` caller
+> exports in full and only `-00` is dropped, so the rate is a floor and never a
+> ceiling. And its §3 credits `dsnConfigured` with detecting a return to the
+> DSN-less state: `getOptions().dsn` echoes `''` back, so that field read `true`
+> in exactly that state. ADR-0034 carries both measurements, and restates
+> everything here that survives them.
+
+· This document supersedes [ADR-0032](./0032-sentry-fastify-collision-is-swallowed.md) · **Restores** the
 severity claim in obligation 2 of [ADR-0029](./0029-observability-stack.md),
 which ADR-0032 wrongly replaced. ADR-0029's obligation 2 therefore stands
 **entirely unchanged**, mechanism and severity both, as corrected for
