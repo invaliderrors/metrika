@@ -31,6 +31,25 @@ export default [
     rules: { 'no-restricted-properties': 'off' },
   },
   {
+    // `test/fixtures/**.mjs` is a PROCESS, not a module: the telemetry suite
+    // spawns it to run the built application under plain `node`, because
+    // require-in-the-middle — which every OpenTelemetry instrumentation patches
+    // through — does not intercept module loading under Vitest. The shared
+    // profiles give Node globals to `.ts` files only (`type-checked` scopes
+    // itself to `**/*.ts`), so without this the fixture's `process`,
+    // `setImmediate` and `fetch` are `no-undef` errors.
+    //
+    // Named INDIVIDUALLY rather than pulling in a globals package: these three
+    // are what a spawned entry point needs, and a fixture reaching for a fourth
+    // should have to say so here. `process` is `readonly`, so the
+    // `no-restricted-properties` ban on `process.env` above still applies —
+    // the fixture takes its one argument from `process.argv` for that reason.
+    files: ['test/fixtures/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', setImmediate: 'readonly', fetch: 'readonly' },
+    },
+  },
+  {
     // `metrikaDto()` is a convention until something enforces it: `ZodResponse`
     // has overloads that accept a non-codec DTO and silently check the weaker
     // side (input<T> instead of output<T>), so `class Dto extends

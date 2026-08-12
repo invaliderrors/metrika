@@ -33,6 +33,26 @@ A support ticket saying "my quote failed, request ID `req_01H...`" resolves to a
 
 Temporal search attributes are what make workflows findable: `MetrikaOrganizationId`, `MetrikaModelVersionId`, `MetrikaQuoteId`, `MetrikaRequestId`. An operator investigating "what happened to this quote" queries Temporal directly by quote ID rather than grepping.
 
+### What of the chain exists today
+
+The diagram above is the end state. Four of its six links are built and asserted; the two that are not are the two that need a workflow, and there is no workflow yet.
+
+| Link                                                          | State  | Where                                                                                                                                                                                             |
+| ------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser generates `X-Request-Id` and sends it                 | built  | `apps/web/src/lib/request-id/`, attached by `apiFetch`                                                                                                                                            |
+| API adopts or generates it; starts the root span              | built  | `request-context.middleware.ts` + `@fastify/otel`; the span JOINS an incoming `traceparent`                                                                                                       |
+| Every API log line carries `requestId` + `traceId` + `spanId` | built  | `infrastructure/telemetry/tracing.ts` — the Pino instrumentation's mixin plus a `logHook` reading the request context                                                                             |
+| `userId` / `organizationId` on the same line                  | **no** | there is no authentication yet (Phase 1). `organizationId` crosses as baggage when a caller supplies it, and is bound on the Python side                                                          |
+| Workflow start → Temporal search attributes + memo            | **no** | no workflow exists; ADR-0029 obligation 10 provisions the attributes when one does                                                                                                                |
+| Activity dispatch → OTel baggage → Python worker              | half   | the API SETS `metrika.request_id` as baggage and propagates it on every outbound call; `metrika_core.telemetry` reads it and binds it to every structlog line. Nothing dispatches an activity yet |
+| API error response carries `{ error: { requestId } }`         | built  | `DomainExceptionFilter`                                                                                                                                                                           |
+
+Two things are worth knowing before writing anything that depends on this.
+
+**A request ID arriving is not evidence that the trace joined.** Measured on both sides: dropping baggage leaves a worker's span correctly parented and merely empties `requestId`, while dropping trace context roots the span. They are two mechanisms with two failure modes, and `apps/api/test/telemetry.integration.test.ts` asserts them apart from each other for that reason.
+
+**Nothing exports a trace unless a deployment configures one.** `OTLP_TRACES_ENDPOINT` empty means no exporter is constructed at all; the correlation fields still reach every log line, because they come from the live trace context rather than from the exporter. `pnpm infra:up` does not start a collector.
+
 ---
 
 ## 3. Logging
