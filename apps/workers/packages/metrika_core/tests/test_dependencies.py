@@ -74,6 +74,36 @@ _METRIKA_CORE = frozenset(
         "typing-inspection",
         # Logging.
         "structlog",
+        # Telemetry (ADR-0029). Three declared pins and eight transitives, and
+        # the transitives are the reason this entry is worth reading rather
+        # than skimming: `requests`, `certifi`, `charset-normalizer` and `idna`
+        # are an HTTP CLIENT reaching a worker whose whole security story is
+        # "it can talk to S3 and Temporal and nothing else" (ADR-0007).
+        #
+        # They arrive from `opentelemetry-exporter-otlp-proto-http`, and that
+        # is the cost ADR-0029 chose knowingly: the `-grpc` exporter's cost is
+        # `grpcio`, a compiled extension with a per-platform wheel matrix, and
+        # something has to carry spans out of the process. The mitigation is
+        # not in this list — it is that `configure_telemetry` builds no
+        # exporter at all unless `METRIKA_WORKER_OTLP_ENDPOINT` is set, so the
+        # one URL `requests` is ever pointed at is a deployment's own
+        # collector.
+        #
+        # `opentelemetry-semantic-conventions` resolving to `0.65b0` — a BETA
+        # version string — is normal for that package and is pinned `==` by
+        # `opentelemetry-sdk==1.44.0` itself. It is recorded so nobody "fixes"
+        # it.
+        "certifi",
+        "charset-normalizer",
+        "googleapis-common-protos",
+        "idna",
+        "opentelemetry-api",
+        "opentelemetry-exporter-otlp-proto-common",
+        "opentelemetry-exporter-otlp-proto-http",
+        "opentelemetry-proto",
+        "opentelemetry-sdk",
+        "opentelemetry-semantic-conventions",
+        "requests",
         # Temporal, and its transitives. `types-protobuf` is a RUNTIME
         # requirement of `temporalio` rather than a stub package it declares for
         # its consumers — surprising, and the reason it is called out here

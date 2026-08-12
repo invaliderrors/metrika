@@ -26,12 +26,12 @@ const CODE = withoutComments(SOURCE);
 /**
  * Every way this module is permitted to reach `process.env`, exhaustively.
  *
- * The two `NEXT_PUBLIC_` reads are the point of the file: Next's support for
- * them is a TEXTUAL substitution performed at build time on exactly the string
+ * The `NEXT_PUBLIC_` reads are the point of the file: Next's support for them is
+ * a TEXTUAL substitution performed at build time on exactly the string
  * `process.env.NEXT_PUBLIC_WHATEVER`, so the full literal form is the only one
  * that survives into the browser bundle.
  *
- * The third entry is the server half, and it is a different thing rather than an
+ * The last entry is the server half, and it is a different thing rather than an
  * exception: `parseServerEnv(process.env)` hands the whole object to a pure
  * function that runs on the server, is never inlined and is never expected to
  * be. Whitelisting the call as written keeps it from having to be re-derived by
@@ -43,17 +43,27 @@ const CODE = withoutComments(SOURCE);
 const SANCTIONED_READS = [
   'process.env.NEXT_PUBLIC_API_BASE_URL',
   'process.env.NEXT_PUBLIC_DEFAULT_LOCALE',
+  'process.env.NEXT_PUBLIC_SENTRY_DSN',
   'parseServerEnv(process.env)',
 ];
 
 describe('the client half of the env module', () => {
   it('reads each NEXT_PUBLIC_ key by its full literal text', () => {
+    // Derived from the whitelist rather than written out again, so a key added
+    // above cannot be left uncovered here — the failure mode this file's
+    // predecessor had, in the other direction.
+    const publicReads = SANCTIONED_READS.filter((form) =>
+      form.startsWith('process.env.NEXT_PUBLIC_'),
+    );
+
+    // Vacuity control: a filter that stopped matching would make the loop below
+    // assert nothing at all.
+    expect(publicReads.length).toBeGreaterThan(1);
     // Asserted against CODE, not SOURCE. Reading the stripped text is also the
     // vacuity control for `withoutComments`: a stripper that ate the module
     // would satisfy the whitelist below by leaving nothing to check, and fails
     // here instead.
-    expect(CODE).toContain('process.env.NEXT_PUBLIC_API_BASE_URL');
-    expect(CODE).toContain('process.env.NEXT_PUBLIC_DEFAULT_LOCALE');
+    for (const read of publicReads) expect(CODE).toContain(read);
   });
 
   /**

@@ -14,7 +14,23 @@
       //
       // `$TURBO_ROOT$` is what lets a package's inputs reach outside its own
       // directory.
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.env.example"]
+      //
+      // The second entry is the same hazard on a different file.
+      // test/telemetry.test.ts reads `metrika_core/telemetry.py` and asserts the
+      // five strings the correlation chain crosses the language boundary on —
+      // the baggage key and the three log field names. Nothing mechanical keeps
+      // the two sides in agreement, and the failure is silent on both: a
+      // worker's span stays correctly parented and merely loses `requestId`.
+      //
+      // MEASURED here too, before the entry was added: prime green, change
+      // BAGGAGE_REQUEST_ID in the Python file, re-run — "cache hit, replaying
+      // logs", exit 0. With the entry, the same edit misses the cache and the
+      // suite goes red.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.env.example",
+        "$TURBO_ROOT$/apps/workers/packages/metrika_core/src/metrika_core/telemetry.py"
+      ]
     }
   }
 }

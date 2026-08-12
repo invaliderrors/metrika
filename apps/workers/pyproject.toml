@@ -142,12 +142,37 @@ known-first-party = ["metrika_core", "metrika_geometry", "metrika_slicer"]
 # unless every caller remembers `by_alias=True` — a worker's response silently
 # failing Zod's parse on the other side, in exchange for a naming convention.
 #
+# S105 ("possible hardcoded password") is the second waiver, and it arrived with
+# `RedactedFieldName` — the shared redaction list that `packages/contracts`
+# emits so that Pino, structlog and Sentry cannot drift apart. That enum's whole
+# content is the NAMES of credential-bearing fields, so it generates
+#
+#     password = "password"
+#     secret = "secret"
+#     token = "token"
+#
+# and S105 fires on all three. It is right in general and structurally wrong
+# here: the rule cannot tell a field NAME from a field VALUE, and this file
+# contains nothing but names. MEASURED: 3 errors, exactly those three lines.
+#
+# A generated file cannot carry `# noqa`, and rewriting the values (`passwordKey`
+# and so on) would break the one thing the enum is for — the strings must be the
+# literal field names each sink matches on.
+#
+# WHAT REPLACES THE RULE, because waiving a security check and leaving nothing
+# behind is how an exemption becomes a hole. Two assertions in
+# `packages/metrika_core/tests/test_generated_contracts.py`:
+# `test_every_generated_enum_member_is_its_own_name` (so an S105-shaped line in
+# this file can only ever be `name = "name"`) and
+# `test_no_generated_field_carries_a_default` (so a literal cannot enter through
+# a schema default, which is the other shape S105 would have caught).
+#
 # SCOPED TO THE GENERATED DIRECTORY, and asserted to stay that way:
-# `packages/metrika_core/tests/test_generated_contracts.py` fails if this entry
-# names anything else or waives any rule but N815. A hand-written module has no
-# excuse for a camelCase attribute; a file nobody may edit by hand has nothing
-# else it could do.
-"packages/metrika_core/src/metrika_core/contracts/**" = ["N815"]
+# `test_generated_contracts.py` fails if this entry names anything else or
+# waives any rule but these two. A hand-written module has no excuse for a
+# camelCase attribute; a file nobody may edit by hand has nothing else it could
+# do.
+"packages/metrika_core/src/metrika_core/contracts/**" = ["N815", "S105"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DELIBERATELY NO `[tool.ruff.format]` TABLE, and this is where you were about

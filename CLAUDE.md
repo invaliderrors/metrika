@@ -4,19 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0A, Plan 0B-1 and Plan 0B-2 are complete: the monorepo and quality gates,
-`packages/contracts`, `packages/database` (Prisma + RLS + soft delete),
-`packages/testing` (Testcontainers Postgres), `apps/api` (NestJS on Fastify,
-health probes, OpenAPI 3.1) and `apps/web` (Next.js App Router, Tailwind v4,
-shadcn primitives, `next-intl` on `es-CO`, a Playwright smoke suite) exist and
-are tested.
+Phase 0A and Plans 0B-1, 0B-2, 0B-3 and 0C are complete: the monorepo and quality
+gates, `packages/contracts`, `packages/database` (Prisma + RLS + soft delete),
+`packages/testing` (Testcontainers Postgres and Temporal), `apps/api` (NestJS on
+Fastify, health probes, OpenAPI 3.1, an OpenTelemetry SDK sharing one provider
+with Sentry, and a redacting Pino sink) and `apps/web` (Next.js App Router,
+Tailwind v4, shadcn primitives, `next-intl` on `es-CO`, a Playwright smoke suite,
+`@sentry/nextjs` behind a redacting `beforeSend`) exist and are tested.
 
 `apps/web` is a **shell**, and the gap matters when reading the frontend rules
 below: one static page, no data fetching, no route groups, and none of
 `packages/api-client`, `packages/ui`, TanStack Query, either Zustand store or
 the viewer. The ESLint boundary zones that will fence them (`webBoundary`,
 `serverActionBoundary`, `featureBoundary`) do exist and are fixture-tested.
-`apps/workers` exists: a uv workspace with `metrika_core` (settings, structlog, S3, Temporal base) and two worker entry points with a stub activity each. No geometry, no slicing — those are Phases 3 and 6.
+`apiFetch` and the request-ID generator exist and are tested, and **nothing calls
+them yet** — no browser request in a running app carries `X-Request-Id`.
+`apps/workers` exists: a uv workspace with `metrika_core` (settings, structlog +
+redaction, S3, Temporal base, OTel + a Temporal tracing interceptor) and two
+worker entry points with a stub activity each. No geometry, no slicing — those
+are Phases 3 and 6.
+
+Observability is Plan 0C's spine and not the end state:
+[`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md) §2 has the link-by-link table
+and the gap list — no metrics, no OTLP log pipeline, no Temporal search
+attributes, no `@prisma/instrumentation`, and buffered spans lost on SIGTERM.
+
+**There are FOUR log/error sinks, not three**, and all four are controlled:
+Pino and a Sentry client in `apps/api`, structlog in `apps/workers`, and Sentry
+in `apps/web`. Both Sentry clients share one traversal
+(`packages/contracts/src/sentry-event.ts`) rather than a copy each. What is still
+open there is a thrown **plain object**, whose properties reach
+`event.extra.__serialized__` filtered by key name only, where Pino's
+`serialiseError` reduces the same throw to four fields.
+
+**A fifth guarded path is not a sink:** OpenTelemetry spans leave by their own
+door, and `RedactingSpanProcessor` guards it — one processor upstream of both the
+OTLP exporter and Sentry transactions. It reuses `isRedactedKey` and adds **no**
+traversal: a span attribute map is flat, so only the key decision is shared. Any
+new export path is the thing to check next — the leak it closed was an outbound
+`fetch` URL that all four log sinks were correctly silent about.
 
 Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
 which phase and which sub-plan the work belongs to.
@@ -46,7 +72,7 @@ pnpm lint                      # eslint --max-warnings=0 across the workspace
 pnpm typecheck                 # tsc -b --force (the --force is load-bearing; see .github/workflows/ci.yml)
 pnpm test:unit
 pnpm test:integration          # Testcontainers; Docker must be running
-pnpm infra:up | infra:down | infra:reset   # postgres, redis, minio, mailpit
+pnpm infra:up | infra:down | infra:reset   # postgres, redis, minio, temporal, temporal-ui, mailpit — no OTLP collector
 pnpm db:generate | db:migrate | db:deploy | db:reset | db:studio
 pnpm --filter @metrika/web test:e2e        # Playwright; builds and starts apps/web itself on 127.0.0.1:3000
 pnpm --filter @metrika/api openapi:emit    # regenerate apps/api/openapi/openapi.json; CI fails if this produces a diff
@@ -92,6 +118,13 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
 - Exact results (watertight, manifold, triangle count, AABB, volume) get typed columns. Heuristics (wall thickness, overhangs, fragility) live in JSONB with `{value, method, confidence}` and are labelled as heuristics in the UI. A `BLOCKER`-severity issue may only ever have `certainty: EXACT`.
 - A non-watertight mesh has **no volume**. Return `null`, never a plausible-looking number.
 - No geometry work inside an HTTP request. Ever.
+
+**Observability and redaction**
+
+- **The redaction list and the matching rule are ONE thing, in `packages/contracts/src/redaction.ts`.** `RedactedFieldName` and `isRedactedKey` are both defined there and every sink imports them. Do not write a second matcher: it was two hand-written copies once, and 27 of 140 probe names were measured disagreeing. What a sink owns is its TRAVERSAL and nothing else.
+- **Adding or removing a name means running `pnpm contracts:emit` in the same commit.** It regenerates `metrika_core.contracts` and `packages/contracts/redaction-corpus.json` (956 declared verdicts, which every sink grades itself against). CI's `contracts` job byte-diffs both.
+- **`startTelemetry()` must run before the application graph is loaded.** `@opentelemetry/instrumentation-pino` and `-nestjs-core` patch at require time, so `main.ts` uses a dynamic `import('./bootstrap.js')` deliberately. Turning that into a static import costs `traceId` on every log line, with no other symptom — `loadedTooEarly` throws rather than degrading, so do not route around it.
+- Nothing untrusted goes in a log `msg`. Redaction is field-granular, so a secret inside free text is not reachable by an allowlist; put the cause in `err`.
 
 **Boundaries**
 

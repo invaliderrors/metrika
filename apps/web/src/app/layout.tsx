@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getTranslations } from 'next-intl/server';
+import { NavigationRequestId } from '@/components/navigation-request-id';
 import { clientEnv } from '@/config/env';
 import './globals.css';
 
@@ -98,6 +99,13 @@ export async function generateMetadata(): Promise<Metadata> {
  * reachable by the first Tab press. `<link>` above it is not focusable, and
  * React hoists it into the head regardless. `sr-only` until focused, so it
  * costs sighted users nothing and costs keyboard users nothing to find.
+ * `<NavigationRequestId />` renders nothing at all, so it is not focusable
+ * either and the property survives — `e2e/shell.spec.ts` asserts it directly.
+ *
+ * That component is mounted HERE, in the root layout, rather than beside the
+ * first thing that fetches. The correlation ID has to change on every
+ * navigation the application makes, not on the navigations one feature knows
+ * about, and the root layout is the only component that survives all of them.
  */
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const locale = await getLocale();
@@ -107,6 +115,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang={locale}>
       <body className="bg-surface text-surface-foreground antialiased">
         <link rel="preconnect" href={API_ORIGIN} />
+        <NavigationRequestId />
         <a
           href="#main"
           className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:rounded-card focus:bg-brand focus:px-4 focus:py-2 focus:text-brand-foreground"

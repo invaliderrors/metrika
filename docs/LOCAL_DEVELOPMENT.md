@@ -40,7 +40,7 @@ whole namespace, so an unrecognised variable in it is a startup error — right
 for a typo, hostile over a prefix somebody else writes to. `METRIKA_` is shared:
 `packages/testing` publishes `METRIKA_TEST_DATABASE_URL`, and measured under the
 wider prefix, a shell that had run the Node integration harness could not
-construct worker settings at all. The six variables are documented in
+construct worker settings at all. The seven variables are documented in
 `.env.example`; none of them is a database URL, and none ever will be
 (ADR-0007).
 
@@ -289,6 +289,8 @@ METRIKA_WORKER_TEMPORAL_TASK_QUEUE=geometry-small METRIKA_WORKER_S3_BUCKET=metri
 
 Both processes refuse to start without those two variables rather than defaulting — a worker polling a queue nobody publishes to looks exactly like an idle system. `Ctrl-C` (or SIGTERM) shuts one down gracefully; ignoring SIGTERM would mean every deploy killing a worker mid-poll, so `metrika_core.temporal.run_worker` handles it.
 
+**Telemetry needs no local collector.** `METRIKA_WORKER_OTLP_ENDPOINT` is unset by default and no exporter is constructed without it, so a worker run this way emits spans nowhere and still writes `requestId`, `traceId` and `spanId` onto every log line inside an activity — those come from the live OpenTelemetry context, not from an exporter. Set the variable only when there is something listening on `/v1/traces`.
+
 _(Plan 0B-3, intended and not yet done)_ — `debugpy` in dev mode, with the corresponding attach configuration committed.
 
 **Database** — `pnpm db:studio`, or connect directly. Note that RLS is active locally: a `psql` session **as `metrika_app`** sees nothing until `SET app.current_org_id`. This is intentional — local development should behave like production, and discovering RLS in staging is worse than discovering it on day one. `metrika`, the owner role the compose stack creates and that migrations run as, is a Postgres superuser and therefore bypasses RLS unconditionally — which is exactly why `DATABASE_URL` names `metrika_app` and only `DATABASE_ADMIN_URL` names `metrika`. Connect as `metrika` and you are not testing what production does. Both halves are asserted against a live connection rather than trusted: `packages/database/test/harness.integration.test.ts` checks that `metrika_app` is neither `SUPERUSER` nor `BYPASSRLS`, and `packages/database/test/rls.integration.test.ts` checks that `relforcerowsecurity` is actually set on the applied table.
@@ -350,6 +352,20 @@ WEB_PORT=3000
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 NEXT_PUBLIC_DEFAULT_LOCALE=es-CO
 
+# --- Telemetry ---
+# All four are read and all four default to OFF, which is the point: an empty
+# OTLP endpoint constructs no exporter at all, and an empty SENTRY_DSN builds a
+# Sentry client with ZERO integrations. Correlation does not depend on either —
+# `requestId`, `traceId` and `spanId` come from the live trace context, so they
+# are on every log line whether or not anything is exported.
+SENTRY_DSN=
+OTLP_TRACES_ENDPOINT=
+TRACES_SAMPLE_RATE=1
+NEXT_PUBLIC_SENTRY_DSN=
+
+# --- Workers --- (METRIKA_WORKER_*; the OTLP one is commented out in the file)
+# METRIKA_WORKER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+
 # Present in docker compose, wired up in later plans
 REDIS_URL=redis://localhost:6379
 S3_ENDPOINT=http://localhost:9000
@@ -357,5 +373,15 @@ S3_BUCKET=metrika-local
 S3_FORCE_PATH_STYLE=true
 SMTP_URL=smtp://localhost:1025
 ```
+
+Both `SENTRY_DSN` keys are safe to populate: each Sentry client runs the shared
+redaction walk in its `beforeSend`, so an event is cleaned before it leaves the
+process — see [OBSERVABILITY.md](./OBSERVABILITY.md#the-sinks-counted--there-are-four-and-all-four-are-controlled).
+Empty is still the default, because a local run has nothing to send events to.
+
+Note what an empty DSN costs you as a local signal, since it is not obvious:
+`@sentry/node` constructs **no integrations at all** for a client with no DSN, so
+running locally with it empty tells you nothing about how Sentry behaves — the
+integration suite runs against a local sink for exactly that reason.
 
 Configuration is read in exactly two files — `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts`, both of which now exist. Each is a Zod schema parsed at startup. A missing or malformed value crashes the process immediately with a readable list of what is wrong — never a mysterious `undefined` three layers into a request. A lint rule forbids `process.env` everywhere else; `apps/web/playwright.config.ts` carries the single narrow exemption, documented in the file and in `apps/web/eslint.config.js`, because a Playwright config has to load with no environment at all.

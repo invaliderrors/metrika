@@ -1,6 +1,8 @@
 /**
- * Declares the two `NEXT_PUBLIC_` keys on `NodeJS.ProcessEnv`, so that the
- * literal accesses at the bottom of `./env.ts` compile.
+ * Declares every `NEXT_PUBLIC_` key on `NodeJS.ProcessEnv`, so that the literal
+ * accesses at the bottom of `./env.ts` compile. Three of them today; the count
+ * is deliberately not written down, because a count in prose is the kind of
+ * claim that goes stale the moment a key is added and nothing reports it.
  *
  * This exists because of a head-on collision between two requirements that are
  * both non-negotiable:
@@ -46,5 +48,6 @@ declare namespace NodeJS {
   interface ProcessEnv {
     NEXT_PUBLIC_API_BASE_URL?: string;
     NEXT_PUBLIC_DEFAULT_LOCALE?: string;
+    NEXT_PUBLIC_SENTRY_DSN?: string;
   }
 }

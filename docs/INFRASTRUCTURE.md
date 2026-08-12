@@ -178,13 +178,22 @@ infra/terraform/
 `.github/workflows/ci.yml` — **what runs today**, on every pull request and on
 pushes to `main`:
 
-| Job           | Runs                                                                                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `verify`      | `pnpm install --frozen-lockfile` · `format:check` · `build` · `lint` (`--max-warnings=0`) · `typecheck` · `test:unit` · the two suppression greps            |
-| `integration` | `pnpm build` then `pnpm test:integration` — Testcontainers starts its own Postgres, so there is no `services:` block and no `docker compose up`              |
-| `web`         | `pnpm build` · `playwright install --with-deps chromium` · `pnpm --filter @metrika/web test:e2e` — Playwright's `webServer` builds and starts the app itself |
-| `openapi`     | `pnpm --filter @metrika/api openapi:emit` then `git diff --exit-code -- apps/api/openapi/openapi.json`                                                       |
-| `contracts`   | `pnpm contracts:emit` then `git diff --exit-code` on the generated pydantic models — the only job besides `verify`/`integration` that installs `uv`          |
+| Job           | Runs                                                                                                                                                                                                      |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify`      | `pnpm install --frozen-lockfile` · `format:check` · `build` · `lint` (`--max-warnings=0`) · `typecheck` · `test:unit` · the two suppression greps                                                         |
+| `integration` | `pnpm build` then `pnpm test:integration` — Testcontainers starts its own Postgres, so there is no `services:` block and no `docker compose up`                                                           |
+| `web`         | `pnpm build` · `playwright install --with-deps chromium` · `pnpm --filter @metrika/web test:e2e` — Playwright's `webServer` builds and starts the app itself                                              |
+| `openapi`     | `pnpm --filter @metrika/api openapi:emit` then `git diff --exit-code -- apps/api/openapi/openapi.json`                                                                                                    |
+| `contracts`   | `pnpm contracts:emit` then `git diff --exit-code` on the generated pydantic models **and on `packages/contracts/redaction-corpus.json`** — the only job besides `verify`/`integration` that installs `uv` |
+
+The corpus path was added by Plan 0C Task 6 and is not decoration.
+`scripts/contracts-emit.mjs` writes that file as well as the models, and this
+step named only the models directory. MEASURED: delete a row from the corpus and
+`git diff --exit-code -- apps/workers/…/contracts/` exits **0** — the gate did
+not merely pass, the corpus was outside it. It is the 956 declared verdicts that
+every redaction traversal grades itself against, and `apps/workers` reads it
+from disk, so a stale copy is every sink agreeing with a snapshot of a rule that
+has moved.
 
 **There is deliberately no `workers` job, and its absence is not an omission.**
 `apps/workers` exposes `lint`, `typecheck`, `test:unit` and `format:check` as

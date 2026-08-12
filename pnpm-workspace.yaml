@@ -49,3 +49,18 @@ allowBuilds:
   # absent entry is what ERR_PNPM_IGNORED_BUILDS fails on.
   '@parcel/watcher': false
   '@swc/core': false
+  # DENIED. Reached via @sentry/nextjs@10.70.0 → @sentry/bundler-plugin-core →
+  # @sentry/cli, whose install script downloads a prebuilt `sentry-cli` binary.
+  # ADR-0029 obligation 12 measured both halves of this entry: WITHOUT it a
+  # from-scratch `pnpm install` exits 1 with
+  # `ERR_PNPM_IGNORED_BUILDS: @sentry/cli@2.58.6` for the WHOLE repository, not
+  # just apps/web — reproduced here before the line was added — and WITH the
+  # denial `pnpm install` exits 0 and `next build` exits 0 with
+  # `withSentryConfig` applied. The binary exists to create releases and upload
+  # source maps; `next.config.ts` disables both (`sourcemaps.disable`,
+  # `telemetry: false`), so nothing in this repository invokes it.
+  #
+  # `false` rather than deletion, for the reason recorded above @scarf/scarf: an
+  # absent entry is what ERR_PNPM_IGNORED_BUILDS fails on, so removing this line
+  # re-breaks every install rather than restoring a default.
+  '@sentry/cli': false
