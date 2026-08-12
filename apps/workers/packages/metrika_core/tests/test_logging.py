@@ -117,7 +117,21 @@ def _upper(name: str) -> str:
     return f"{name[0].upper()}{name[1:]}"
 
 
+def _acronym(name: str) -> str:
+    """`signedUrl` -> `signedURL`: the last word as an acronym."""
+    head, _, last = _snake(name).rpartition("_")
+    return head.replace("_", "") + last.upper()
+
+
 # EVERY SPELLING OF ONE FIELD, as a table, and the table is the point.
+#
+# THE EXHAUSTIVE GATE IS NOT THIS TABLE — it is
+# `packages/contracts/redaction-corpus.json`, which `test_redaction_corpus.py`
+# grades this module's matcher against and `packages/contracts` grades its own
+# against. That is what makes a one-sided change to the RULE go red. This table
+# is the BEHAVIOURAL half: it drives the whole structlog pipeline and asserts a
+# real emitted line says `[redacted]`, which the corpus (a matcher-level check)
+# cannot.
 #
 # The first version of this file parametrised over the redacted names and
 # exercised two shapes: the name itself and an `upstream`-prefixed one. That is
@@ -149,6 +163,14 @@ SPELLINGS: tuple[tuple[str, Callable[[str], str]], ...] = (
     # The boundary removed entirely.
     ("concatenated", lambda name: name.lower()),
     ("concatenated plural", lambda name: f"{name.lower()}s"),
+    # The acronym, which is how a developer writes `URL` and `ID`. THE ROW THAT
+    # WAS MISSING: this table had no acronym transform at all, so its `ordinal`
+    # row produced `signedUrl2` and never the `signedURL2` the finding named —
+    # and `signedURLs` tokenised to `("ur", "ls")` and matched nothing, with the
+    # whole gate green. The table proves what it contains, not what it omits.
+    ("acronym", _acronym),
+    ("acronym plural", lambda name: f"{_acronym(name)}s"),
+    ("acronym ordinal", lambda name: f"{_acronym(name)}2"),
 )
 
 

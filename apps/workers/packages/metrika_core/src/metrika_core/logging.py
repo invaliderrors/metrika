@@ -63,7 +63,27 @@ REDACTED_FIELD_NAMES: frozenset[str] = frozenset(name.value for name in Redacted
 # DIGITS ARE THEIR OWN WORD (`[0-9]+` rather than folding them into `[a-z0-9]+`),
 # so `url2` is `("url", "2")` and not one opaque token. Measured before the
 # change: `signedURL2` and `presigned_url_v2` both returned False.
-_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]*|[a-z]+|[0-9]+")
+#
+# `[A-Z]+s(?![a-z])` IS FIRST, AND THE ORDER IS THE WHOLE OF IT. An acronym
+# plural has to stay one word: `URLs` is `("urls",)`, which the plural rule below
+# reduces to `url`. Second in the order it never fires, because
+# `[A-Z]+(?![a-z])` backtracks off the lowercase `s` and matches `UR` —
+# MEASURED, and the result is `("ur", "ls")`, which matches nothing at all.
+# `signedURLs`, `downloadURLs`, `presignedURLs` and `URLs` were all going
+# through untouched, which is a leaked presigned URL from any batch step that
+# spells the acronym.
+#
+# `HTTPStatus` still splits `("http", "status")` and `AWSSecret` still splits
+# `("aws", "secret")`; neither is captured by the plural branch, which requires
+# a literal lowercase `s`.
+#
+# THIS REGEX IS A PORT, not an original. The rule lives in
+# `packages/contracts/src/redaction.ts` and `tests/test_redaction_corpus.py`
+# grades this side against the corpus emitted from it — because two hand-written
+# implementations of one algorithm drift exactly as two copies of the key list
+# would, and review measured 27 of 140 names disagreeing before that corpus
+# existed.
+_WORDS = re.compile(r"[A-Z]+s(?![a-z])|[A-Z]+(?![a-z])|[A-Z][a-z]*|[a-z]+|[0-9]+")
 
 # A trailing ordinal. `url2`, `signed_url_v2` and `attempt_3` all end in one, and
 # a number bolted onto a name does not change what the field holds.
