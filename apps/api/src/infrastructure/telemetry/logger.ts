@@ -175,9 +175,15 @@ const CONTROL_DISABLING_CHILD_OPTIONS = ['redact', 'serializers', 'formatters'] 
 
 function rejectControlDisablingOptions(options: object | undefined): void {
   if (options === undefined) return;
-  const disabled = CONTROL_DISABLING_CHILD_OPTIONS.filter((option) =>
-    Object.hasOwn(options, option),
-  );
+  // `in`, not `Object.hasOwn`. pino reads `options.redact` as a plain property,
+  // so `child({}, Object.create({ redact }))` reached it while `hasOwn` said the
+  // option was absent — MEASURED, pino installed the replacement redactor. (No
+  // leak followed, because the walk and `serialiseError` cover everything those
+  // paths do; the guard is still the thing that must not be bypassable.) This is
+  // stricter than pino for `serializers` and `formatters`, which it reads with
+  // `hasOwnProperty` — rejecting an inherited one costs nothing, since no caller
+  // has a reason to hide a logger option on a prototype.
+  const disabled = CONTROL_DISABLING_CHILD_OPTIONS.filter((option) => option in options);
   if (disabled.length > 0) {
     throw new Error(
       `logger.child() may not override ${disabled.join(', ')}: each one switches off part of the ` +

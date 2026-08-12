@@ -243,6 +243,62 @@ export function toLoggableError(exception: unknown): Error {
   return described;
 }
 
+/**
+ * The keys that hold an error, and are therefore reduced whatever sits in them.
+ *
+ * `err` alone was the first version of this rule, and one key is narrower than
+ * the shapes that reach a log line. MEASURED going out verbatim through a merged
+ * object, `child()` and `setBindings()` alike:
+ *
+ * ```
+ * { errs:   [{ message: '…PASSWORD…' }] }
+ * { errors: [{ message: '…PASSWORD…' }] }
+ * { error:  {  message: '…PASSWORD…'  } }
+ * { ctx: { cause: { message: '…PASSWORD…' } } }
+ * ```
+ *
+ * `errors` is `AggregateError`'s own property name and `cause` is `Error`'s, so
+ * a deserialised error from a worker — the shape this module already names as
+ * real — arrives under one of them rather than under `err`. `errs` is the
+ * spelling this module's own documentation used for the AggregateError case,
+ * which is a fair measure of how reachable it is.
+ *
+ * **`err` is treated more strictly than the rest, and that is deliberate rather
+ * than an oversight.** At `err` a STRING is reduced too, because ADR-0030
+ * measured a string there leaking in full and it is pino's designated error
+ * slot. At the other five a string is left alone, because they are ordinary
+ * English words with ordinary values — `cause: 'user_cancelled'` and
+ * `errors: 3` are real fields, and a control that turns a status enum into
+ * `{ type: 'string' }` costs debuggability for nothing. Objects and arrays are
+ * reduced at all six, because those are the shapes that carry a `message`.
+ */
+const ERROR_POSITIONS: ReadonlySet<string> = new Set([
+  PINO_ERROR_KEY,
+  'error',
+  'errors',
+  'errs',
+  'cause',
+  'exception',
+]);
+
+/**
+ * Reduces whatever sits at an error position, mapping ARRAYS element by element
+ * so that `errors: [a, b]` keeps its length — "two things failed" is the part of
+ * an `AggregateError` worth reading, and collapsing the array to one shape
+ * throws it away.
+ *
+ * A value that cannot carry text — a number, a boolean, `null` — is returned
+ * unchanged. There is nothing to censor in `errors: 3`.
+ */
+function reduceAtErrorPosition(key: string, value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => reduceAtErrorPosition(key, item));
+  if (typeof value === 'object' && value !== null) return serialiseError(value);
+  if (typeof value === 'string') {
+    return key === PINO_ERROR_KEY ? serialiseError(value) : value;
+  }
+  return value;
+}
+
 interface SelfSerialising {
   toJSON: () => unknown;
 }
@@ -291,84 +347,57 @@ function serialisesItself(node: object): node is SelfSerialising {
  * per-entry boundary, which turns any non-terminating walk into one censored
  * field instead of a lost line.
  */
-function redactSelfSerialising(node: SelfSerialising, rebuilt: Map<object, unknown>): unknown {
-  rebuilt.set(node, REDACTION_CENSOR);
+function redactSelfSerialising(node: SelfSerialising, state: WalkState): unknown {
+  state.rebuilt.set(node, REDACTION_CENSOR);
   let json: unknown;
   try {
     json = node.toJSON();
   } catch {
     return REDACTION_CENSOR;
   }
-  const redacted = redactValue(json, rebuilt);
-  rebuilt.set(node, redacted);
+  const redacted = redactValue(json, state);
+  state.rebuilt.set(node, redacted);
   return redacted;
 }
 
 /**
- * Rebuilds a log object with every sensitive key censored, at any depth and in
- * any spelling.
+ * What one walk knows: the node it has finished, and the nodes it is still
+ * half-way through.
  *
- * **It REBUILDS rather than censoring in place, and that is measured rather
- * than tidy:** an in-place walk left the CALLER's object as
- * `{ password: '[REDACTED]' }` after `logger.info(payload, 'x')` returned. A
- * logger that edits the data it was handed changes program behaviour, and would
- * do it only on the lines that happened to be emitted at the configured level.
+ * `inProgress` is the whole of the second one, and it exists because a memo that
+ * records a VISIT rather than an OUTCOME hands a later reader a half-built
+ * object and no way to tell. MEASURED, with the per-entry boundary in place and
+ * a node shared between two entries:
  *
- * **Every entry is walked inside its own boundary, and a walk that cannot
- * complete costs its FIELD rather than the line.** This is the rule the rest of
- * this module is written to and it was, briefly, the rule this module broke:
- * reducing every Error meant reading `.stack` and `.constructor.name` on values
- * an application controls, and a throwing `stack` accessor or a `constructor`
- * defined as `undefined` propagated straight out of `logger.info()` for ZERO
- * lines emitted — from inside `DomainExceptionFilter`'s `catch`, which is the
- * one place in this application that must never lose a line. Baseline pino
- * emits all three. Losing the line is the failure mode the third redact depth
- * was REMOVED for, so importing it in the fix was the same trade made twice in
- * opposite directions.
+ * ```
+ * const shared = { first: 'A', boom: <6000 deep>, second: 'B' };
+ * logger.info({ outer: { shared }, later: shared }, 'm');
+ * → "outer":"[REDACTED]","later":{"first":"A"}
+ * ```
  *
- * The individual reads are probed as well, so the common cases degrade to one
- * censored value rather than one censored top-level field; the boundary here is
- * what catches what no local guard can — a `RangeError` from a `toJSON` that
- * never terminates, or from nesting deeper than the stack (measured at ~4,600,
- * where baseline pino survives 200,000). Both are DECLARED costs: the field is
- * censored and the line is emitted, so `requestId` and `traceId` survive
- * whatever the payload does.
+ * `second` is gone with no censor beside it and `later` reads as COMPLETE.
+ * That is data loss rather than exposure — the partial copy holds redacted
+ * values — but it is silent, which is worse than either. It is also this
+ * round's version of the defect `apps/web`'s sink was fixed for, arriving from
+ * a different direction: the boundary that stopped the walk losing the LINE
+ * introduced a way for it to lose a FIELD without saying so.
  *
- * **An `Error` is reduced to {@link serialiseError}'s fixed shape, EXCEPT at the
- * top-level `err` key.** Both halves are measured.
- *
- * The exception exists because `formatters.log` runs BEFORE `serializers`, so
- * rebuilding the Error pino is about to serialise hands its `err` serialiser a
- * plain object — `type` disappeared and every stack frame with it. That one
- * Error is left alone for the serialiser, which applies the same shape.
- *
- * Everywhere ELSE, an Error is reduced here, and passing it through was a leak:
- * pino's `err` serialiser reaches exactly one key, so an Error anywhere else is
- * `JSON.stringify`d with its own enumerable properties intact. MEASURED, all
- * three going out verbatim — `{ myError: <Error with signed_url> }`,
- * `{ a: { b: { err: <Error with password> } } }` (canonical spelling, depth 4)
- * and `{ errs: [<Error with signed_url>] }`, which is the AggregateError shape.
- *
- * **`err` is a POSITION, not a type**, and that is the second half of the same
- * finding. Reducing Error INSTANCES everywhere still left
- * `{ ctx: { err: { message: DSN } } }` going out verbatim — an error-shaped
- * plain object, which is exactly what a worker's deserialised error looks like
- * and exactly the shape `logger.ts` names as real when it explains why the
- * `msg` guard cannot test `instanceof`. Whatever sits at `err` is reduced, at
- * every depth, which is precisely what pino's own serialiser does at depth 1.
- *
- * **Cycles are rebuilt as cycles**, via the `rebuilt` map: a node reached twice
- * yields the SAME rebuilt object both times, so pino's own safe stringifier
- * marks it `[Circular]` exactly as it would have. Returning the original on the
- * second visit would have been the obvious shape and leaks — the parent would
- * then point at an uncensored graph.
+ * So a node is recorded as in progress on the way down and removed on the way
+ * out, and when an entry fails, every node it left half-built is overwritten
+ * with the censor. A later alias then reads `[REDACTED]` — the outcome — rather
+ * than a plausible fragment.
  */
+interface WalkState {
+  readonly rebuilt: Map<object, unknown>;
+  readonly inProgress: Set<object>;
+}
+
 export function redactLogObject(object: Record<string, unknown>): Record<string, unknown> {
-  const rebuilt = new Map<object, unknown>();
+  const state: WalkState = { rebuilt: new Map<object, unknown>(), inProgress: new Set<object>() };
   const copy: Record<string, unknown> = {};
-  rebuilt.set(object, copy);
+  state.rebuilt.set(object, copy);
   for (const key of Object.keys(object)) {
-    copy[key] = redactTopLevelEntry(object, key, rebuilt);
+    copy[key] = redactTopLevelEntry(object, key, state);
   }
   return copy;
 }
@@ -376,7 +405,7 @@ export function redactLogObject(object: Record<string, unknown>): Record<string,
 function redactTopLevelEntry(
   object: Record<string, unknown>,
   key: string,
-  rebuilt: Map<object, unknown>,
+  state: WalkState,
 ): unknown {
   if (isRedactedKey(key)) return REDACTION_CENSOR;
   try {
@@ -388,10 +417,19 @@ function redactTopLevelEntry(
     // unpinned property of somebody else's package. Left WHOLE rather than
     // reduced here: reducing it twice loses the type the first reduction
     // recorded (`{ err: <string> }` reported `object`), and reducing an Error
-    // here loses its frames. Anything at `err` BELOW the top level is reduced
-    // by this module, because nothing else will.
-    return key === PINO_ERROR_KEY ? value : redactValue(value, rebuilt);
+    // here loses its frames.
+    //
+    // Every OTHER error position — and `err` itself below the top level — is
+    // reduced by this module, because pino's serialiser reaches exactly one key.
+    if (key === PINO_ERROR_KEY) return value;
+    if (ERROR_POSITIONS.has(key)) return reduceAtErrorPosition(key, value);
+    return redactValue(value, state);
   } catch {
+    // RECORD THE OUTCOME. Everything this entry left half-built becomes the
+    // censor, so a later entry aliasing the same node reads a refusal rather
+    // than a fragment that looks whole.
+    for (const abandoned of state.inProgress) state.rebuilt.set(abandoned, REDACTION_CENSOR);
+    state.inProgress.clear();
     return REDACTION_CENSOR;
   }
 }
@@ -428,36 +466,45 @@ function probe(node: object, key: string): unknown {
   }
 }
 
-function redactValue(node: unknown, rebuilt: Map<object, unknown>): unknown {
+function redactValue(node: unknown, state: WalkState): unknown {
   if (node === null || typeof node !== 'object') return node;
   if (node instanceof Error) return serialiseError(node);
 
-  const already = rebuilt.get(node);
-  if (already !== undefined) return already;
+  // `has`, not `get(…) !== undefined`. A memo holding `undefined` — which
+  // `{ toJSON: () => undefined }` produces — read as a MISS, so an aliased node
+  // was walked once per alias and its `toJSON` invoked three times for three
+  // references. Application code, run more often than the caller wrote it.
+  if (state.rebuilt.has(node)) return state.rebuilt.get(node);
 
-  if (serialisesItself(node)) return redactSelfSerialising(node, rebuilt);
+  if (serialisesItself(node)) return redactSelfSerialising(node, state);
 
-  if (Array.isArray(node)) {
-    const copy: unknown[] = [];
-    rebuilt.set(node, copy);
-    for (let index = 0; index < node.length; index += 1) {
-      copy.push(redactValue(read(node, index), rebuilt));
-    }
-    return copy;
+  state.inProgress.add(node);
+  const walked = Array.isArray(node) ? redactArray(node, state) : redactObject(node, state);
+  state.inProgress.delete(node);
+  return walked;
+}
+
+function redactArray(node: readonly unknown[], state: WalkState): unknown[] {
+  const copy: unknown[] = [];
+  state.rebuilt.set(node, copy);
+  for (let index = 0; index < node.length; index += 1) {
+    copy.push(redactValue(read(node, index), state));
   }
+  return copy;
+}
 
+function redactObject(node: object, state: WalkState): Record<string, unknown> {
   const copy: Record<string, unknown> = {};
-  rebuilt.set(node, copy);
+  state.rebuilt.set(node, copy);
   for (const key of Object.keys(node)) {
     if (isRedactedKey(key)) {
       copy[key] = REDACTION_CENSOR;
       continue;
     }
     const value = read(node, key);
-    // `err` is a POSITION. Whatever is in it is reduced, Error instance or not —
-    // see the note on `redactLogObject`; `{ ctx: { err: { message } } }` was
-    // going out verbatim while every Error instance was covered.
-    copy[key] = key === PINO_ERROR_KEY ? serialiseError(value) : redactValue(value, rebuilt);
+    copy[key] = ERROR_POSITIONS.has(key)
+      ? reduceAtErrorPosition(key, value)
+      : redactValue(value, state);
   }
   return copy;
 }

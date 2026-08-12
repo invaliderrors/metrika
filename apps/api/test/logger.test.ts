@@ -357,3 +357,28 @@ describe('child() options that would disable the control', () => {
     expect(captured.only()['context']).toBe('DomainExceptionFilter');
   });
 });
+
+describe('the child-options guard, against a caller who is trying', () => {
+  /**
+   * `Object.hasOwn` was the wrong test: pino reads `options.redact` as a plain
+   * property, so an option hidden on a prototype reached it while the guard said
+   * it was absent — MEASURED, pino installed the replacement redactor. No leak
+   * followed, because the walk and `serialiseError` cover everything those paths
+   * do; a guard that can be stepped around is still not a guard.
+   */
+  it.each(['redact', 'serializers', 'formatters'])('rejects an inherited %s too', (option) => {
+    const captured = captureLogger();
+    const hidden: object = Object.create({ [option]: { paths: ['zzz'] } }) as object;
+
+    expect(() => captured.logger.child({}, hidden)).toThrow(
+      new RegExp(`may not override ${option}`),
+    );
+  });
+
+  it('still accepts an inherited option that disables nothing', () => {
+    const captured = captureLogger();
+    const inherited: object = Object.create({ level: 'warn' }) as object;
+
+    expect(() => captured.logger.child({ requestId: 'req_1' }, inherited)).not.toThrow();
+  });
+});

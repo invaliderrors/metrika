@@ -157,20 +157,58 @@ rather than one censored field. Two declared costs sit behind that boundary: a
 baseline pino survives 200,000). Both censor the field and emit the line, so
 `requestId` and `traceId` survive whatever the payload does.
 
-**`err` is a POSITION, not a type.** Reducing `Error` instances everywhere still
-let `{ ctx: { err: { message: DSN } } }` out verbatim — an error-shaped plain
-object, which is exactly what a worker's deserialised error looks like and
-exactly the shape the `msg` guard cannot test with `instanceof`. Whatever sits
-at `err` below the top level is reduced; the top-level one is left whole because
-pino's own serialiser reduces it, measured for an Error, a plain object and a
-string through all three binding routes and pinned by a test.
+**The memo records the OUTCOME, not the visit** — the same lesson `apps/web`'s
+sink learned, reached here from the opposite direction. The boundary that stopped
+the walk losing the LINE gave it a way to lose a FIELD in silence: a node shared
+between two entries kept the half-built copy the failed entry abandoned, so
+`{ outer: { shared }, later: shared }` emitted
+`"outer":"[REDACTED]","later":{"first":"A"}` — `second` gone, no censor beside
+it, and `later` reading as complete. Nodes are now marked in progress on the way
+down, and a failed entry overwrites every node it abandoned with the censor, so a
+later alias reads a refusal rather than a plausible fragment. Memoisation itself
+still applies: an aliased node that walks cleanly is emitted in full at both
+keys, as baseline pino does.
+
+**`err` is a POSITION, not a type — and the position set is six keys wide.**
+Reducing `Error` instances everywhere still let `{ ctx: { err: { message: DSN } } }`
+out verbatim: an error-shaped plain object, which is what a worker's deserialised
+error looks like and the shape the `msg` guard cannot test with `instanceof`.
+Reducing at `err` alone then still let these out, through a merged object,
+`child()` and `setBindings()` alike:
+
+```jsonc
+{ "errs":   [{ "message": "…PASSWORD…" }] }
+{ "errors": [{ "message": "…PASSWORD…" }] }
+{ "error":  {  "message": "…PASSWORD…"  } }
+{ "ctx": { "cause": { "message": "…PASSWORD…" } } }
+```
+
+`errors` is `AggregateError`'s own property name and `cause` is `Error`'s, so the
+positions are `err`, `error`, `errors`, `errs`, `cause`, `exception`. Arrays are
+mapped element by element, because "two things failed" is the part of an
+aggregate worth reading.
+
+**`err` is treated more strictly than the other five, deliberately.** A STRING at
+`err` is reduced — ADR-0030 measured one leaking in full, and it is pino's
+designated error slot. A string at the other five is left alone, because they are
+ordinary English words with ordinary values: `cause: 'user_cancelled'` and
+`errors: 3` are real fields, and a control that turns a status enum into
+`{ type: 'string' }` buys safety with debuggability. The cost is asserted beside
+the widening, the way `packages/contracts`' own `MUST_SURVIVE` table does.
+
+The top-level `err` is left whole because pino's own serialiser reduces it,
+measured for an Error, a plain object and a string through all three binding
+routes and pinned by a test.
 
 **A child may not override `redact`, `serializers` or `formatters`.** Each
 switches off part of the control for that child and everything descended from
 it — `{ formatters: { log } }` was measured letting a `signed_url` out verbatim.
 `child()` rejects them with a named error rather than documenting the hazard: it
 is called at wiring time, so the throw is a boot failure, and a control any
-caller can switch off with an options bag is not a control.
+caller can switch off with an options bag is not a control. The test is `in`
+rather than `Object.hasOwn`, because pino reads `options.redact` as a plain
+property and an option hidden on a prototype reached it while `hasOwn` said it
+was absent.
 
 One derived path has a cost that was decided rather than discovered: `*.url`
 reaches `req.url` under `pino-http`'s default request serialiser, so every
