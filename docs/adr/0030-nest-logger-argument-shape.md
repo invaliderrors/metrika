@@ -32,8 +32,16 @@ exists to preserve.
 
 ADR-0029 has not merged, and its round-2 corrections were made in place citing
 [ADR-0027](./0027-python-toolchain.md), which marks its own corrections in place
-and says why. But [ADR-0028](./0028-temporal-bind-on-ip.md) is the closer
-precedent and points the other way. It says, of exactly this situation:
+and says why. **That citation does not survive its own test, and the reason is
+in the commit order.** `ca8e71b` carried ADR-0027's traps into Plan 0B-3 —
+i.e. the text was relied on — and only then did `da7b3df` correct ADR-0027 in
+place. So the rule proposed below condemns ADR-0027's in-place correction too;
+it is not a precedent that licenses anything.
+
+It is worse than a weak precedent. **[ADR-0028](./0028-temporal-bind-on-ip.md)
+was written after `da7b3df`, about that exact practice, and rejected it.** So
+citing ADR-0027 in `edb6404` was citing an **overruled** precedent, not merely a
+contested one. ADR-0028 says, of exactly this situation:
 
 > Editing the two sentences in place would rewrite an assertion a reviewer
 > accepted, which this repository disallows **even while the ADR is unmerged**,
@@ -47,23 +55,30 @@ decision-bearing assertions that a reviewer had already accepted and propagated
 into the implementation plan. So the round-2 edits sat against ADR-0028's
 sentence, and citing ADR-0027 alone was not sufficient to justify them.
 
-Two things follow, and they are recorded rather than quietly fixed:
+Three things follow, and they are recorded rather than quietly fixed:
 
-- **The round-2 in-place edits stand.** Reverting them would be a third
-  rewrite of the same text and would delete measurements that are correct.
-  ADR-0029's `CORRECTED (round 2)` markers make them legible, which is the
-  property ADR-0028 is protecting.
-- **This round stops.** Every correction below is here, including the small
-  ones, so that ADR-0029's body is not edited a second time. ADR-0029 gains one
-  line — a pointer in its header — which is the same after-the-fact annotation
-  [ADR-0021](./0021-next-major-and-frontend-stack.md) carries from ADR-0023 and
-  ADR-0024, and which asserts nothing.
+- **`edb6404` should have been an ADR.** Under the rule below it was a mistake,
+  and it cited a precedent ADR-0028 had already overruled.
+- **The round-2 in-place edits stand anyway.** Reverting them would be a third
+  rewrite of the same text and would delete measurements that are correct — a
+  worse outcome than a recorded misstep. ADR-0029's `CORRECTED (round 2)`
+  markers make them legible, which is the property ADR-0028 is protecting.
+- **This round stops.** Every correction is here, including the small ones, so
+  ADR-0029's body is not rewritten again. ADR-0029 gains only **pointers** — one
+  in its header and one at each of the three places that still restate a
+  corrected claim — which assert nothing new and are the same after-the-fact
+  annotation [ADR-0021](./0021-next-major-and-frontend-stack.md) carries from
+  ADR-0023 and ADR-0024. Pointers are needed because the plan references
+  obligations **by number**, so landing on obligation 8 without reading the
+  header is a realistic path.
 
-The distinction worth keeping is not merged-versus-unmerged. It is whether the
-text has been **relied on**: ADR-0029's claims were reviewed and carried into
-`docs/superpowers/plans/2026-08-12-phase-0c-observability.md` before this
-correction existed. Once a claim has a consumer, correcting it in place erases
-the consumer's reason for having believed it.
+**The rule, stated so it can be applied rather than re-litigated: an ADR's body
+may be edited only while nothing has relied on it. Merge is not the test —
+citation is.** A claim has been relied on the moment another document, plan or
+commit acts on it; from then on it is corrected by a new ADR. This is now in
+[`docs/adr/README.md`](./README.md), because that is where a reader looks for
+the immutability rule and it previously said only "never edited", which is both
+stricter than the practice and silent about the two times the practice diverged.
 
 ## The measurement
 
@@ -108,10 +123,18 @@ redaction half of the answer was right; only the call shape was wrong.
    instruction in ADR-0029 that actively destroys the thing the obligation
    protects.
 
-2. **The existing two-argument call at `domain-exception.filter.ts:88` is
-   already correct — provided the adapter is `nestjs-pino`.** Row A: `context`
-   is the class name, the cause is in `err.stack`, and obligation 7's paths
-   close it. No change to the call is required in that configuration.
+2. **The existing two-argument call at `domain-exception.filter.ts:88` reaches
+   `err.stack` only when the cause carries a real stack.** Row A holds under
+   `nestjs-pino` **and** `/\n\s*at /`: that library's
+   `isWrongExceptionsHandlerContract` tests the second argument for stack frames
+   and, failing the test, treats it as a context string instead. `describeCause`
+   returns a stack for a normal `Error` — but returns `${name}: ${message}` when
+   `stack` is `undefined`, and `non-Error thrown (typeof …)` for anything not an
+   `Error`. **Both of those fail the regex and collapse row A into row B, where
+   the cause is discarded.** Measured: with the fallback string, `err` is
+   `ABSENT` and the line carries no cause at all. So this call shape is correct
+   for the common case and silently loses the diagnostic for the two uncommon
+   ones — which is not a property to build on.
 
 3. **The adapter choice is load-bearing for the diagnostic, not only for
    redaction.** Row G: a hand-written `LoggerService` over raw pino forwards the
@@ -121,13 +144,86 @@ redaction half of the answer was right; only the call shape was wrong.
    because, without it, an unexpected 500 produced literally zero bytes of
    diagnostic output.
 
-4. **The recommended shape is `logger.error({ err }, message)`** — rows H and I.
-   It is the only form measured that works under **both** adapters, and it is
-   better than row A on its own terms: `err.message` carries the cause's own
-   message rather than a copy of the log message, so `err` is a faithful
-   serialisation of the exception instead of a splice of two things. Task 2
-   still owns the adapter decision; this shape is what makes that decision
-   reversible.
+4. **The recommended shape is `logger.error({ err }, message)` where `err`
+   holds an `Error` INSTANCE — never `describeCause`'s string.** This is the
+   part of the first version of this ADR that was wrong, and it was wrong in the
+   same way everything else on this document's record has been: rows H and I
+   were measured with an `Error` instance, and stated of a call site where the
+   value is a `string`.
+
+   `describeCause(exception): string`. Pino serialises a **scalar** `err`
+   verbatim, and `err.message` / `err.stack` are paths that match nothing on a
+   string, so redaction does not apply. Measured, with obligation 7's paths
+   active, under **both** adapters:
+
+   | `err` holds                              | serialised as                                                  | leaks?  |
+   | ---------------------------------------- | -------------------------------------------------------------- | ------- |
+   | `describeCause(err)` — a stack string    | `"err":"Error: DB_DSN=postgres://user:PASSWORD@…"`             | **YES** |
+   | `describeCause(err)` — the fallback form | `"err":"Error: DB_DSN=postgres://user:PASSWORD@…"`             | **YES** |
+   | an `Error` instance                      | `{"type":"Error","message":"[REDACTED]","stack":"[REDACTED]"}` | no      |
+
+   So the call must pass the exception itself, coerced when it is not an
+   `Error`:
+
+   ```ts
+   const err = exception instanceof Error
+     ? exception
+     : new Error(`non-Error thrown (typeof ${typeof exception})`);
+   this.logger.error({ err }, `Unhandled exception (requestId=${requestId})`);
+   ```
+
+   Measured clean under `nestjs-pino` and under a hand-written raw-pino adapter,
+   for an `Error` with a stack, an `Error` without one, and a thrown plain object
+   — and the coercion preserves the property `describeCause`'s comment exists
+   for: a thrown non-`Error` is **described**, never stringified, so a plain
+   object carrying a password still cannot reach the log.
+
+   **`describeCause` therefore stops being the thing that is logged.** Task 2's
+   choice is between deleting it and changing its return type; either is fine,
+   and what is not fine is keeping it and passing its output as `err`.
+   Alternatively a custom `err` serialiser can normalise a scalar into
+   `{type, message, stack}` so the paths apply again — measured working — but
+   that guards a mistake rather than preventing it, and the coercion above
+   prevents it.
+
+### And closing the leak this way destroys the diagnostic
+
+This is the finding worth more than the correction above, and it is the reason
+Task 2 needs a decision rather than a snippet. Obligation 7 puts **both**
+`err.message` and `err.stack` in the redaction paths. Measured, that is
+literally all an operator gets from an unhandled 500:
+
+```jsonc
+{ "context": "DomainExceptionFilter",
+  "err": { "type": "Error", "message": "[REDACTED]", "stack": "[REDACTED]" },
+  "msg": "Unhandled exception (requestId=req-1)" }
+```
+
+An `Error` happened. Nothing else survives. Plan 0B-1's comment on this exact
+call records that it exists because, without it, an unexpected 500 produced
+**literally zero bytes** of diagnostic output — and a line that says only "an
+Error happened" is barely better. Closing the leak by censoring the two fields
+that carry every clue is a control that passes its own test and leaves the
+system unoperable.
+
+A stack is `<message>\n    at <frame>\n    at <frame>…`. **The secret is in the
+message; the frames are file paths and function names.** So an `err` serialiser
+that keeps the frames and drops the message line resolves the tension, measured:
+
+| Configuration                                      | leaks | `err.message` | frames kept        |
+| -------------------------------------------------- | ----- | ------------- | ------------------ |
+| obligation 7 as written                            | no    | `[REDACTED]`  | **0**              |
+| frame-preserving `err` serialiser + the same paths | no    | `[REDACTED]`  | **4** (real ones)  |
+| the same, cause passed as a **string**             | no    | `[REDACTED]`  | 14                 |
+| the same, a non-`Error` thrown                     | no    | `[REDACTED]`  | 10 — **synthetic** |
+
+The last row is the caveat: for a thrown non-`Error` there is no original stack,
+so the frames come from wherever the serialiser constructed its replacement and
+are worthless. That case should emit no frames rather than misleading ones.
+
+This is **not** a decision this ADR makes — obligation 7 is ADR-0029's and Task 2
+owns the serialiser. It is recorded because the obvious implementation of
+obligation 7 produces an undiagnosable service, and nothing in ADR-0029 says so.
 
 ## The smaller corrections
 
@@ -184,7 +280,10 @@ decision; they are here so that ADR-0029's body is not edited again.
 ## Consequences
 
 **Accepted:** ADR-0029 now has a correction ADR against it, as ADR-0027 does,
-and the pair must be read together — the fourth such pair in this repository.
+and the pair must be read together. It is the **second** such pair on a stated
+basis: `docs/adr/README.md` records exactly two entries that _correct part of_
+another ADR — 0028→0027 and 0030→0029 — as distinct from the four that _scope_
+one and the three that _supersede_ one.
 The behaviour corrected here is a property of an interaction between three
 things (`@nestjs/common`'s `Logger` appending its context, `nestjs-pino`'s
 arity-based parsing, and pino's positional-argument handling), so it is not
@@ -192,7 +291,10 @@ discoverable from any one package's documentation and will need re-measuring on
 any of their major bumps. And the filter's diagnostic can vanish with no error
 in two of the nine configurations measured, which means Task 2 owes a test that
 asserts the cause **arrives**, not merely that it is redacted — a redaction test
-passes trivially when there is nothing to redact.
+passes trivially when there is nothing to redact. And obligation 7's paths,
+applied literally, leave an unhandled 500 with no diagnostic beyond
+`"type":"Error"`, so Task 2 owns a second decision this plan had not surfaced:
+what an operator is left with after the control fires.
 
 **Gained:** the answer is now measured at the shape the code actually has, with
 the two configurations ADR-0029 measured kept in the table so the discrepancy is
