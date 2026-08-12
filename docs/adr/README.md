@@ -4,6 +4,8 @@ An ADR captures a decision, the alternatives considered, and the consequences ac
 
 **ADRs are immutable.** A decision is superseded by a new ADR, never edited. If the reasoning here turns out to be wrong, that is itself worth preserving.
 
+**The test is citation, not merge.** An ADR's body may be corrected in place only while nothing has relied on it — and a claim has been relied on the moment another document, plan or commit acts on it, which for a spike ADR is usually before it merges. After that it is corrected by a new ADR, and the old text keeps its wording so the reader who acted on it can see what they acted on. This is written down because the practice has diverged from the rule twice, both times on a spike ADR whose findings a plan had already consumed: ADR-0027 was corrected in place in `da7b3df` after `ca8e71b` had carried it into Plan 0B-3, and ADR-0029 in `edb6404` after its findings had gone into Plan 0C. [ADR-0028](./0028-temporal-bind-on-ip.md) rejected the first; [ADR-0030](./0030-nest-logger-argument-shape.md) records the second and states this rule.
+
 | #                                                 | Decision                                                                                 | Status                                  |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------- |
 | [0001](./0001-monorepo-strategy.md)               | pnpm workspaces + Turborepo, source-only internal packages                               | Accepted                                |

@@ -109,16 +109,43 @@ What is settled: Pino's `redact` reaches an `Error`'s **own enumerable propertie
 Also settled, and both were wrong in earlier drafts of this plan — read ADR-0029's `CORRECTED (round 2)` markers and **[ADR-0030](../../adr/0030-nest-logger-argument-shape.md)** rather than the retracted wording:
 
 - **`redact` DOES reach `msg`** — `paths:['msg']`, `paths:['*']` and a `msg` serialiser all do, in every call shape. What makes it unusable is that redaction is **field-granular**: it replaces the whole value, so `paths:['msg']` censors every log message in the process and `paths:['*']` additionally censors `pid`, `hostname` and every payload field. Removing a _substring_ of free text needs a pattern-matching serialiser, i.e. a secret detector rather than an allowlist. The conclusion is therefore unchanged and its reason is not: **do not put untrusted text in `msg`**, put the cause in a named field.
-- **The call site is `domain-exception.filter.ts:88`**, `this.logger.error(\`Unhandled exception (requestId=…)\`, describeCause(exception))`, on a `new Logger(DomainExceptionFilter.name)`— a Nest`Logger`**with a context**, which is the detail that decides everything. Nest appends`this.context`to what it forwards, and`nestjs-pino` branches on argument count. Measured at that exact shape (ADR-0030):
+- **The call site is `domain-exception.filter.ts:88`** — a two-argument `Logger.error(message, describeCause(exception))` on a logger built at line 41 as `new Logger(DomainExceptionFilter.name)`. That it carries a **context** is the detail that decides everything: Nest appends `this.context` to what it forwards, and `nestjs-pino` branches on argument count, so a contexted logger does not present the same call as a bare one. Measured at that exact shape (ADR-0030):
 
-  | call                     | adapter                       | where the cause lands                                |
-  | ------------------------ | ----------------------------- | ---------------------------------------------------- |
-  | `error(msg, cause)`      | `nestjs-pino`                 | `err.stack` — **already covered by the paths above** |
-  | `error(msg, cause, ctx)` | `nestjs-pino`                 | **nowhere — silently discarded**                     |
-  | `error(msg, cause)`      | hand-written raw-pino adapter | **nowhere — silently discarded**                     |
-  | `error({ err }, msg)`    | **either**                    | `err.message` + `err.stack`                          |
+  | call                                    | adapter                       | where the cause lands                                                                                                            |
+  | --------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+  | `error(msg, cause)`                     | `nestjs-pino`                 | `err.stack` — **but only if `cause` matches `/\n\s*at /`**; `describeCause`'s two non-stack returns collapse this to "discarded" |
+  | `error(msg, cause, ctx)`                | `nestjs-pino`                 | **nowhere — silently discarded**                                                                                                 |
+  | `error(msg, cause)`                     | hand-written raw-pino adapter | **nowhere — silently discarded**                                                                                                 |
+  | `error({ err: <string> }, msg)`         | **either**                    | `err` is a **scalar** — `err.message`/`err.stack` match nothing and the secret **LEAKS**                                         |
+  | `error({ err: <Error instance> }, msg)` | **either**                    | `err.message` + `err.stack`, redacted                                                                                            |
 
-**So: do not use the three-argument form, and do not assume a hand-written raw-pino `LoggerService` preserves the cause.** `logger.error({ err }, message)` is the shape that works under both adapters and is what Step 4 should write. Assert the cause **arrives** as well as that it is redacted — a redaction test passes trivially against a line that lost the cause.
+  **`describeCause` returns a `string`, so passing its output as `err` leaks under both adapters with redaction on — measured.** Pass the exception itself, coerced:
+
+  ```ts
+  const err =
+    exception instanceof Error
+      ? exception
+      : new Error(`non-Error thrown (typeof ${typeof exception})`);
+  this.logger.error({ err }, `Unhandled exception (requestId=${requestId})`);
+  ```
+
+  The coercion keeps the property `describeCause`'s comment exists for: a thrown non-`Error` is described, never stringified. `describeCause` itself stops being what is logged — delete it or change its return type, but do not keep it and pass its string.
+
+**So: do not use the three-argument form; do not assume a hand-written raw-pino `LoggerService` preserves the cause; and do not put a string in `err`.** Assert the cause **arrives** as well as that it is redacted — a redaction test passes trivially against a line that lost the cause.
+
+- [ ] **Step 2b: Decide what an operator is left with once the control fires.**
+
+Obligation 7 puts **both** `err.message` and `err.stack` in the redaction paths, and applied literally that is the entire output of an unhandled 500:
+
+```jsonc
+{
+  "context": "DomainExceptionFilter",
+  "err": { "type": "Error", "message": "[REDACTED]", "stack": "[REDACTED]" },
+  "msg": "Unhandled exception (requestId=req-1)"
+}
+```
+
+An `Error` happened; nothing else survives. Plan 0B-1 added that log line precisely because an unexpected 500 otherwise produced **zero** bytes of diagnostic, and this is barely more. A stack is `<message>` followed by its frames — the secret is in the **message**, the frames are file paths and function names — so an `err` serialiser that keeps the frames and drops the message line closes the leak and keeps the diagnostic. **Measured: 0 frames under obligation 7 as written, 4 real frames with the frame-preserving serialiser, no leak in either.** Emit no frames for a thrown non-`Error`, where the only stack available is the serialiser's own and is worthless. This is your decision to make — [ADR-0030](../../adr/0030-nest-logger-argument-shape.md) records the measurement, not a mandate.
 
 - [ ] **Step 3: Run both, watch them fail.**
 

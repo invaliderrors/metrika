@@ -281,48 +281,48 @@ surface to `Any` without stubs). No stub package is needed on this side.
 
 Exit codes read from `$?` immediately after each command, never off a pipe.
 
-| Gate                                                                     | Exit  | Evidence beyond the exit code                                                                                                      |
-| ------------------------------------------------------------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`, no `allowBuilds`                                         | **1** | `ERR_PNPM_IGNORED_BUILDS: protobufjs@7.6.5` — see "What did not work"                                                              |
-| `pnpm install`, with `allowBuilds`                                       | **0** | 176 packages; **one** `[WARN] deprecated` line, on `instrumentation-fastify`                                                       |
-| `pnpm install`, after adding the six `@temporalio/*`                     | **1** | `ERR_PNPM_IGNORED_BUILDS: @swc/core@1.15.47`; **0** once denied                                                                    |
-| `pnpm install` in `apps/web` with `@sentry/nextjs`                       | **1** | `ERR_PNPM_IGNORED_BUILDS: @sentry/cli@2.58.6` — a **new** entry; **0** once denied                                                 |
-| `pnpm exec next build`, Next 16.3.0 + `withSentryConfig`                 | **0** | 3 static pages, `instrumentation.ts` registered, with `@sentry/cli`'s script **denied**                                            |
-| `pnpm peers check` (every install)                                       | **0** | "No peer dependency issues found"                                                                                                  |
-| **Q1 — `@opentelemetry/instrumentation-fastify@0.57.0`**                 | **0** | 11 spans, **3** carrying `http.route: "/things/:id"`, ALS 7/7                                                                      |
-| **Q1 — `@fastify/otel@0.20.1`, `registerOnInitialization: true`**        | **0** | 12 spans, **4** carrying `http.route: "/things/:id"`, ALS 7/7, scope `@fastify/otel`                                               |
-| **Q1 — `@fastify/otel@0.20.1`, manual `.register(fo.plugin())`**         | **0** | 10 spans, **4** carrying the route — both registration modes work                                                                  |
-| `@fastify/otel` with **both** `registerOnInitialization` and `.register` | **1** | `FST_ERR_DEC_ALREADY_PRESENT: Symbol(fastify otel instance)` — exactly one of the two                                              |
-| `new (default import of @fastify/otel)()` under nodenext ESM             | **2** | `TS2351` not constructable — it is CJS `export =`; the **named** import compiles                                                   |
-| the ESM loader hook **disabled**                                         | **0** | byte-identical span set — not load-bearing today; see below                                                                        |
-| outbound `fetch()` without `instrumentation-undici`                      | **0** | **no span at all** — measured, not assumed                                                                                         |
-| outbound `fetch()` with `instrumentation-undici@0.31.0`                  | **0** | scope `@opentelemetry/instrumentation-undici` present                                                                              |
-| `Sentry.init()` → `NodeSDK.start()`                                      | **0** | **3 diag ERRORs**; OTel's exporter receives **0 spans**                                                                            |
-| `NodeSDK.start()` → `Sentry.init()`                                      | **0** | 1 diag ERROR; Sentry emits **0 transaction envelopes**, errors still delivered                                                     |
-| `skipOpenTelemetrySetup: true` + one `NodeSDK`                           | **0** | both pipelines populated; trace ids agree; only benign diag noise                                                                  |
-| `Sentry.getDefaultIntegrations({ tracesSampleRate: 1 })`                 | —     | **44** integrations, 14 of them error-side                                                                                         |
-| the combined bootstrap with all 44 left on                               | **1** | `FST_ERR_DEC_ALREADY_PRESENT: The decorator 'opentelemetry' has already been added!` — **the app does not boot**                   |
-| the same, span-producing integrations filtered OUT (denylist)            | **0** | 11 spans, 4 with the route, 2 Sentry transactions, no raw-URL span, ALS 0/7 lost                                                   |
-| the same, `defaultIntegrations: false` + an explicit **allowlist**       | **0** | byte-for-byte the same result — and an upgrade cannot silently opt in                                                              |
-| `getRequestId()` at 7 probes inside an instrumented request              | **0** | **0 of 7 lost**, under plain OTel, under Sentry's wrapped context manager, and under `@fastify/otel`                               |
-| Temporal round trip, W3C propagators                                     | **0** | one trace across client → workflow → Node activity → **Python activity**; baggage intact at all four                               |
-| the same with `SentryPropagator` alone                                   | **0** | **three different traces**; baggage `null` at the Node activity                                                                    |
-| the same with `CompositePropagator([W3C, W3CBaggage, Sentry])`           | **0** | one trace again, baggage intact at all four                                                                                        |
-| `MetrikaRequestId` read back by `ListWorkflowExecutions`                 | **0** | query `MetrikaRequestId = '…'` returns the started workflow                                                                        |
-| **workflow sink, real OTLP exporter, NO sink**                           | **0** | 2× `unregistered external sink`; 1 OTLP POST, 3 spans, **no `RunWorkflow`**                                                        |
-| **workflow sink, real OTLP exporter, the CAST remedy**                   | **0** | 2× `TypeError: Cannot read properties of undefined (reading 'name')`; **1 POST, 3 spans, no `RunWorkflow`** — same as no sink      |
-| **workflow sink, real OTLP exporter, the SHIM**                          | **0** | **0 errors; 3 POSTs; `RunWorkflow:spikeWorkflow` and both `StartActivity` spans arrive**; scope `@temporalio/interceptor-workflow` |
-| `tsc` at that seam with **zero** casts                                   | **2** | `TS2769`, `Property 'instrumentationScope' is missing`                                                                             |
-| `tsc` at that seam with **one** cast (the exporter only)                 | **0** | `Resource` is structurally compatible across the majors — the second cast was never needed                                         |
-| Pino `redact`, the blueprint list, every call shape                      | —     | `err.message` **LEAKED**, `err.stack` **LEAKED**, `msg` **LEAKED**, `err.password`/`projectName`/`signedUrl` redacted              |
-| Pino `redact`, `paths: ['msg']`                                          | —     | `msg` **CENSORED** in all three call shapes — so redaction **does** reach it                                                       |
-| Pino, blueprint + `err.message`/`err.stack` + a `msg` serialiser         | —     | nothing leaks, in all three call shapes, and a benign line is untouched                                                            |
-| Nest `Logger.error(msg, cause)` through **raw pino**                     | —     | the second argument is **silently discarded** — no field at all                                                                    |
-| the same through **`nestjs-pino@4.6.1`**                                 | —     | it lands in **`context`**, which `redact` reaches by path                                                                          |
-| Nest `Logger.error(msg, stack, context)` through `nestjs-pino`           | —     | `context` = the class name and an **`err`** object carries the stack — the existing obligation covers it                           |
-| `uv add` (6 Python packages)                                             | **0** | 20 packages, **zero resolution warnings**                                                                                          |
-| Python `sentry_sdk.init()` then `set_tracer_provider()`                  | **0** | provider is OTel's; **zero** OTel warnings; both orders identical                                                                  |
-| Python structlog, `format_exc_info` + `JSONRenderer`                     | **0** | the exception text **leaks**; there is no `redact` equivalent                                                                      |
+| Gate                                                                     | Exit  | Evidence beyond the exit code                                                                                                                                        |
+| ------------------------------------------------------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`, no `allowBuilds`                                         | **1** | `ERR_PNPM_IGNORED_BUILDS: protobufjs@7.6.5` — see "What did not work"                                                                                                |
+| `pnpm install`, with `allowBuilds`                                       | **0** | 176 packages; **one** `[WARN] deprecated` line, on `instrumentation-fastify`                                                                                         |
+| `pnpm install`, after adding the six `@temporalio/*`                     | **1** | `ERR_PNPM_IGNORED_BUILDS: @swc/core@1.15.47`; **0** once denied                                                                                                      |
+| `pnpm install` in `apps/web` with `@sentry/nextjs`                       | **1** | `ERR_PNPM_IGNORED_BUILDS: @sentry/cli@2.58.6` — a **new** entry; **0** once denied                                                                                   |
+| `pnpm exec next build`, Next 16.3.0 + `withSentryConfig`                 | **0** | 3 static pages, `instrumentation.ts` registered, with `@sentry/cli`'s script **denied**                                                                              |
+| `pnpm peers check` (every install)                                       | **0** | "No peer dependency issues found"                                                                                                                                    |
+| **Q1 — `@opentelemetry/instrumentation-fastify@0.57.0`**                 | **0** | 11 spans, **3** carrying `http.route: "/things/:id"`, ALS 7/7                                                                                                        |
+| **Q1 — `@fastify/otel@0.20.1`, `registerOnInitialization: true`**        | **0** | 12 spans, **4** carrying `http.route: "/things/:id"`, ALS 7/7, scope `@fastify/otel`                                                                                 |
+| **Q1 — `@fastify/otel@0.20.1`, manual `.register(fo.plugin())`**         | **0** | 10 spans, **4** carrying the route — both registration modes work                                                                                                    |
+| `@fastify/otel` with **both** `registerOnInitialization` and `.register` | **1** | `FST_ERR_DEC_ALREADY_PRESENT: Symbol(fastify otel instance)` — exactly one of the two                                                                                |
+| `new (default import of @fastify/otel)()` under nodenext ESM             | **2** | `TS2351` not constructable — it is CJS `export =`; the **named** import compiles                                                                                     |
+| the ESM loader hook **disabled**                                         | **0** | byte-identical span set — not load-bearing today; see below                                                                                                          |
+| outbound `fetch()` without `instrumentation-undici`                      | **0** | **no span at all** — measured, not assumed                                                                                                                           |
+| outbound `fetch()` with `instrumentation-undici@0.31.0`                  | **0** | scope `@opentelemetry/instrumentation-undici` present                                                                                                                |
+| `Sentry.init()` → `NodeSDK.start()`                                      | **0** | **3 diag ERRORs**; OTel's exporter receives **0 spans**                                                                                                              |
+| `NodeSDK.start()` → `Sentry.init()`                                      | **0** | 1 diag ERROR; Sentry emits **0 transaction envelopes**, errors still delivered                                                                                       |
+| `skipOpenTelemetrySetup: true` + one `NodeSDK`                           | **0** | both pipelines populated; trace ids agree; only benign diag noise                                                                                                    |
+| `Sentry.getDefaultIntegrations({ tracesSampleRate: 1 })`                 | —     | **44** integrations, 14 of them error-side                                                                                                                           |
+| the combined bootstrap with all 44 left on                               | **1** | `FST_ERR_DEC_ALREADY_PRESENT: The decorator 'opentelemetry' has already been added!` — **the app does not boot**                                                     |
+| the same, span-producing integrations filtered OUT (denylist)            | **0** | 11 spans, 4 with the route, 2 Sentry transactions, no raw-URL span, ALS 0/7 lost                                                                                     |
+| the same, `defaultIntegrations: false` + an explicit **allowlist**       | **0** | byte-for-byte the same result — and an upgrade cannot silently opt in                                                                                                |
+| `getRequestId()` at 7 probes inside an instrumented request              | **0** | **0 of 7 lost**, under plain OTel, under Sentry's wrapped context manager, and under `@fastify/otel`                                                                 |
+| Temporal round trip, W3C propagators                                     | **0** | one trace across client → workflow → Node activity → **Python activity**; baggage intact at all four                                                                 |
+| the same with `SentryPropagator` alone                                   | **0** | **three different traces**; baggage `null` at the Node activity                                                                                                      |
+| the same with `CompositePropagator([W3C, W3CBaggage, Sentry])`           | **0** | one trace again, baggage intact at all four                                                                                                                          |
+| `MetrikaRequestId` read back by `ListWorkflowExecutions`                 | **0** | query `MetrikaRequestId = '…'` returns the started workflow                                                                                                          |
+| **workflow sink, real OTLP exporter, NO sink**                           | **0** | 2× `unregistered external sink`; 1 OTLP POST, 3 spans, **no `RunWorkflow`**                                                                                          |
+| **workflow sink, real OTLP exporter, the CAST remedy**                   | **0** | 2× `TypeError: Cannot read properties of undefined (reading 'name')`; **1 POST, 3 spans, no `RunWorkflow`** — same as no sink                                        |
+| **workflow sink, real OTLP exporter, the SHIM**                          | **0** | **0 errors; 3 POSTs; `RunWorkflow:spikeWorkflow` and both `StartActivity` spans arrive**; scope `@temporalio/interceptor-workflow`                                   |
+| `tsc` at that seam with **zero** casts                                   | **2** | `TS2769`, `Property 'instrumentationScope' is missing`                                                                                                               |
+| `tsc` at that seam with **one** cast (the exporter only)                 | **0** | `Resource` is structurally compatible across the majors — the second cast was never needed                                                                           |
+| Pino `redact`, the blueprint list, every call shape                      | —     | `err.message` **LEAKED**, `err.stack` **LEAKED**, `msg` **LEAKED**, `err.password`/`projectName`/`signedUrl` redacted                                                |
+| Pino `redact`, `paths: ['msg']`                                          | —     | `msg` **CENSORED** in all three call shapes — so redaction **does** reach it                                                                                         |
+| Pino, blueprint + `err.message`/`err.stack` + a `msg` serialiser         | —     | nothing leaks, in all three call shapes, and a benign line is untouched                                                                                              |
+| Nest `Logger.error(msg, cause)` through **raw pino**                     | —     | the second argument is **silently discarded** — no field at all                                                                                                      |
+| the same through **`nestjs-pino@4.6.1`**                                 | —     | it lands in **`context`**, which `redact` reaches by path                                                                                                            |
+| Nest `Logger.error(msg, stack, context)` through `nestjs-pino`           | —     | `context` = the class name and an **`err`** object carries the stack — **measured on a CONTEXT-LESS `Logger`; see [ADR-0030](./0030-nest-logger-argument-shape.md)** |
+| `uv add` (6 Python packages)                                             | **0** | 20 packages, **zero resolution warnings**                                                                                                                            |
+| Python `sentry_sdk.init()` then `set_tracer_provider()`                  | **0** | provider is OTel's; **zero** OTel warnings; both orders identical                                                                                                    |
+| Python structlog, `format_exc_info` + `JSONRenderer`                     | **0** | the exception text **leaks**; there is no `redact` equivalent                                                                                                        |
 
 ## Decision
 
@@ -401,6 +401,13 @@ redacting that path censors the class name on every line; and Nest's
    stack**, which obligation 7 already covers with no collateral. That last
    shape is the recommendation, and it is a recommendation rather than a
    requirement because the adapter is Task 2's to choose.
+
+   [**Corrected by [ADR-0030](./0030-nest-logger-argument-shape.md)** — the three-argument form DISCARDS the cause at the filter's real call site.] These rows were measured on `nestjs-pino`'s `Logger` used
+   **directly**; the filter holds `new Logger(DomainExceptionFilter.name)`, and
+   Nest appends `this.context`, which changes the parse. ADR-0030 replaces this
+   obligation in full — including what `err` must hold, which is an `Error`
+   instance and **not** `describeCause`'s string. Do not implement from this
+   paragraph.
 
 9. **`PinoInstrumentation` is configured explicitly**: `logKeys` mapped to the
    camelCase names `OBSERVABILITY.md` §3 specifies, and `disableLogSending`
@@ -932,7 +939,11 @@ two-argument `Logger.error(message, describeCause(exception))` at line 89, and
 where the second argument lands is decided by a `LoggerService` adapter that
 does not exist yet — raw pino **discards it**, `nestjs-pino` puts it in
 `context`, and Nest's three-argument form through `nestjs-pino` puts it in
-`err.stack` where obligation 7 already reaches it. **CORRECTED (round 2).** The
+`err.stack` where obligation 7 already reaches it. **CORRECTED (round 2), and
+then corrected again — see [ADR-0030](./0030-nest-logger-argument-shape.md),
+which is where this thread ends.** The three-argument form discards the cause
+once the `Logger` carries a context, which the filter's does. The line number
+here is also wrong; it is `:88`. The
 lesson is narrower than "read the file": the claim was _derived_ from an
 accurate description of the leak in the plan's own notes, and the description
 was of the leak rather than of the call, so it read as authoritative.
