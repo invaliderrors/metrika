@@ -2,7 +2,11 @@
 
 **Status:** Accepted · **Date:** 2026-08-12 · **Scopes** the observability half
 of Phase 0 ([ROADMAP](../ROADMAP.md) row 0.11) by pinning what
-[`OBSERVABILITY.md`](../OBSERVABILITY.md) §1–§3 names without versions.
+[`OBSERVABILITY.md`](../OBSERVABILITY.md) §1–§3 names without versions. ·
+**Corrected in part by [ADR-0030](./0030-nest-logger-argument-shape.md)**, which
+replaces **obligation 8** — the three-argument `Logger.error` this document
+recommends **discards the cause** at the filter's real call site — and qualifies
+four smaller assertions. Read the two together.
 
 > **On the number.** `docs/adr/README.md` ended at
 > [0028](./0028-temporal-bind-on-ip.md) and `docs/adr/` on disk ended at the
