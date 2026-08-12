@@ -13,8 +13,29 @@ requires-python = "==3.12.*"
 # one. `boto3-stubs[s3]` is NOT here — it is a dev dependency of the workspace
 # root, where `mypy` and `ruff` live, because it is a type-checking artefact and
 # not something a running worker imports.
+#
+# The three `opentelemetry-*` pins are ADR-0029's Python table, and two of the
+# choices in it are load-bearing rather than incidental:
+#
+#   * `-proto-http`, NOT `-proto-grpc`. The gRPC exporter pulls `grpcio`, a
+#     compiled extension with a per-platform wheel matrix, into an image that
+#     has no other use for it. The HTTP exporter costs `requests`.
+#   * NOT `temporalio[opentelemetry]`. That extra resolves
+#     `opentelemetry-api<2,>=1.11.1` and `opentelemetry-sdk<2,>=1.11.1` — a
+#     floor, not a pin, on two packages named exactly here. Declaring them
+#     directly keeps one statement of the version.
+#     `temporalio.contrib.opentelemetry` ships in the base distribution and
+#     imports fine once these are present; `tests/test_telemetry.py` runs it.
+#
+# `sentry-sdk` is deliberately ABSENT. ADR-0029 pins it, and Plan 0C hands the
+# Sentry wiring to another task; a worker that imports it today would be an
+# exporter shipped before the API's `Error`-message leak is closed, which the
+# plan forbids in as many words.
 dependencies = [
   "boto3==1.43.67",
+  "opentelemetry-api==1.44.0",
+  "opentelemetry-exporter-otlp-proto-http==1.44.0",
+  "opentelemetry-sdk==1.44.0",
   "pydantic==2.13.4",
   "pydantic-settings==2.15.0",
   "structlog==26.1.0",
