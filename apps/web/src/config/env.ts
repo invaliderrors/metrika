@@ -12,9 +12,32 @@ import { SUPPORTED_LOCALES } from '../i18n/routing';
 export { SUPPORTED_LOCALES };
 export type { SupportedLocale } from '../i18n/routing';
 
+/**
+ * Empty, or a Sentry DSN. Both branches are anchored, so the alternation cannot
+ * accidentally admit a partial match.
+ *
+ * Empty is the default and is what disables the sink: `src/lib/telemetry/sentry.ts`
+ * turns `''` into `undefined` and Sentry takes its "No DSN provided" path. A
+ * *malformed* DSN would take exactly the same path — Sentry logs and carries on
+ * — so without this pattern a typo would silently mean "no error reporting"
+ * with every gate green. That is the failure this repository keeps finding, so
+ * it is a build error here instead.
+ *
+ * Deliberately loose about the host and the trailing path: Sentry's own DSNs
+ * differ between `sentry.io`, a regional ingest host and a self-hosted install,
+ * and a pattern that encodes today's shape would reject a valid DSN tomorrow.
+ * What it insists on is the structure that makes a DSN a DSN — `https`, a
+ * public key, an `@`, a host, and a project path.
+ */
+const SENTRY_DSN = /^$|^https:\/\/[^@/\s]+@[^/\s]+\/\S+$/;
+
 const PublicKeys = {
   NEXT_PUBLIC_API_BASE_URL: z.string().regex(/^https?:\/\//, 'must be an http:// or https:// URL'),
   NEXT_PUBLIC_DEFAULT_LOCALE: z.enum(SUPPORTED_LOCALES),
+  NEXT_PUBLIC_SENTRY_DSN: z
+    .string()
+    .regex(SENTRY_DSN, 'must be empty or look like https://<publicKey>@<host>/<projectId>')
+    .default(''),
 };
 
 export const ClientEnvSchema = z.object(PublicKeys);
@@ -99,4 +122,5 @@ export function loadServerEnv(): ServerEnv {
 export const clientEnv: ClientEnv = ClientEnvSchema.parse({
   NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
   NEXT_PUBLIC_DEFAULT_LOCALE: process.env.NEXT_PUBLIC_DEFAULT_LOCALE,
+  NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN,
 });
