@@ -18,6 +18,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     await this.client.$connect();
+    // pg.Pool is lazy on Prisma 7, so $connect() alone opens no backend and the
+    // process would report itself healthy with an unreachable database. One
+    // round trip restores fail-fast at boot. See ADR-0037.
+    await this.client.$queryRaw`SELECT 1`;
   }
 
   async onModuleDestroy(): Promise<void> {
