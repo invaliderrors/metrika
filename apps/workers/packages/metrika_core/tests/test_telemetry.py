@@ -286,7 +286,7 @@ async def test_the_activitys_log_line_redacts_a_signed_url_it_was_handed(
         )
 
     captured = capsys.readouterr().out
-    assert _probe_line(captured)["presigned_url"] == "[redacted]"
+    assert _probe_line(captured)["presigned_url"] == "[REDACTED]"
     assert SIGNATURE not in captured, "the signature survived somewhere in the captured output"
 
 

@@ -1,7 +1,7 @@
 """`metrika_core.logging`, and the redaction control it is mostly there to run.
 
-The redaction half of this file is Plan 0C Task 4 Step 4: three sinks — Pino in
-`apps/api`, structlog here, Sentry's `beforeSend` in `apps/web` — must not drift
+The redaction half of this file is Plan 0C Task 4 Step 4: four sinks — Pino and a
+Sentry client in `apps/api`, structlog here, Sentry in `apps/web` — must not drift
 apart. **The LIST is derived**: `RedactedFieldName` lives in
 `packages/contracts` and reaches this side as generated code through `pnpm
 contracts:emit`, which CI byte-diffs, so `REDACTED_FIELD_NAMES` below is that
@@ -16,7 +16,7 @@ fails `packages/contracts/test/redaction.test.ts` immediately, or fails CI's
 with three call sites and copies of it drift exactly as copies of the list
 would — measured, at 27 of 140 probe names. What this file adds is the
 BEHAVIOURAL half the corpus cannot reach: that a real emitted line says
-`[redacted]`, through the whole structlog pipeline.
+`[REDACTED]`, through the whole structlog pipeline.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def test_redacts_a_presigned_url(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "X-Amz-Signature" not in out
     assert "deadbeef" not in out
-    assert "[redacted]" in out
+    assert "[REDACTED]" in out
 
 
 # ------------------------- the shared list, and its reach ---------------------
@@ -132,7 +132,7 @@ def _acronym(name: str) -> str:
 # grades this module's matcher against and `packages/contracts` grades its own
 # against. That is what makes a one-sided change to the RULE go red. This table
 # is the BEHAVIOURAL half: it drives the whole structlog pipeline and asserts a
-# real emitted line says `[redacted]`, which the corpus (a matcher-level check)
+# real emitted line says `[REDACTED]`, which the corpus (a matcher-level check)
 # cannot.
 #
 # The first version of this file parametrised over the redacted names and
@@ -192,7 +192,7 @@ def test_redacts_every_shared_name_in_every_spelling(
     """
     key = spell(name)
 
-    assert _logged(capsys, **{key: "leaked-value"})[key] == "[redacted]", (
+    assert _logged(capsys, **{key: "leaked-value"})[key] == "[REDACTED]", (
         f"{key} is {name} spelled as {label}, and it reached the log line"
     )
 
@@ -213,10 +213,10 @@ def test_redacts_the_url_names_a_caller_actually_reaches_for(
         objectURL="https://s3/w?X-Amz-Signature=deadbeef",
     )
 
-    assert payload["download_url"] == "[redacted]"
-    assert payload["s3_url"] == "[redacted]"
-    assert payload["upload_url"] == "[redacted]"
-    assert payload["objectURL"] == "[redacted]"
+    assert payload["download_url"] == "[REDACTED]"
+    assert payload["s3_url"] == "[REDACTED]"
+    assert payload["upload_url"] == "[REDACTED]"
+    assert payload["objectURL"] == "[REDACTED]"
 
 
 # ------------------------------ the cost, asserted ----------------------------
@@ -309,7 +309,7 @@ def test_a_value_a_processor_injects_is_still_subject_to_redaction(
 
     out = capsys.readouterr().out
     assert "deadbeef" not in out
-    assert '"presigned_url": "[redacted]"' in out
+    assert '"presigned_url": "[REDACTED]"' in out
 
 
 def test_redaction_runs_after_every_processor_that_can_add_a_key() -> None:
@@ -349,7 +349,7 @@ def test_the_correlation_fields_are_not_redacted_by_their_own_names() -> None:
     `requestId` and `traceId` are put on every activity's log line by
     `metrika_core.telemetry`, and they run BEFORE the redaction processor
     deliberately, so a name that appeared on both lists would produce a
-    correlated log line whose correlation is `[redacted]`. Asserted on the
+    correlated log line whose correlation is `[REDACTED]`. Asserted on the
     matcher rather than through a log line, because this is a property of the
     two lists rather than of any one event.
     """

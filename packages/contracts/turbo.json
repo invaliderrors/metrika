@@ -23,9 +23,22 @@
       // `$TURBO_ROOT$` is what lets a package's inputs reach outside its own
       // directory; `$TURBO_DEFAULT$` keeps the package's own files hashed, since
       // naming any input replaces the default set rather than extending it.
+      //
+      // The SECOND entry is `metrika_core/logging.py`, read by
+      // test/censor-agreement.test.ts. That file restates `REDACTION_CENSOR` as
+      // a Python literal — it cannot import a TypeScript constant — and the two
+      // were measured diverging (`[redacted]` against `[REDACTED]`) with every
+      // gate on both sides green, because the corpus declares which KEYS are
+      // redacted and never what the censor looks like.
+      //
+      // MEASURED on turbo 2.10.8, same protocol as the entry above: prime the
+      // cache green, change `_REDACTED` in the Python file, re-run — cache MISS
+      // and the suite fails naming both tokens. With this entry removed the same
+      // edit is `cache hit, replaying logs` at exit 0.
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/apps/workers/packages/metrika_core/src/metrika_core/contracts/**"
+        "$TURBO_ROOT$/apps/workers/packages/metrika_core/src/metrika_core/contracts/**",
+        "$TURBO_ROOT$/apps/workers/packages/metrika_core/src/metrika_core/logging.py"
       ]
     }
   }
