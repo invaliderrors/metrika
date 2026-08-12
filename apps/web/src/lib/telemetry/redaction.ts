@@ -23,9 +23,57 @@ import { isRedactedKey } from '@metrika/contracts';
  * through the matcher, so a traversal that stops reaching some part of an event
  * is red even though the shared rule is untouched.
  *
- * **Every limit below fails CLOSED**, and that is the correction review paid
- * for: the first version of this walk had a depth cap that returned from a
- * subtree it had not examined, which is a leak with a comment in front of it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT BUILDS A CLEANED COPY. IT DOES NOT MUTATE THE EVENT.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * This is the third version of the traversal and the first one whose safety is
+ * structural rather than argued, so the three that failed are worth naming —
+ * every one of them was an in-place mutation with a bookkeeping mistake, and
+ * each fix closed one door and left another open:
+ *
+ *  1. a depth cap that RETURNED from a subtree, leaving it intact;
+ *  2. a visited-set that recorded "I have been here" and was read as "this is
+ *     clean", so aliases of an unwritable node were handed back verbatim;
+ *  3. an outcome map that recorded `clean` OPTIMISTICALLY so a cycle could
+ *     terminate — and a BACK-EDGE (a descendant referring to an ancestor) read
+ *     that optimism, kept the original node, and shipped it after the ancestor
+ *     had failed. Measured on the wire:
+ *     `const B = {}; const A = Object.freeze({ down: B, password: 'x' }); B.up = A`
+ *     sent as `{ request: { a: A, b: B } }` produced
+ *     `{"a":"[REDACTED]","b":{"up":{"down":"[Circular ~]","password":"x"}}}`.
+ *
+ * The reasoning error in (3) is exact and is the reason for this rewrite: *"the
+ * failing node's subtree becomes unreachable" holds only when the descendant is
+ * reachable solely through the failing node.* A back-edge is precisely a
+ * descendant reachable from outside it. And circularity does not save it —
+ * `@sentry/core`'s `envelope.js:56-61` catches the `JSON.stringify` throw and
+ * re-serialises through `normalize()`, which writes `[Circular ~]` and keeps
+ * every other value.
+ *
+ * Building a copy removes the premise all three shared. Nothing is ever written
+ * to the event, so:
+ *
+ *   - **there is no such thing as a node that cannot be cleaned.** Frozen
+ *     objects, setter-less getters, setters that silently ignore the assignment,
+ *     and `Proxy` traps returning `true` without storing anything are all just
+ *     values to READ. Two of those four were measured shipping secrets through
+ *     the previous version's `write()`, which reported a success it had not
+ *     achieved.
+ *   - **a back-edge is safe by construction.** The output container is created
+ *     and memoised BEFORE its children are filled, and it is never replaced, so
+ *     whatever a back-edge captured is the same object that ends up complete.
+ *   - **a getter that returns a fresh object each call cannot escape.** The
+ *     previous version cleaned the copy it had just read, compared it to itself,
+ *     wrote nothing, and left the transport to invoke the getter again and
+ *     serialise a pristine one — measured, `request.data = {get body() { return
+ *     { password } }}` shipped the password. Here the cleaned value goes into
+ *     the OUTPUT, and the output is what Sentry sends.
+ *   - a read that throws costs one PROPERTY rather than a whole node, which is
+ *     both safer and a better diagnostic than the old node-wide censor.
+ *
+ * What a copy costs is fidelity, and the two places that matters are handled
+ * explicitly below: `toJSON` and the object prototype.
  */
 export const REDACTION_CENSOR = '[REDACTED]';
 
@@ -38,7 +86,7 @@ export const REDACTION_CENSOR = '[REDACTED]';
  * `_processEvent` is `this._prepareEvent(…).then((prepared) => …
  * processBeforeSend(…))` (`client.js:586-595`), and `_prepareEvent` calls
  * `normalizeEvent` in its own `.then` (`utils/prepareEvent.js:52-53`). So
- * `normalizeDepth` runs **BEFORE** `beforeSend`, not after.
+ * `normalizeDepth` runs **BEFORE** this hook, not after.
  *
  * That is worse than the wrong ordering suggested, because `normalizeEvent`
  * (`utils/prepareEvent.js:123-167`) touches only `breadcrumbs[].data`, `user`,
@@ -49,173 +97,202 @@ export const REDACTION_CENSOR = '[REDACTED]';
  * application's integration allowlist, so those `vars` are populated in
  * practice, and `request.data` is a request body.
  *
- * A cap is still needed, because a walk without one turns a deeply nested
- * object into a stack overflow inside `beforeSend` — a dropped event, at
- * exactly the moment something is already going wrong.
- *
  * **12, AND THE COST OF THE NUMBER IS DESTRUCTION RATHER THAN EXPOSURE.** Past
- * the cap the subtree is replaced by the censor, so everything below it is gone
- * — not merely unredacted. Measured, and stated because the first version of
- * this comment described the cost as if it were confined to shared nodes:
- * `request.data` nested eleven objects deep loses a `modelId` sitting beside the
- * secret, and any unaliased object at depth 13 goes the same way.
+ * the cap the subtree becomes the censor, so everything below it is gone — not
+ * merely unredacted. Measured: `request.data` nested eleven objects deep loses a
+ * `modelId` sitting beside the secret.
  *
- * The number is chosen against the deepest path a REAL event has, which is
- * deeper than the first count here claimed: an object holding a local variable
- * sits at **depth 8** — `event`(0) `exception`(1) `values`(2) `values[0]`(3)
- * `stacktrace`(4) `frames`(5) `frames[0]`(6) `vars`(7) `vars.local`(8) — so a
- * frame's locals get four levels of their own structure and a request body gets
- * ten. `test/sentry-redaction.test.ts` pins the boundary in both directions, so
- * raising this is a deliberate edit with a red test in front of it rather than a
- * number somebody nudges.
+ * The number is chosen against the deepest path a REAL event has: an object
+ * holding a local variable sits at **depth 8** — `event`(0) `exception`(1)
+ * `values`(2) `values[0]`(3) `stacktrace`(4) `frames`(5) `frames[0]`(6)
+ * `vars`(7) `vars.local`(8) — so a frame's locals get four levels of their own
+ * structure and a request body gets ten. `test/sentry-redaction.test.ts` pins
+ * the boundary in both directions, so raising this is a deliberate edit with a
+ * red test in front of it rather than a number somebody nudges.
  */
 const MAX_DEPTH = 12;
 
 /**
- * Writes `next` over `container[key]`, and reports whether it worked.
- *
- * A frozen object, or a getter with no setter, makes the assignment throw in
- * strict mode — and an exception escaping `beforeSend` makes Sentry drop the
- * whole event. That is fail-closed for the leak and silent for the operator:
- * the report is simply lost, with nothing anywhere saying why. Caught here so
- * the caller can censor the unwritable node in ITS parent instead, which keeps
- * the rest of the event.
+ * Where the walk is, relative to Sentry's own stack-frame structure. See
+ * `FRAME_PATH_KEY`.
  */
-function write(container: object, key: string | number, next: unknown): boolean {
-  try {
-    (container as Record<string | number, unknown>)[key] = next;
-    return true;
-  } catch {
-    return false;
-  }
+type Zone = 'none' | 'stacktrace' | 'frames' | 'frame';
+
+/**
+ * `filename` is on the shared list — file names are customer intellectual
+ * property — and inside a STACK FRAME it is not a file name at all. It is the
+ * path of a JavaScript bundle or of our own source, and censoring it takes
+ * Sentry's `culprit` with it, which is the very field this module's `beforeSend`
+ * doc offers as the compensation for censoring `url`. Measured: every frame's
+ * path became `[REDACTED]` and so did the culprit.
+ *
+ * So the exemption is POSITIONAL, and deliberately not a change to the shared
+ * list — which is not negotiable, and would be wrong to narrow for every sink
+ * because one sink has a structural field of the same name.
+ *
+ * Two conditions, both required, because either alone is guessable: the walk
+ * must be inside `…stacktrace.frames[]` (the `Zone` machine below), AND the
+ * object must carry a key only a real frame carries. The residual is stated
+ * rather than hidden: a customer payload that itself nests
+ * `stacktrace.frames[]` and puts `lineno` beside `filename` would be exempted
+ * too. That takes four of Sentry's own key names in the right order in the
+ * customer's own data, and `test/sentry-redaction.test.ts` asserts a bare
+ * `{ filename }` — with no frame marker, and outside the zone — is still
+ * censored.
+ */
+const FRAME_PATH_KEY = 'filename';
+
+const FRAME_MARKERS = ['function', 'lineno', 'colno', 'in_app', 'abs_path', 'module'] as const;
+
+function isStackFrame(keys: readonly string[]): boolean {
+  return FRAME_MARKERS.some((marker) => keys.includes(marker));
+}
+
+function childZone(zone: Zone, key: string): Zone {
+  // A frame's own children are ordinary data again — `vars` most of all.
+  if (zone === 'frame') return 'none';
+  if (key === 'stacktrace') return 'stacktrace';
+  if (zone === 'stacktrace' && key === 'frames') return 'frames';
+  return 'none';
 }
 
 /**
- * What is known about a node. TWO states, not three.
+ * The cleaned output for one input node, and the depth it was produced at.
  *
- * A `walking` state was written first, to keep the optimistic mark below from
- * claiming a node is clean before it is known to be — and it was removed
- * because no mutation of this file could redden it. Under depth-first traversal
- * a node can only be re-entered while its own walk is in progress from INSIDE
- * its own subtree, i.e. through a cycle, and the two states are then
- * indistinguishable: both hand the same object back, and if the walk goes on to
- * fail, the node is replaced in its parent and the whole subtree — cyclic
- * reference included — becomes unreachable. A third state whose behaviour no
- * test can separate from a second is decoration.
+ * The depth is recorded because the cap makes the result DEPTH-DEPENDENT, and
+ * that is a leak-adjacent defect rather than a tidiness one: an aliased node
+ * reached first at depth 12 produces a truncated copy, and reusing it for the
+ * same node reached at depth 2 destroys data that walked perfectly well.
+ * Measured on the previous version, in the direction that made it look like a
+ * control: `Object.freeze({ modelId, detail: { note } })` reached deep-first
+ * became `[REDACTED]` at its shallow alias, and reached shallow-first stayed
+ * intact.
+ *
+ * A result produced at a shallower-or-equal depth is at least as complete, so it
+ * is reused; anything deeper is recomputed. That terminates — a node can only be
+ * recomputed at a strictly smaller depth, so at most `MAX_DEPTH + 1` times — and
+ * the earlier, more truncated copy simply stays where it was already embedded.
  */
-type WalkOutcome = 'clean' | 'censored';
+interface Cleaned {
+  readonly output: unknown;
+  readonly depth: number;
+}
 
 /**
- * Returns what the parent should store in place of `value` — the same object
- * when the walk completed, `REDACTION_CENSOR` when it could not.
+ * Reads a property, treating any throw as "the value is unknown".
  *
- * Returning a REPLACEMENT rather than mutating in place is the first half of the
- * fix. A void walk can only stop; it cannot tell its caller "I did not examine
- * this", so every limit it hits leaves the subtree behind intact.
- *
- * **RECORDING THE OUTCOME rather than the visit is the second half, and it is
- * what this module got wrong twice.** The premise behind a `WeakSet` is that
- * entering a node implies cleaning it. That premise fails on every path where a
- * node CANNOT be cleaned, and the first version of this comment asserted it
- * outright — "already visited means already clean". Measured at the transport
- * with `const F = Object.freeze({ password: 'hunter2' })`:
- *
- *   - `{ request: { x: F, y: { z: F } } }` shipped `"password":"hunter2"`
- *   - `{ request: { a: { z: F }, b: F } }` leaked, in both key orders
- *   - `frames: [{ vars: { a: F } }, { vars: { b: F } }]` leaked
- *   - four aliases produced one `[REDACTED]` and three verbatim copies
- *
- * The first alias was censored and every later one returned verbatim, because
- * `seen` said "visited" and the walk read that as "clean". React freezes props
- * in development, so the `frames` case is not exotic. It lands ONLY in the
- * regions this module argues have no other protection — `extra` and `contexts`
- * are immune because Sentry's `normalize` REBUILDS them before `beforeSend`,
- * measured: inside this hook an `extra` alias is `{aliased: false, frozen:
- * false}` while a `request` alias is `{aliased: true, frozen: true}`.
- *
- * So a node is marked `censored` on failure and every later encounter — alias or
- * not — gets the censor.
- *
- * **Depth is deliberately NOT tracked, and the reason changed under
- * measurement.** An earlier version of this comment claimed a depth-aware map
- * would mask the fail-open-cap mutation; it does not — `request.data` nested
- * fifteen deep stays red either way. The real reason is simpler and stronger:
- * this walk censors DESTRUCTIVELY, so a node re-reached at a shallower depth
- * finds `[REDACTED]` already written into it and recovers nothing. Depth
- * tracking would buy work, not coverage.
+ * `Object.keys` names accessor properties, and a getter is arbitrary code: it
+ * can throw, and on a `Proxy` so can the read itself. Before this was contained,
+ * such a throw escaped `beforeSend` and Sentry dropped the whole event — silent
+ * for the operator, and a lost report.
  */
-function redactValue(value: unknown, seen: WeakMap<object, WalkOutcome>, depth: number): unknown {
+function read(source: object, key: string | number): { ok: boolean; value: unknown } {
+  try {
+    return { ok: true, value: (source as Record<string | number, unknown>)[key] };
+  } catch {
+    return { ok: false, value: undefined };
+  }
+}
+
+function cleanValue(
+  value: unknown,
+  memo: WeakMap<object, Cleaned>,
+  depth: number,
+  zone: Zone,
+): unknown {
+  // Functions serialise to nothing, so they pass through and `JSON.stringify`
+  // drops them — the same outcome as before this walk existed.
   if (value === null || typeof value !== 'object') return value;
 
-  // FAIL CLOSED. Returning here would hand the parent back a subtree this
-  // function never looked inside.
+  // FAIL CLOSED. There is no version of "keep going" here that is safe: below
+  // the cap this function has not looked at anything.
   if (depth > MAX_DEPTH) return REDACTION_CENSOR;
 
-  // THE OUTCOME, not the visit. A node that could not be cleaned hands back the
-  // censor at every later alias; only a node known clean hands back itself.
-  const outcome = seen.get(value);
-  if (outcome === 'censored') return REDACTION_CENSOR;
-  if (outcome === 'clean') return value;
+  const previous = memo.get(value);
+  if (previous !== undefined && previous.depth <= depth) return previous.output;
 
-  // Marked BEFORE the walk, which is what terminates a cycle — Sentry events can
-  // be cyclic (`hint.originalException` graphs and framework objects both
-  // manage it) and a cycle here is an infinite loop inside the error path. The
-  // optimism is safe for exactly one reason, and it is the reason the state
-  // machine has two entries rather than three: every failure path below
-  // OVERWRITES this with `censored` before returning, and the only encounter
-  // that can read it in the meantime is a cycle from inside this node's own
-  // subtree — which the parent's replacement subsumes.
-  seen.set(value, 'clean');
+  /**
+   * `toJSON` FIRST, and this is the fidelity half of building a copy.
+   *
+   * `JSON.stringify` — which is what Sentry's envelope serialiser uses — calls
+   * `toJSON` and sends its result. A `Date` in `request` or in a frame's locals
+   * is the common case: copying its (zero) own enumerable properties would send
+   * `{}` where the wire used to carry an ISO string. So the result of `toJSON`
+   * is what gets cleaned and emitted, which is exactly what would have been
+   * sent, minus the redacted fields.
+   */
+  const serialiser = read(value, 'toJSON');
+  if (serialiser.ok && typeof serialiser.value === 'function') {
+    let produced: unknown;
+    try {
+      produced = (serialiser.value as (this: unknown) => unknown).call(value);
+    } catch {
+      produced = REDACTION_CENSOR;
+    }
+    // `depth + 1`, not `depth`: a `toJSON` that returns `this` would otherwise
+    // re-enter this branch forever, since nothing has been memoised yet.
+    const output = cleanValue(produced, memo, depth + 1, zone);
+    memo.set(value, { output, depth });
+    return output;
+  }
 
   if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index += 1) {
-      let next: unknown;
-      try {
-        // Read once, inside the guard, for the same two reasons as the object
-        // branch below. An array index can be an accessor too — `Object.
-        // defineProperty(arr, 0, { get })` is legal — and the previous version
-        // of this branch read it twice and read it outside any `try`.
-        // Annotated `unknown`, because `Array.isArray` narrows to `any[]` and an
-        // element would otherwise be `any` — which this repository does not
-        // allow anywhere, least of all in the one function that decides what
-        // leaves the browser.
-        const current: unknown = value[index];
-        next = redactValue(current, seen, depth + 1);
-        if (next === current) continue;
-      } catch {
-        seen.set(value, 'censored');
-        return REDACTION_CENSOR;
-      }
-      if (!write(value, index, next)) {
-        seen.set(value, 'censored');
-        return REDACTION_CENSOR;
-      }
+    const output: unknown[] = [];
+    // Memoised BEFORE the fill, which is what makes a back-edge safe: the
+    // container a cycle captures is the one that ends up complete, because it is
+    // never replaced.
+    memo.set(value, { output, depth });
+
+    const length = read(value, 'length');
+    const count = typeof length.value === 'number' ? length.value : 0;
+    const elementZone: Zone = zone === 'frames' ? 'frame' : 'none';
+
+    for (let index = 0; index < count; index += 1) {
+      const element = read(value, index);
+      output.push(
+        element.ok ? cleanValue(element.value, memo, depth + 1, elementZone) : REDACTION_CENSOR,
+      );
     }
-    return value;
+    return output;
   }
 
-  const record: Record<string, unknown> = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    let next: unknown;
-    try {
-      // Read ONCE into a local, because `Object.keys` names accessor properties
-      // and a getter is arbitrary code — reading it twice to compare would run
-      // whatever it does twice. Inside the guard for the same reason the write
-      // is: a getter that throws would otherwise escape this hook exactly like a
-      // failed assignment, and Sentry would drop the whole event.
-      const current = record[key];
-      next = isRedactedKey(key) ? REDACTION_CENSOR : redactValue(current, seen, depth + 1);
-      if (next === current) continue;
-    } catch {
-      seen.set(value, 'censored');
-      return REDACTION_CENSOR;
-    }
-    if (!write(record, key, next)) {
-      seen.set(value, 'censored');
-      return REDACTION_CENSOR;
-    }
+  let keys: readonly string[];
+  try {
+    keys = Object.keys(value);
+  } catch {
+    // A `Proxy` whose `ownKeys` trap throws. Nothing can be said about the node,
+    // so nothing of it is sent.
+    memo.set(value, { output: REDACTION_CENSOR, depth });
+    return REDACTION_CENSOR;
   }
-  return value;
+
+  /**
+   * A PLAIN object, always — the prototype is not carried over.
+   *
+   * Own enumerable string keys are exactly what `JSON.stringify` would have
+   * emitted, so the wire is unchanged for anything that was going to be sent. A
+   * class instance loses its class, and an `Error`'s `message` and `stack` are
+   * non-enumerable and were already absent from the JSON. Symbol keys,
+   * non-enumerable properties and inherited properties are all dropped for the
+   * same reason: the serialiser never saw them.
+   */
+  const output: Record<string, unknown> = {};
+  memo.set(value, { output, depth });
+
+  const frame = zone === 'frame' && isStackFrame(keys);
+
+  for (const key of keys) {
+    if (isRedactedKey(key) && !(frame && key === FRAME_PATH_KEY)) {
+      output[key] = REDACTION_CENSOR;
+      continue;
+    }
+    const child = read(value, key);
+    output[key] = child.ok
+      ? cleanValue(child.value, memo, depth + 1, childZone(zone, key))
+      : REDACTION_CENSOR;
+  }
+
+  return output;
 }
 
 /**
@@ -232,21 +309,21 @@ function redactValue(value: unknown, seen: WeakMap<object, WalkOutcome>, depth: 
  * error happened on — is also called `url`, so it is censored too. That is the
  * same trade `packages/contracts/src/redaction.ts` describes for `req.url` under
  * Pino, and the answer is the same one: the identity of the page survives under
- * a name that is not `url` (Sentry's `transaction`, and the `culprit` derived
- * from the stack frames), so the diagnostic is not lost — and narrowing the
- * matcher to save one field would reopen the one it exists to close.
+ * a name that is not `url` — Sentry's `transaction`, and the `culprit` derived
+ * from the stack frames, which is why `FRAME_PATH_KEY` above exists.
  *
- * Mutates and returns the same object, which is what Sentry expects. Generic
- * rather than typed to `ErrorEvent` so this module carries no Sentry types: it
- * is the one piece of the sink that is pure, and it is tested as such.
+ * **Returns a COPY. The event handed in is not modified**, which is asserted
+ * rather than assumed — it is the property that makes every hostile value shape
+ * inert, so it is the one worth guarding directly.
  *
- * **`null` — dropping the event — is the last resort, and only when the EVENT
- * OBJECT ITSELF could not be written to.** Every deeper failure is contained by
- * censoring the offending node in its parent, so one frozen object costs its own
- * subtree and not the report. Sentry treats a `null` return as "do not send",
- * which is the correct outcome for an event this function was unable to clean.
+ * `null` — Sentry's "do not send" — is reached only when the event object itself
+ * cannot be enumerated, which in practice means a `Proxy` with a throwing
+ * `ownKeys` trap. There is nothing to send in that case and nothing to say about
+ * it.
  */
 export function redactSentryEvent<TEvent>(event: TEvent): TEvent | null {
-  const result = redactValue(event, new WeakMap<object, WalkOutcome>(), 0);
-  return result === event ? event : null;
+  const output = cleanValue(event, new WeakMap<object, Cleaned>(), 0, 'none');
+
+  if (typeof output !== 'object' || output === null) return null;
+  return output as TEvent;
 }

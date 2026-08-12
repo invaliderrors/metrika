@@ -22,6 +22,42 @@ function cleaned<TEvent extends object>(event: TEvent): TEvent {
 }
 
 /**
+ * Every string the wire would carry, serialised the way SENTRY serialises.
+ *
+ * A plain `JSON.stringify` is the wrong instrument here and would have made this
+ * whole block unrunnable: the cleaned copy PRESERVES cycles — a back-edge points
+ * at the output container its ancestor is still filling — so `stringify` throws
+ * `Converting circular structure to JSON` on exactly the graphs these cases
+ * exist to test. Sentry does not stop there either: `@sentry/core`'s
+ * `envelope.js:56-61` catches that throw and re-serialises through `normalize()`,
+ * which writes `[Circular ~]` and KEEPS every other value.
+ *
+ * ANCESTORS ONLY, and that is the load-bearing detail. Cutting on every object
+ * seen — the obvious `WeakSet` — would also cut a repeated NON-cyclic node, and
+ * a secret sitting in an aliased subtree would vanish from the string this
+ * fixture greps. The assertion would then pass because the fixture stopped
+ * looking, which is the failure mode this file has been paying for all round.
+ * `normalize()` unmemoises on the way out for the same reason.
+ */
+function wireStrings(value: unknown, ancestors: Set<object>, out: string[]): void {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  if (ancestors.has(value)) return;
+  ancestors.add(value);
+  for (const child of Object.values(value)) wireStrings(child, ancestors, out);
+  ancestors.delete(value);
+}
+
+function onTheWire(event: unknown): string {
+  const strings: string[] = [];
+  wireStrings(event, new Set<object>(), strings);
+  return strings.join('\u0000');
+}
+
+/**
  * THE FIXTURE THAT GRADES THIS SINK, and it grades the WALK rather than the
  * rule.
  *
@@ -167,7 +203,7 @@ describe('redactSentryEvent', () => {
    * missed in the first place.
    */
   it.each(SECRETS)('leaves no trace of %s anywhere in the event', (secret) => {
-    const serialised = JSON.stringify(cleaned(sampleEvent()));
+    const serialised = onTheWire(cleaned(sampleEvent()));
 
     expect(serialised).not.toContain(secret);
   });
@@ -259,10 +295,15 @@ describe('redactSentryEvent', () => {
     expect(reads).toBe(1);
   });
 
-  it('returns the same object, which is what Sentry expects from beforeSend', () => {
+  /**
+   * A COPY, not the event. Sentry takes whatever `beforeSend` returns, and
+   * returning a fresh object is what makes every hostile value shape inert —
+   * there is nothing to write to, so there is nothing to fail at writing.
+   */
+  it('returns a copy rather than the event it was given', () => {
     const event = sampleEvent();
 
-    expect(redactSentryEvent(event)).toBe(event);
+    expect(redactSentryEvent(event)).not.toBe(event);
   });
 
   it('handles an event with nothing sensitive in it without changing anything', () => {
@@ -305,7 +346,7 @@ describe('the depth cap', () => {
   it('censors a subtree past the cap rather than abandoning it — request.data', () => {
     const event = { request: { data: nest(15, { password: 'hunter2' }) } };
 
-    expect(JSON.stringify(cleaned(event))).not.toContain('hunter2');
+    expect(onTheWire(cleaned(event))).not.toContain('hunter2');
   });
 
   it('censors a subtree past the cap — stack frame local variables', () => {
@@ -315,7 +356,7 @@ describe('the depth cap', () => {
       },
     };
 
-    expect(JSON.stringify(cleaned(event))).not.toContain('tok_1');
+    expect(onTheWire(cleaned(event))).not.toContain('tok_1');
   });
 
   /**
@@ -330,7 +371,7 @@ describe('the depth cap', () => {
    */
   it('keeps a benign sibling at the deepest surviving level', () => {
     const event = { request: { data: nest(10, { password: 'hunter2', modelId: 'mv_1' }) } };
-    const walked = JSON.stringify(cleaned(event));
+    const walked = onTheWire(cleaned(event));
 
     expect(walked).not.toContain('hunter2');
     expect(walked).toContain('mv_1');
@@ -338,7 +379,7 @@ describe('the depth cap', () => {
 
   it('destroys a benign sibling one level past it, which is the cost of the number', () => {
     const event = { request: { data: nest(11, { password: 'hunter2', modelId: 'mv_1' }) } };
-    const walked = JSON.stringify(cleaned(event));
+    const walked = onTheWire(cleaned(event));
 
     expect(walked).not.toContain('hunter2');
     expect(walked).not.toContain('mv_1');
@@ -369,261 +410,435 @@ describe('the depth cap', () => {
         ? { request: { aDeep: deep, zShallow: shared } }
         : { request: { zShallow: shared, aDeep: deep } };
 
-    expect(JSON.stringify(cleaned(event))).not.toContain('hunter2');
+    expect(onTheWire(cleaned(event))).not.toContain('hunter2');
   });
 });
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- * PROPERTIES THAT CANNOT BE WRITTEN
+ * HOSTILE VALUES × REGION × REACHABILITY × DEPTH × CONTAINER
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * A frozen object or a setter-less getter makes the assignment throw, and an
- * exception escaping `beforeSend` makes Sentry drop the event — fail-closed for
- * the leak, and a silently lost report. The walk censors the unwritable node in
- * its PARENT instead, so one frozen object costs its own subtree rather than the
- * whole report.
+ * Three review rounds each closed one door and left another open, because each
+ * fixture block tested one dimension at a time and their SUM is not their
+ * PRODUCT. This block is the product, and the cells it does not cover are named
+ * at the bottom rather than left to be discovered.
+ *
+ * The dimensions:
+ *
+ *   - **hostile shape** (6): frozen; a getter with no setter; a getter that
+ *     throws; a setter that silently ignores the assignment; a `Proxy` whose
+ *     `set` trap returns `true` without storing; a getter that returns a FRESH
+ *     object on every call. The last three were each measured shipping a
+ *     password through the previous, mutating version of the walk — the first
+ *     two because `write()` reported a success it had not achieved, the third
+ *     because the walk cleaned a copy, wrote nothing back, and left the
+ *     transport to invoke the getter again.
+ *   - **container** (2): object and array. Both are needed: an array whose
+ *     elements are only censored in place never attempts a write, so a frozen
+ *     array alone exercises nothing.
+ *   - **region** (5): `request`, `tags`, `frames[].vars`, `extra`, `contexts`.
+ *     The first three have no depth or aliasing protection anywhere in Sentry;
+ *     the last two are rebuilt by `normalize` before this hook, so a defect
+ *     cannot reproduce there — they are included precisely so that difference is
+ *     asserted rather than assumed.
+ *   - **reachability** (4): direct; a sibling alias; a nested alias; and a
+ *     BACK-EDGE, where a descendant refers to an ancestor and is therefore
+ *     reachable from outside the ancestor's own subtree. The back-edge is what
+ *     falsified round 2's optimistic `clean` mark.
+ *   - **key order** (2) on every aliased case, because the previous two defects
+ *     were both order-dependent and only one order was broken.
+ *   - **depth relative to the cap** (3): below, at, past — CROSSED with
+ *     aliasing, which is the cell no previous round covered.
+ *
+ * Nothing here can fail for the reason those rounds failed, and the reason is
+ * structural rather than tested: the walk never writes to the event. These
+ * assertions exist to keep it that way.
  */
-describe('unwritable properties', () => {
-  it('censors a frozen node in its parent, and still delivers the event', () => {
-    const event = { extra: { payload: Object.freeze({ password: 'hunter2', modelId: 'mv_1' }) } };
+const SECRET = 'hunter2';
+const KEEP = 'mv_1';
 
-    const walked = cleaned(event);
+type Hostile = () => Record<string, unknown>;
 
-    expect(JSON.stringify(walked)).not.toContain('hunter2');
-    expect((walked.extra as Record<string, unknown>)['payload']).toBe(REDACTION_CENSOR);
+function frozen(): Record<string, unknown> {
+  return Object.freeze({ password: SECRET, modelId: KEEP });
+}
+
+function getterNoSetter(): Record<string, unknown> {
+  const node: Record<string, unknown> = { modelId: KEEP };
+  Object.defineProperty(node, 'password', { get: () => SECRET, enumerable: true });
+  return node;
+}
+
+function throwingGetter(): Record<string, unknown> {
+  const node: Record<string, unknown> = {};
+  Object.defineProperty(node, 'boom', {
+    get: () => {
+      throw new Error('getter exploded');
+    },
+    enumerable: true,
   });
+  node['password'] = SECRET;
+  node['modelId'] = KEEP;
+  return node;
+}
 
-  it('censors a node whose redacted property is a getter with no setter', () => {
-    const payload: Record<string, unknown> = { modelId: 'mv_1' };
-    Object.defineProperty(payload, 'password', { get: () => 'hunter2', enumerable: true });
-    const event = { extra: { payload } };
-
-    const walked = cleaned(event);
-
-    expect(JSON.stringify(walked)).not.toContain('hunter2');
-    expect((walked.extra as Record<string, unknown>)['payload']).toBe(REDACTION_CENSOR);
+/** A setter that accepts the assignment and keeps the old value. */
+function lyingSetter(): Record<string, unknown> {
+  const node: Record<string, unknown> = { modelId: KEEP };
+  Object.defineProperty(node, 'password', {
+    get: () => SECRET,
+    set: () => undefined,
+    enumerable: true,
   });
+  return node;
+}
 
-  it('censors a node whose getter throws, rather than letting it escape beforeSend', () => {
-    const payload: Record<string, unknown> = { modelId: 'mv_1' };
-    Object.defineProperty(payload, 'boom', {
-      get: () => {
-        throw new Error('getter exploded');
+/** A `Proxy` whose `set` trap reports success without storing anything. */
+function lyingProxy(): Record<string, unknown> {
+  return new Proxy({ password: SECRET, modelId: KEEP }, { set: () => true });
+}
+
+/** A getter handing out a NEW object each call, so cleaning a copy achieves nothing. */
+function freshEachRead(): Record<string, unknown> {
+  const node: Record<string, unknown> = {};
+  Object.defineProperty(node, 'body', {
+    get: () => ({ password: SECRET, modelId: KEEP }),
+    enumerable: true,
+  });
+  return node;
+}
+
+const HOSTILE_OBJECTS: readonly [string, Hostile][] = [
+  ['a frozen object', frozen],
+  ['a getter with no setter', getterNoSetter],
+  ['a getter that throws', throwingGetter],
+  ['a setter that ignores the assignment', lyingSetter],
+  ['a Proxy whose set trap lies', lyingProxy],
+  ['a getter returning a fresh object each read', freshEachRead],
+];
+
+const HOSTILE_ARRAYS: readonly [string, Hostile][] = [
+  ['a frozen array of a frozen object', () => Object.freeze([frozen()]) as unknown as never],
+  [
+    'an array whose index getter throws',
+    () => {
+      const items: unknown[] = [];
+      Object.defineProperty(items, 0, {
+        get: () => {
+          throw new Error('index exploded');
+        },
+        enumerable: true,
+        configurable: true,
+      });
+      items[1] = { password: SECRET };
+      return items as unknown as Record<string, unknown>;
+    },
+  ],
+  ['an array of a getter-only object', () => [getterNoSetter()] as unknown as never],
+];
+
+const HOSTILE: readonly [string, Hostile][] = [...HOSTILE_OBJECTS, ...HOSTILE_ARRAYS];
+
+/**
+ * Where a hostile value is planted. The first three regions are the ones Sentry
+ * protects nowhere; the last two are rebuilt by `normalize` BEFORE `beforeSend`,
+ * measured — an `extra` alias arrives `{aliased: false, frozen: false}` inside
+ * this hook while a `request` alias arrives `{aliased: true, frozen: true}`.
+ */
+const REGIONS: readonly [string, (planted: unknown, second?: unknown) => object][] = [
+  ['request', (a, b) => ({ request: { data: a, other: b } })],
+  ['tags', (a, b) => ({ tags: { detail: a, other: b } })],
+  [
+    'frames[].vars',
+    (a, b) => ({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                { filename: 'app:///page.js', lineno: 12, vars: { local: a } },
+                { filename: 'app:///other.js', lineno: 3, vars: { local: b } },
+              ],
+            },
+          },
+        ],
       },
-      enumerable: true,
-    });
-    const event = { extra: { payload } };
+    }),
+  ],
+  ['extra', (a, b) => ({ extra: { payload: a, other: b } })],
+  ['contexts', (a, b) => ({ contexts: { detail: a, other: b } })],
+];
 
-    expect(() => cleaned(event)).not.toThrow();
-    expect((cleaned({ extra: { payload } }).extra as Record<string, unknown>)['payload']).toBe(
+describe('hostile values', () => {
+  describe.each(REGIONS)('in %s', (_region, plant) => {
+    it.each(HOSTILE)('are cleaned when reached directly: %s', (_shape, make) => {
+      expect(onTheWire(cleaned(plant(make())))).not.toContain(SECRET);
+    });
+
+    it.each(HOSTILE)('are cleaned at a sibling alias, alias last: %s', (_shape, make) => {
+      const node = make();
+
+      expect(onTheWire(cleaned(plant(node, node)))).not.toContain(SECRET);
+    });
+
+    it.each(HOSTILE)('are cleaned at a nested alias, alias first: %s', (_shape, make) => {
+      const node = make();
+
+      expect(onTheWire(cleaned(plant({ wrapped: node }, node)))).not.toContain(SECRET);
+    });
+
+    it.each(HOSTILE)('are cleaned at a nested alias, alias last: %s', (_shape, make) => {
+      const node = make();
+
+      expect(onTheWire(cleaned(plant(node, { wrapped: node })))).not.toContain(SECRET);
+    });
+
+    /**
+     * THE BACK-EDGE, which is what falsified the previous version. `down`
+     * reaches `B`, `B.up` reaches back to `A`, and `B` is ALSO planted beside
+     * `A` — so `B` is reachable without going through `A`, and a walk that
+     * assumed otherwise shipped `A` intact from inside `B`.
+     */
+    it.each(HOSTILE_OBJECTS)('are cleaned through a back-edge, ancestor first: %s', (_s, make) => {
+      const back: Record<string, unknown> = {};
+      const node = make();
+      const anchor = Object.freeze({ down: back, password: SECRET, inner: node });
+      back['up'] = anchor;
+
+      expect(onTheWire(cleaned(plant(anchor, back)))).not.toContain(SECRET);
+    });
+
+    it.each(HOSTILE_OBJECTS)(
+      'are cleaned through a back-edge, descendant first: %s',
+      (_s, make) => {
+        const back: Record<string, unknown> = {};
+        const node = make();
+        const anchor = Object.freeze({ down: back, password: SECRET, inner: node });
+        back['up'] = anchor;
+
+        expect(onTheWire(cleaned(plant(back, anchor)))).not.toContain(SECRET);
+      },
+    );
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE CELL NO ROUND COVERED: DEPTH × ALIASING
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Every previous fixture tested the cap on an unaliased node and aliasing at a
+ * shallow depth. The defect lives in the crossing: a node reached deep FIRST is
+ * cleaned against a smaller budget, and reusing that result for the same node
+ * reached shallow destroys data that walked perfectly well. Measured on the
+ * previous version — deep-first produced `[REDACTED]` at the shallow alias and
+ * shallow-first left it intact, which is last round's asymmetry pointing the
+ * other way.
+ */
+describe('the depth cap crossed with aliasing', () => {
+  function nest(levels: number, leaf: unknown): Record<string, unknown> {
+    let node: Record<string, unknown> = leaf as Record<string, unknown>;
+    for (let i = 0; i < levels; i += 1) node = { w: node };
+    return node;
+  }
+
+  const orders = ['deep first', 'shallow first'] as const;
+
+  it.each(orders)('never leaks through either path (%s)', (order) => {
+    const shared = Object.freeze({ password: SECRET, detail: { note: 'the diagnostic' } });
+    const deep = nest(10, shared);
+    const event =
+      order === 'deep first'
+        ? { request: { a: deep, z: shared } }
+        : { request: { a: shared, z: deep } };
+
+    expect(onTheWire(cleaned(event))).not.toContain(SECRET);
+  });
+
+  /**
+   * The half that is about DESTRUCTION rather than exposure, and the reason the
+   * memo records the depth a result was produced at. The shallow alias must
+   * carry the diagnostic in both orders; reusing a truncated result for it is a
+   * silent data loss that looks exactly like a control working.
+   */
+  it.each(orders)('keeps the shallow alias complete (%s)', (order) => {
+    const shared = Object.freeze({ password: SECRET, detail: { note: 'the diagnostic' } });
+    const deep = nest(10, shared);
+    const event =
+      order === 'deep first'
+        ? { request: { a: deep, z: shared } }
+        : { request: { a: shared, z: deep } };
+
+    const walked = onTheWire(cleaned(event));
+    expect(walked).not.toContain(SECRET);
+    expect(walked).toContain('the diagnostic');
+  });
+
+  it.each(orders)('cleans a back-edge that also crosses the cap (%s)', (order) => {
+    const back: Record<string, unknown> = {};
+    const anchor = Object.freeze({ down: back, password: SECRET });
+    back['up'] = anchor;
+    const deep = nest(10, anchor);
+    const event =
+      order === 'deep first'
+        ? { request: { a: deep, z: back } }
+        : { request: { a: back, z: deep } };
+
+    expect(onTheWire(cleaned(event))).not.toContain(SECRET);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE PROPERTY THAT MAKES ALL OF THE ABOVE INERT
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('the event handed in', () => {
+  it('is never modified — the walk returns a cleaned copy', () => {
+    const inner = { password: SECRET, modelId: KEEP };
+    const event = { request: { data: inner } };
+
+    const walked = cleaned(event);
+
+    expect(walked).not.toBe(event);
+    expect(inner.password).toBe(SECRET);
+    expect((walked.request as { data: Record<string, unknown> }).data['password']).toBe(
       REDACTION_CENSOR,
     );
   });
 
-  /**
-   * The last resort, and the only case that drops the report: the EVENT object
-   * itself could not be written to, so there is nowhere to put the censor.
-   * `null` is Sentry's "do not send", which is the right answer for an event
-   * this function was unable to clean.
-   */
-  it('drops the event when the root itself cannot be cleaned', () => {
-    const event = Object.freeze({ password: 'hunter2' });
+  it('is not modified even when it is perfectly writable', () => {
+    const event = { extra: { password: SECRET } };
 
-    expect(redactSentryEvent(event)).toBeNull();
+    cleaned(event);
+
+    expect(event.extra.password).toBe(SECRET);
+  });
+
+  /**
+   * A `Date` in an unprotected region is the fidelity case a copying walk gets
+   * wrong by default: copying its own enumerable properties would send `{}`
+   * where the wire used to carry an ISO string. `toJSON` is honoured, so what
+   * ships is what `JSON.stringify` would have shipped.
+   */
+  it('preserves what JSON.stringify would have sent for a Date', () => {
+    const when = new Date('2026-08-12T04:05:06.000Z');
+    const walked = cleaned({ request: { data: { when } } });
+
+    expect(onTheWire(walked)).toContain('2026-08-12T04:05:06.000Z');
+  });
+
+  it('cleans what toJSON produces, rather than trusting it', () => {
+    const hostile = { toJSON: () => ({ password: SECRET, modelId: KEEP }) };
+    const walked = onTheWire(cleaned({ request: { data: hostile } }));
+
+    expect(walked).not.toContain(SECRET);
+    expect(walked).toContain(KEEP);
+  });
+
+  it('survives a toJSON that returns itself', () => {
+    const loop: Record<string, unknown> = { password: SECRET };
+    loop['toJSON'] = () => loop;
+
+    expect(onTheWire(cleaned({ request: { data: loop } }))).not.toContain(SECRET);
+  });
+
+  /**
+   * The last resort, and the only case that drops the report: the event object
+   * itself cannot be enumerated, so there is nothing to send and nothing to say
+   * about it. A FROZEN root is no longer this case — nothing is written to it.
+   */
+  it('is dropped only when the root cannot be enumerated at all', () => {
+    const unenumerable = new Proxy(
+      { password: SECRET },
+      {
+        ownKeys: () => {
+          throw new Error('ownKeys exploded');
+        },
+      },
+    );
+
+    expect(redactSentryEvent(unenumerable)).toBeNull();
+    expect(redactSentryEvent(Object.freeze({ password: SECRET }))).not.toBeNull();
   });
 });
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- * ALIASES OF AN UNCLEANABLE NODE
+ * `filename` INSIDE A STACK FRAME IS A PATH, NOT A FILE NAME
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * The cases the block above CANNOT catch, and the regression that got through
- * because of it: every fixture up there holds a single reference, so a walk that
- * censored the first encounter and returned every later one verbatim passed all
- * of them.
+ * `filename` is on the shared list because file names are customer intellectual
+ * property. In a stack frame it is a bundle URL or one of our own source paths,
+ * and censoring it destroys Sentry's `culprit` — the field this module's own
+ * doc offers as the compensation for censoring `url`.
  *
- * Measured at the transport before the fix, with
- * `const F = Object.freeze({ password: 'hunter2' })`: four aliases of `F`
- * produced one `[REDACTED]` and three verbatim copies. The premise was that
- * entering a node implies cleaning it — true for the depth path once it censors,
- * false for every path where the node cannot be written to at all.
- *
- * These live in `request` and in `frames[].vars` deliberately. `extra` and
- * `contexts` cannot reproduce it: Sentry's `normalize` REBUILDS them before
- * `beforeSend`, so what arrives there is a fresh unfrozen tree with the aliasing
- * already gone — measured, an `extra` alias is `{aliased: false, frozen: false}`
- * inside this hook while a `request` alias is `{aliased: true, frozen: true}`.
- * A fixture written in `extra` would be green for a reason that has nothing to
- * do with this code.
- *
- * React freezes props in development, so a frozen object reaching a stack
- * frame's locals is ordinary rather than adversarial.
+ * The exemption is POSITIONAL and needs BOTH conditions, so the assertions come
+ * in pairs: inside the zone with a frame marker it survives, and every weakening
+ * of either condition is still censored.
  */
-describe('aliases of a node that cannot be cleaned', () => {
-  function frozenSecret(): Record<string, unknown> {
-    return Object.freeze({ password: 'hunter2', modelId: 'mv_1' });
+describe('a stack frame path', () => {
+  function frameEvent(frame: Record<string, unknown>): object {
+    return { exception: { values: [{ stacktrace: { frames: [frame] } }] } };
   }
 
-  function getterSecret(): Record<string, unknown> {
-    const node: Record<string, unknown> = { modelId: 'mv_1' };
-    Object.defineProperty(node, 'password', { get: () => 'hunter2', enumerable: true });
-    return node;
-  }
+  it('survives inside a real frame, so the culprit survives with it', () => {
+    const walked = cleaned(
+      frameEvent({ filename: 'app:///_next/static/chunks/page.js', lineno: 12, function: 'Page' }),
+    );
 
-  /**
-   * Uncleanable through the READ rather than the write, which is a different
-   * code path — and `boom` is defined FIRST on purpose. `Object.keys` is
-   * insertion-ordered, so the throw happens before the walk reaches `password`;
-   * with the key order reversed the secret would already have been censored and
-   * the case would pass without exercising anything.
-   */
-  function throwingGetterSecret(): Record<string, unknown> {
-    const node: Record<string, unknown> = {};
-    Object.defineProperty(node, 'boom', {
-      get: () => {
-        throw new Error('getter exploded');
-      },
-      enumerable: true,
-    });
-    node['password'] = 'hunter2';
-    node['modelId'] = 'mv_1';
-    return node;
-  }
-
-  const shapes: readonly [string, () => Record<string, unknown>][] = [
-    ['a frozen object', frozenSecret],
-    ['a setter-less getter', getterSecret],
-    ['a getter that throws', throwingGetterSecret],
-  ];
-
-  describe.each(shapes)('%s', (_label, make) => {
-    it('is censored at a sibling alias, whichever comes first', () => {
-      const node = make();
-
-      expect(JSON.stringify(cleaned({ request: { x: node, y: { z: node } } }))).not.toContain(
-        'hunter2',
-      );
-      expect(JSON.stringify(cleaned({ request: { a: { z: make() }, b: make() } }))).not.toContain(
-        'hunter2',
-      );
-    });
-
-    it('is censored at a nested alias in the reversed order', () => {
-      const node = make();
-
-      expect(JSON.stringify(cleaned({ request: { a: { z: node }, b: node } }))).not.toContain(
-        'hunter2',
-      );
-    });
-
-    it('is censored across separate stack frames', () => {
-      const node = make();
-      const event = {
-        exception: {
-          values: [
-            {
-              stacktrace: {
-                frames: [{ vars: { a: node } }, { vars: { b: node } }],
-              },
-            },
-          ],
-        },
-      };
-
-      expect(JSON.stringify(cleaned(event))).not.toContain('hunter2');
-    });
-
-    /**
-     * The count, not just the absence: the measured failure produced ONE
-     * `[REDACTED]` and three verbatim copies, so an assertion that only greps
-     * for the secret would have caught it — but an assertion that counts says
-     * what the fix actually guarantees.
-     */
-    it('censors every alias, not only the first', () => {
-      const node = make();
-      const walked = cleaned({ request: { w: node, x: node, y: node, z: node } });
-      const request = walked.request as Record<string, unknown>;
-
-      expect(Object.values(request)).toStrictEqual([
-        REDACTION_CENSOR,
-        REDACTION_CENSOR,
-        REDACTION_CENSOR,
-        REDACTION_CENSOR,
-      ]);
-    });
+    expect(onTheWire(walked)).toContain('app:///_next/static/chunks/page.js');
   });
 
-  /**
-   * The ARRAY branch keeps its own copy of the outcome record, and it fails in
-   * its own way — which is why it needs its own fixtures rather than riding on
-   * the object ones.
-   *
-   * A frozen array is NOT enough on its own: an element that is merely censored
-   * in place keeps its identity, nothing is written, and the walk succeeds. It
-   * takes an element that must be REPLACED — a frozen object, or an index whose
-   * getter throws — for the array itself to become uncleanable.
-   */
-  const arrayShapes: readonly [string, () => unknown[]][] = [
-    [
-      'a frozen array holding a frozen object',
-      () => Object.freeze([Object.freeze({ password: 'hunter2' })]) as unknown as unknown[],
-    ],
-    [
-      'an array whose index getter throws',
-      () => {
-        const items: unknown[] = [];
-        Object.defineProperty(items, 0, {
-          get: () => {
-            throw new Error('index exploded');
-          },
-          enumerable: true,
-          configurable: true,
-        });
-        items[1] = { password: 'hunter2' };
-        return items;
-      },
-    ],
-  ];
+  it('is censored inside the zone when nothing marks the object as a frame', () => {
+    const walked = cleaned(frameEvent({ filename: 'Torre_Bacata_Fase3_Final.stl' }));
 
-  describe.each(arrayShapes)('%s', (_label, make) => {
-    it('is censored at every alias', () => {
-      const items = make();
-
-      expect(JSON.stringify(cleaned({ request: { x: items, y: { z: items } } }))).not.toContain(
-        'hunter2',
-      );
-      expect(JSON.stringify(cleaned({ request: { a: { z: make() }, b: make() } }))).not.toContain(
-        'hunter2',
-      );
-    });
-
-    it('is censored across separate stack frames', () => {
-      const items = make();
-      const event = {
-        exception: {
-          values: [{ stacktrace: { frames: [{ vars: { a: items } }, { vars: { b: items } }] } }],
-        },
-      };
-
-      expect(JSON.stringify(cleaned(event))).not.toContain('hunter2');
-    });
+    expect(onTheWire(walked)).not.toContain('Torre_Bacata');
   });
 
-  /**
-   * The other direction, so the outcome map cannot be "censor everything seen
-   * twice": a CLEAN node reached through several aliases stays itself.
-   */
-  it('leaves a clean node alone at every alias', () => {
-    const node: Record<string, unknown> = { modelId: 'mv_1' };
-    const walked = cleaned({ request: { x: node, y: { z: node } } });
-    const request = walked.request as { x: unknown; y: { z: unknown } };
+  it('is censored when a frame-shaped object sits outside the zone', () => {
+    const walked = cleaned({
+      extra: { frames: [{ filename: 'Torre_Bacata_Fase3_Final.stl', lineno: 1 }] },
+    });
 
-    expect(request.x).toBe(node);
-    expect(request.y.z).toBe(node);
+    expect(onTheWire(walked)).not.toContain('Torre_Bacata');
+  });
+
+  it("is censored in a frame's own locals, which are data again", () => {
+    const walked = cleaned(
+      frameEvent({
+        filename: 'app:///page.js',
+        lineno: 12,
+        vars: { filename: 'Torre_Bacata_Fase3_Final.stl' },
+      }),
+    );
+
+    expect(onTheWire(walked)).toContain('app:///page.js');
+    expect(onTheWire(walked)).not.toContain('Torre_Bacata');
   });
 });
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * CELLS DELIBERATELY NOT COVERED, AND WHY
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ *  - **Symbol keys, non-enumerable properties and inherited properties.** The
+ *    walk does not visit them and does not copy them, and `JSON.stringify` never
+ *    sent them, so there is nothing on the wire to assert about.
+ *  - **`Map`, `Set`, `WeakMap` contents.** Same reason: `JSON.stringify` emits
+ *    `{}` for all three. Their entries were never sent and are not sent now.
+ *  - **Hostile shapes at the CAP boundary in every region.** The crossing is
+ *    covered in `request` only. The cap is region-independent by construction —
+ *    it is a counter on the recursion, with no knowledge of where it is — so the
+ *    other four cells would be asserting the same line of code four more times.
+ *  - **The `Proxy` `getOwnPropertyDescriptor` and `has` traps.** Only `ownKeys`
+ *    and `get` are on the walk's path; the others are never consulted.
+ *  - **Depth × back-edge in `frames[].vars`.** Covered in `request`, for the same
+ *    reason as the cap boundary: neither the memo nor the depth counter can see
+ *    the region.
+ */
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
