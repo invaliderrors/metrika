@@ -113,25 +113,57 @@ export const REDACTION_CENSOR = '[REDACTED]';
 const MAX_DEPTH = 12;
 
 /**
- * The breadth limit, and it exists because this walk copies DENSELY.
+ * What a truncated array ends with, and it is deliberately NOT
+ * `REDACTION_CENSOR`.
+ *
+ * The two mean opposite things to whoever is reading the event: `[REDACTED]`
+ * says "a value was here and this sink removed it", and truncation says "more
+ * elements were here and none of them were looked at". Measured, with one
+ * marker doing both jobs: `frames[0].vars.vertices` of 2500 shipped as 1001
+ * entries ending `[REDACTED]`, which an operator reads as a secret in a vertex
+ * buffer. And Sentry's own truncation of `extra.big` — 5000 elements normalised
+ * to `…999,"[MaxProperties ~]"` before this hook runs — came back out of the
+ * walk with Sentry's marker REPLACED by `[REDACTED]`.
+ *
+ * The token is Sentry's own (`@sentry/core/utils/normalize.js:62`) rather than
+ * an invention of ours, so an operator sees one vocabulary on the wire and the
+ * re-truncation above is now a no-op in meaning as well as in bytes.
+ */
+export const BREADTH_MARKER = '[MaxProperties ~]';
+
+/**
+ * The breadth limit, and it exists for ONE reason: a declared `length` can be
+ * larger than anything that is present.
  *
  * `JSON.stringify` emits a `null` per hole, so a dense copy is what keeps the
  * wire byte-identical for a sparse array — and it also means `a.length =
  * 5_000_000` on an array with two elements materialises five million entries
  * before anything is sent. Measured at 130 ms, inside `beforeSend`, on an error
- * path.
+ * path. That is AMPLIFICATION: the copy manufactures entries the input never
+ * held.
  *
- * 1000 is not an invented number: it is `normalizeMaxBreadth`'s default, which
- * Sentry already applies to `extra`, `contexts` and `breadcrumbs[].data` before
- * this hook runs. Applying it here gives `request`, `tags` and
- * `frames[].vars` — the three regions Sentry protects nowhere — the same
- * guarantee as the ones it does.
+ * 1000 is not an invented number — it is `normalizeMaxBreadth`'s default, which
+ * Sentry applies to `extra`, `contexts` and `breadcrumbs[].data` before this
+ * hook runs.
+ *
+ * **IT DOES NOT MAKE THE THREE UNPROTECTED REGIONS EQUAL TO THOSE, and an
+ * earlier version of this comment claimed it did.** `normalizeMaxBreadth` caps
+ * object PROPERTIES as well as array elements — a 1500-key object normalises to
+ * 1001 keys plus a marker — and this cap lives only in the array branch, so a
+ * 3000-key object at `request.data` keeps all 3000. Measured.
+ *
+ * That asymmetry is deliberate rather than an omission. An object's key count is
+ * what `Object.keys` actually returns, so copying it is O(present) and the copy
+ * is the same size as the input — there is nothing to amplify, and capping would
+ * drop real data for no safety reason. An array's `length` is a NUMBER SOMEBODY
+ * SET. `test/sentry-redaction.test.ts` pins the object case so the code and this
+ * paragraph cannot drift apart again, and the uncovered-cells list names it.
  *
  * **This is the one place the copy deliberately diverges from
  * `JSON.stringify`.** An array longer than the cap is truncated and gains a
- * trailing `[REDACTED]`, so the truncation is visible on the wire rather than
- * silent. Stated here because a reader comparing the two will otherwise take it
- * for a defect.
+ * trailing `BREADTH_MARKER`, so the truncation is visible on the wire rather
+ * than silent. Stated here because a reader comparing the two will otherwise
+ * take it for a defect.
  */
 const MAX_BREADTH = 1000;
 
@@ -320,7 +352,7 @@ function cleanValue(
         element.ok ? cleanValue(element.value, memo, depth + 1, elementZone) : REDACTION_CENSOR,
       );
     }
-    if (declared > count) output.push(REDACTION_CENSOR);
+    if (declared > count) output.push(BREADTH_MARKER);
     return output;
   }
 
