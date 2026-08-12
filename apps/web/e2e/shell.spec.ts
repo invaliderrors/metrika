@@ -144,3 +144,34 @@ test('the API origin from clientEnv reaches the document', async ({ page }) => {
 
   await expect(page.locator(`link[rel="preconnect"][href="${API_ORIGIN}"]`)).toHaveCount(1);
 });
+
+/**
+ * The only thing that runs `src/instrumentation-client.ts` end to end.
+ *
+ * Next loads that file by NAME, not by import, so nothing in `src/` references
+ * it and no unit test can execute it — and it calls `Sentry.init` with an
+ * integration filter and a `beforeSend` that a typo would turn into a
+ * `TypeError` at module evaluation. That failure is silent in the terminal:
+ * the document still renders, every other assertion in this file still passes,
+ * and browser error reporting is simply off. `pageerror` is what sees it.
+ *
+ * MEASURED in both directions: with a `JSON.parse('{')` inserted at module
+ * scope in `src/instrumentation-client.ts`, this test fails on the thrown
+ * SyntaxError and the seven tests above it stay GREEN. That asymmetry is the
+ * point — the page renders perfectly well with its error reporting dead.
+ *
+ * It asserts an ABSENCE, so it needs the listener attached BEFORE the
+ * navigation and a settled page afterwards; `waitForLoadState('networkidle')`
+ * is what makes "no error yet" mean "no error", rather than "not yet".
+ */
+test('no uncaught error reaches the browser, which is what runs the Sentry client init', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+
+  expect(errors, 'an uncaught browser error means instrumentation-client.ts threw').toEqual([]);
+});

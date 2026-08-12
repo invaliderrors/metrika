@@ -20,7 +20,7 @@
       //
       // `scripts/turbo.mjs` is what puts the values in the environment for
       // `pnpm build`; this key is what makes turbo respect them.
-      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE"],
+      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE", "NEXT_PUBLIC_SENTRY_DSN"],
       "outputs": [
         "dist/**",
         "tsconfig.build.tsbuildinfo",
@@ -106,7 +106,7 @@
     "dev": {
       "cache": false,
       "persistent": true,
-      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE"]
+      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE", "NEXT_PUBLIC_SENTRY_DSN"]
     }
   }
 }
