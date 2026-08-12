@@ -6,14 +6,23 @@
 
 ## 1. Stack
 
-| Concern               | Tool                              | Why                                                                                                                |
-| --------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Traces, metrics, logs | **OpenTelemetry → Grafana Cloud** | One OTLP endpoint for all three signals; generous free tier; Grafana-native as required; no vendor SDK in the code |
-| Error tracking        | **Sentry** (API, web, workers)    | Grouping, release health and source maps are genuinely better than a logs-based approach                           |
-| Uptime                | Grafana Synthetic Monitoring      | External probe of `/health` and the golden path                                                                    |
-| Product analytics     | **PostHog**, fed by domain events | Never called from domain code                                                                                      |
+| Concern           | Tool                              | Built today                                                                                | Why                                                                                                                |
+| ----------------- | --------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Traces            | **OpenTelemetry → OTLP**          | **yes** — `apps/api` and `apps/workers`, exporter constructed only when an endpoint is set | One OTLP endpoint for all three signals; generous free tier; Grafana-native as required; no vendor SDK in the code |
+| Metrics           | OpenTelemetry                     | **no** — §4 is target state; nothing constructs a `MeterProvider`                          | Same pipeline, same endpoint                                                                                       |
+| Logs              | Pino / structlog, stdout          | **yes** as stdout JSON; **no** OTLP log pipeline — `disableLogSending: true`               | A second exporter needs a consumer, and nothing consumes one yet                                                   |
+| Error tracking    | **Sentry**                        | **API and web**. NOT workers — `sentry-sdk` is deliberately not installed there            | Grouping, release health and source maps are genuinely better than a logs-based approach                           |
+| Uptime            | Grafana Synthetic Monitoring      | **no**                                                                                     | External probe of `/health` and the golden path                                                                    |
+| Product analytics | **PostHog**, fed by domain events | **no**                                                                                     | Never called from domain code                                                                                      |
 
 OpenTelemetry rather than a vendor SDK means the backend is a configuration change, not a refactor. That optionality matters when the free tier stops being enough.
+
+**Grafana Cloud is named as the destination and has never been contacted.** Both
+runtimes export OTLP/HTTP to whatever `OTLP_TRACES_ENDPOINT` /
+`METRIKA_WORKER_OTLP_ENDPOINT` name, and both default to empty, in which case no
+exporter is constructed at all. ADR-0029 records that its spike drove the
+exporters against a local receiver only, so serialisation is settled and the
+endpoint, authentication, ingest and retention are not.
 
 ---
 
@@ -31,23 +40,27 @@ Browser generates X-Request-Id
 
 A support ticket saying "my quote failed, request ID `req_01H...`" resolves to a complete distributed trace spanning the browser, the API, Temporal and two Python workers. This is the single highest-value observability investment, and it must be built in Phase 0 — retrofitting correlation IDs means touching every log call in the codebase.
 
-Temporal search attributes are what make workflows findable: `MetrikaOrganizationId`, `MetrikaModelVersionId`, `MetrikaQuoteId`, `MetrikaRequestId`. An operator investigating "what happened to this quote" queries Temporal directly by quote ID rather than grepping.
+Temporal search attributes are what make workflows findable: `MetrikaOrganizationId`, `MetrikaModelVersionId`, `MetrikaQuoteId`, `MetrikaRequestId`. An operator investigating "what happened to this quote" queries Temporal directly by quote ID rather than grepping. **None of them is provisioned yet** — see the gap table below.
 
 ### What of the chain exists today
 
-The diagram above is the end state. Four of its six links are built and asserted; the two that are not are the two that need a workflow, and there is no workflow yet.
+The diagram above is the end state. Three of its seven links are built and
+asserted, two are half-built, and two are absent. Every one of the four that is
+not complete is waiting on something this phase deliberately does not build — a
+feature that fetches, an authenticated user, or a workflow — rather than on more
+telemetry wiring.
 
-| Link                                                          | State  | Where                                                                                                                                                                                             |
-| ------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browser generates `X-Request-Id` and sends it                 | built  | `apps/web/src/lib/request-id/`, attached by `apiFetch`                                                                                                                                            |
-| API adopts or generates it; starts the root span              | built  | `request-context.middleware.ts` + `@fastify/otel`; the span JOINS an incoming `traceparent`                                                                                                       |
-| Every API log line carries `requestId` + `traceId` + `spanId` | built  | `infrastructure/telemetry/tracing.ts` — the Pino instrumentation's mixin plus a `logHook` reading the request context                                                                             |
-| `userId` / `organizationId` on the same line                  | **no** | there is no authentication yet (Phase 1). `organizationId` crosses as baggage when a caller supplies it, and is bound on the Python side                                                          |
-| Workflow start → Temporal search attributes + memo            | **no** | no workflow exists; ADR-0029 obligation 10 provisions the attributes when one does                                                                                                                |
-| Activity dispatch → OTel baggage → Python worker              | half   | the API SETS `metrika.request_id` as baggage and propagates it on every outbound call; `metrika_core.telemetry` reads it and binds it to every structlog line. Nothing dispatches an activity yet |
-| API error response carries `{ error: { requestId } }`         | built  | `DomainExceptionFilter`                                                                                                                                                                           |
+| Link                                                          | State  | Where                                                                                                                                                                                                                            |
+| ------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser generates `X-Request-Id` and sends it                 | half   | `apps/web/src/lib/request-id/`, attached by `apiFetch` — **which nothing calls yet**. The generator and the wrapper are built and tested; no feature fetches anything, so no browser request carries the header in a running app |
+| API adopts or generates it; starts the root span              | built  | `request-context.middleware.ts` + `@fastify/otel`; the span JOINS an incoming `traceparent`                                                                                                                                      |
+| Every API log line carries `requestId` + `traceId` + `spanId` | built  | `infrastructure/telemetry/tracing.ts` — the Pino instrumentation's mixin plus a `logHook` reading the request context                                                                                                            |
+| `userId` / `organizationId` on the same line                  | **no** | there is no authentication yet (Phase 1). `organizationId` crosses as baggage when a caller supplies it, and is bound on the Python side                                                                                         |
+| Workflow start → Temporal search attributes + memo            | **no** | no workflow exists; ADR-0029 obligation 10 provisions the attributes when one does                                                                                                                                               |
+| Activity dispatch → OTel baggage → Python worker              | half   | the API SETS `metrika.request_id` as baggage and propagates it on every outbound call; `metrika_core.telemetry` reads it and binds it to every structlog line. Nothing dispatches an activity yet                                |
+| API error response carries `{ error: { requestId } }`         | built  | `DomainExceptionFilter`                                                                                                                                                                                                          |
 
-Four things are worth knowing before writing anything that depends on this.
+Five things are worth knowing before writing anything that depends on this. Every one of them was measured after being stated wrongly first, which is why each carries its measurement rather than its conclusion.
 
 **A request ID arriving is not evidence that the trace joined.** Measured on both sides: dropping baggage leaves a worker's span correctly parented and merely empties `requestId`, while dropping trace context roots the span. They are two mechanisms with two failure modes, and `apps/api/test/telemetry.integration.test.ts` asserts them apart from each other for that reason.
 
@@ -55,7 +68,47 @@ Four things are worth knowing before writing anything that depends on this.
 
 **An empty `SENTRY_DSN` switches off the whole Sentry half, not just its transport.** `@sentry/node` does not construct a single integration for a client with no DSN, so a local run with it empty says nothing about Sentry's behaviour — including whether its default integrations would collide with `@fastify/otel` and stop the process booting, which is [ADR-0029](./adr/0029-observability-stack.md) obligation 2 and which [ADR-0034](./adr/0034-sampling-is-a-floor-not-a-ceiling.md) carries as a measured 2x2. The integration suite runs the API against a local Sentry sink for that reason.
 
-**`TRACES_SAMPLE_RATE` is a floor, not a ceiling.** A caller's SET sampled flag (`traceparent: …-01`) is always honoured — measured at rate `0`, those traces exported in full — because `getSamplingDecision` returns `true` for a set flag and `sampleSpan` inherits a defined `parentSampled` before it reads the local rate. A CLEARED flag (`-00`) reads as `undefined` and falls through to the rate: joined, correctly parented, and then sampled locally. So lowering the rate cannot hold sampling down against a caller that asks for it, and it cannot drop a caller's sampled trace either. [ADR-0034](./adr/0034-sampling-is-a-floor-not-a-ceiling.md) records this, and the earlier claim that it "cuts both ways", which was written as a consequence rather than measured.
+**`TRACES_SAMPLE_RATE` decides only what the caller did not.** For a caller
+sending only W3C trace context it is a floor, not a ceiling: a SET sampled flag
+(`traceparent: …-01`) is always honoured — measured at rate `0`, those traces
+exported in full — while a CLEARED flag (`-00`) reads as no decision at all and
+falls through to the rate. **On Sentry's own `sentry-trace` header the caller
+decides outright, in both directions, and overrides `traceparent` either way**:
+measured, `sentry-trace: …-0` exports zero spans at a rate of `1` and `…-1`
+exports in full at a rate of `0`. That path is live — `apps/web` ships
+`@sentry/nextjs`, so a browser's client-side sample rate arrives on that header
+and silently becomes this API's, including zero.
+[ADR-0034](./adr/0034-sampling-is-a-floor-not-a-ceiling.md) has the W3C half,
+[ADR-0035](./adr/0035-the-sampling-label-is-propagator-specific.md) the Sentry
+half and why they differ.
+
+**Two sampling behaviours are open and deliberately not worked around.** A
+conformant sampled caller is dropped: `traceparent: …-03` — sampled, plus an
+unknown future flag bit — gives 8 spans at rate `1` and **0 at rate `0`**,
+because `getSamplingDecision` tests `traceFlags === TraceFlags.SAMPLED` strictly
+while OTel parses `03` to `3`, and W3C requires unknown bits to be ignored. That
+is a conformance gap in `@sentry/core`, and a local fix would put a second,
+divergent sampling rule in the one place this stack has to agree with itself. The
+second is latent rather than active: **`apps/web`'s Sentry sample rate can
+silently govern this API's server tracing, including to zero**, by the
+`sentry-trace` mechanism above. Nothing in Phase 0C sets `tracesSampleRate` in
+`apps/web`, and the fix when something does is a deliberate `tracesSampler`,
+which is not this phase's.
+
+### What is wired, and what is named here but not instrumented
+
+Five gaps are open at the end of Plan 0C. None of them is a defect in what was
+built; each is a piece nothing in this phase owns, and every one of them is
+invisible from a green gate — which is why they are written down rather than
+left to be rediscovered.
+
+| Gap                                                                                                                                                                                                                                         | Consequence today                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **No metrics pipeline.** Nothing constructs a `MeterProvider`, and `infrastructure/telemetry/metrics.ts` — which §4 names — does not exist                                                                                                  | every number in §4 and every alert in §6 is target state                                                                   |
+| **No log pipeline.** `PinoInstrumentation` is configured `disableLogSending: true`, deliberately (ADR-0029 obligation 9)                                                                                                                    | logs are stdout JSON. Correlated, but shipped by whatever collects stdout                                                  |
+| **`@prisma/instrumentation` is not installed** — ADR-0029 obligation 6 pins its version against `@prisma/client`, and no task in this plan installs it. `grep -c` over `pnpm-lock.yaml` returns 0                                           | **no database query produces a span**, so §8's `DB query p95` budget has no instrument behind it                           |
+| **Buffered spans are lost on SIGTERM.** `startTelemetry` returns a `TelemetryHandle` with `forceFlush` and `shutdown`; `main.ts` discards the return value, and `app.enableShutdownHooks()` is wired to Nest's lifecycle, not to the handle | a `BatchSpanProcessor`'s unexported batch dies with the process on every deploy. The suite flushes; a deployment does not  |
+| **Temporal search attributes are not provisioned.** ADR-0029 obligation 10 is undischarged across all three copies of the bring-up — `infra/docker/docker-compose.yml`, `packages/testing`'s harness, and Temporal Cloud                    | `MetrikaRequestId` and friends do not exist, so §2's "query Temporal by quote ID" is not available even once a workflow is |
 
 ---
 
@@ -88,6 +141,65 @@ name (`password` and `*.password` are two rules), structlog walks a flat event
 dict, Sentry's `beforeSend` walks an arbitrary object graph. `redaction-corpus.json`
 is emitted from the rule and asserted by every sink, so a change to one without
 the others goes red.
+
+#### The sinks, counted — there are FOUR, and one of them has no control
+
+This document, `packages/contracts/src/redaction.ts`, `metrika_core.logging` and
+three ADRs all say "three sinks". Counted against the tree there are four, and
+the fourth is the one with nothing in front of it:
+
+| Sink                   | Where                                                               | Redaction | Graded by                                                                     |
+| ---------------------- | ------------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------- |
+| Pino                   | `apps/api/src/infrastructure/telemetry/{redaction,logger}.ts`       | yes       | 956 corpus rows × six binding shapes, `apps/api/test/redaction.test.ts`       |
+| structlog              | `apps/workers/…/metrika_core/logging.py`                            | yes       | the same 956 rows through the real pipeline, `tests/test_redaction_corpus.py` |
+| Sentry, `apps/web`     | `apps/web/src/lib/telemetry/redaction.ts`, both `Sentry.init` calls | yes       | the same 956 rows through the walk, `apps/web/test/sentry-redaction.test.ts`  |
+| **Sentry, `apps/api`** | `apps/api/src/infrastructure/telemetry/tracing.ts` `Sentry.init(…)` | **none**  | **nothing**                                                                   |
+
+**MEASURED**, `@sentry/node@10.70.0`, at the exact option set `tracing.ts` ships
+(`defaultIntegrations: false` plus the fifteen-name allowlist, a real DSN, a
+capturing transport): 15 integrations constructed, `beforeSend` **undefined**, and
+one envelope carrying, verbatim —
+
+- the exception message, so `new Error('DB_DSN=postgres://user:PASSWORD@host/db')`
+  ships the password. **This is the Plan 0B-1 carry-forward this plan exists to
+  close, reopened against an external service**: Task 2 closed it for the log
+  sink, and the Sentry sink Task 3 wired sends the same string;
+- an `extra` carrying a presigned URL, `X-Amz-Signature` included;
+- a `tag` carrying `Authorization: Bearer …`;
+- a `context` carrying `originalFilename`.
+
+`RequestData`, `ContextLines` and `LocalVariablesAsync` are all on the kept list,
+so those are the shapes a real event acquires without any call site asking for
+them. Nothing in ADR-0029–0034 names this: obligation 7 covers Pino's paths and
+serialiser, and ADR-0029's own limits paragraph says only that the spike never
+measured `beforeSend` because it used a stub transport.
+
+It has **no fixture**, and by this repository's own rule that makes it not a
+control but an absence of one. Closing it needs a traversal, and the honest
+options are to share `apps/web`'s — which is 460 lines of measured, hostile-input
+walk that must not be re-derived by hand — or to write a second one, which is the
+drift `packages/contracts/src/redaction.ts` exists to prevent. **That is a task,
+not a line, and it is owed before `SENTRY_DSN` is populated in any deployment of
+`apps/api`.** Until it is, an empty `SENTRY_DSN` is the control.
+
+#### The reach of the three that DO have a control is not equal
+
+`apps/api` rebuilds the whole object graph and `apps/web` cleans an arbitrary
+event to a declared depth. **`metrika_core`'s `_redact` visits the event dict's
+own keys and stops.** MEASURED, through the real pipeline:
+`log.info('nested', payload={'password': …})` and
+`log.info('listed', items=[{'signed_url': …}])` both go out verbatim. So "one
+list, three sinks" is true of the LIST and of the RULE, and stops being true of
+the TRAVERSAL one level down. `tests/test_redaction_corpus.py` pins it in that
+direction, so closing it starts from a red assertion; until then a Python
+caller's rule is **put the sensitive field at the top level of the event, where
+the control can see it.**
+
+A second thing that side does not do at all is render exception text:
+`log.exception()` emits `"exc_info": true` and nothing else. That is diagnostic
+loss rather than exposure — the traceback is not written down anywhere — and it
+is the mirror image of the decision `apps/api` made in `serialiseError`, where
+the frames are kept and the message is censored.
 
 **The block below is the original blueprint list, kept for the record. Do not
 copy it into a Pino configuration.** It predates `RedactedFieldName` and is
@@ -313,6 +425,13 @@ Levels: `error` for unexpected failures (Sentry event); `warn` for expected doma
 
 ## 4. Metrics
 
+> **TARGET STATE — none of this is built.** Nothing in the repository constructs
+> a `MeterProvider`, emits a counter or a histogram, or exports metrics over
+> OTLP. Plan 0C built the correlation spine and the redaction control and
+> deliberately stopped there: metrics, dashboards and alerts need a running
+> system with real traffic to be worth anything. §4, §5 and §6 are the design to
+> build against, not a description of the tree.
+
 ### Golden signals
 
 `http_server_duration` (histogram, by route and status), `http_server_errors`, `db_query_duration`, `db_pool_utilization`, `temporal_workflow_duration`, `temporal_activity_failures`, `temporal_task_queue_depth`.
@@ -337,11 +456,14 @@ Levels: `error` for unexpected failures (Sentry event); `warn` for expected doma
 
 That last metric is the one that protects the business. It exists from Phase 11 and is the closing of the loop described in [PRICING_ENGINE.md](./PRICING_ENGINE.md#10-calibration--closing-the-loop-with-reality).
 
-Metrics are emitted from **one module** (`infrastructure/telemetry/metrics.ts`) exposing named, typed recorders — not scattered `counter.add()` calls. A metric with an inconsistent label set is a metric you cannot query.
+Metrics will be emitted from **one module** (`infrastructure/telemetry/metrics.ts`, which does not exist yet) exposing named, typed recorders — not scattered `counter.add()` calls. A metric with an inconsistent label set is a metric you cannot query.
 
 ---
 
 ## 5. Business KPIs
+
+> **TARGET STATE — not built.** PostHog is not a dependency of any package and no
+> domain event exists to feed it.
 
 Product analytics through PostHog, fed by **domain event subscribers**, never from domain code:
 
@@ -357,6 +479,10 @@ Events carry identifiers and coarse categories only. Never file names, dimension
 ---
 
 ## 6. Dashboards and alerts
+
+> **TARGET STATE — not built.** No Grafana workspace is provisioned, no alert
+> rule exists, and `docs/runbooks/` does not exist. Every row below depends on
+> §4, which is also target state.
 
 Four dashboards: **Platform Health** (golden signals, error budget), **Pipeline** (the funnel from upload to quote-ready with drop-off at each stage), **Business** (conversion, order value, margin), **Cost** (Fargate hours, S3 growth, Temporal actions, slice-cache savings).
 
@@ -380,23 +506,35 @@ GET /health/ready    → DB, Redis, S3, Temporal reachable. Used by the load bal
 GET /health/deep     → authenticated; per-dependency latency. Used by monitoring
 ```
 
+All three routes exist. **`ready` and `deep` check ONE dependency today** —
+Postgres, with a real `SELECT 1` round trip and its measured `latencyMs`, not a
+connection check. `checkAll()` in `modules/health/health.service.ts` returns a
+single-element list because Postgres is the only thing `apps/api` connects to;
+Redis, S3 and Temporal join it when a module needs them.
+
 `live` must never check dependencies. A liveness probe that fails because Redis is slow causes ECS to kill healthy tasks and turns a degradation into an outage — a classic self-inflicted incident.
 
 ---
 
 ## 8. Performance budgets
 
-| Surface                  | Budget              | Instrumented by                      |
-| ------------------------ | ------------------- | ------------------------------------ |
-| API reads p95            | < 300 ms            | OTel histogram per route             |
-| API writes p95           | < 500 ms            | Same                                 |
-| DB query p95             | < 50 ms             | Prisma OTel instrumentation          |
-| Queries per request      | Per-endpoint budget | Prisma middleware, asserted in tests |
-| Analysis p95             | < 120 s             | Activity span                        |
-| Slice p95                | < 300 s             | Activity span                        |
-| Upload → quote-ready p95 | < 180 s             | Workflow span                        |
-| Web LCP p75              | < 2.0 s             | Vercel Speed Insights                |
-| Viewer chunk             | < 400 KB gzip       | CI bundle check                      |
-| Route JS (non-viewer)    | < 180 KB gzip       | CI bundle check                      |
+**Every "instrumented by" below is target state**, including the two that read as
+though they already exist: there is no metrics pipeline (§4), and
+`@prisma/instrumentation` is **not installed** — ADR-0029 obligation 6 pins its
+version against `@prisma/client` and no task has owned installing it, so no
+database query produces a span today.
+
+| Surface                  | Budget              | Instrumented by                                                |
+| ------------------------ | ------------------- | -------------------------------------------------------------- |
+| API reads p95            | < 300 ms            | OTel histogram per route — needs §4                            |
+| API writes p95           | < 500 ms            | Same                                                           |
+| DB query p95             | < 50 ms             | Prisma OTel instrumentation — **the package is not installed** |
+| Queries per request      | Per-endpoint budget | Prisma middleware, asserted in tests                           |
+| Analysis p95             | < 120 s             | Activity span                                                  |
+| Slice p95                | < 300 s             | Activity span                                                  |
+| Upload → quote-ready p95 | < 180 s             | Workflow span                                                  |
+| Web LCP p75              | < 2.0 s             | Vercel Speed Insights                                          |
+| Viewer chunk             | < 400 KB gzip       | CI bundle check                                                |
+| Route JS (non-viewer)    | < 180 KB gzip       | CI bundle check                                                |
 
 **Instrument first, optimise second.** No performance work begins without a span or a metric showing the cost. This is stated because the temptation to optimise the 3D viewer by intuition will be strong and usually wrong.
