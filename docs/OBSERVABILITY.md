@@ -52,15 +52,18 @@ Structured JSON everywhere. Pino (Node), structlog (Python). Never `console.log`
 
 ### Redaction — an allowlist mindset
 
-**The list is defined once, in `packages/contracts/src/redaction.ts`, as
-`RedactedFieldName`.** It is a set of _field names_, not of Pino paths: `pnpm
-contracts:emit` carries it into `metrika_core.contracts` as a `StrEnum`, so the
-Python side reads the same list as generated code and CI fails on a diff. Each
-sink derives its own matcher from those names, because each runtime matches
-differently — Pino needs a path per name (`password` and `*.password` are two
-rules), structlog matches the event dict's keys and their word suffixes, and
-Sentry's `beforeSend` walks the event. They agree on the names; they cannot
-agree on the matching, and the module says so.
+**The list and the rule are both defined once, in
+`packages/contracts/src/redaction.ts`.** `RedactedFieldName` is a set of _field
+names_, not of Pino paths: `pnpm contracts:emit` carries it into
+`metrika_core.contracts` as a `StrEnum`, so the Python side reads the same list
+as generated code and CI fails on a diff. `isRedactedKey` is the decision each
+sink makes about a key it has reached, and all three call it.
+
+What differs per sink is TRAVERSAL, and only traversal — Pino needs a path per
+name (`password` and `*.password` are two rules), structlog walks a flat event
+dict, Sentry's `beforeSend` walks an arbitrary object graph. `redaction-corpus.json`
+is emitted from the rule and asserted by every sink, so a change to one without
+the others goes red.
 
 **The block below is the original blueprint list, kept for the record. Do not
 copy it into a Pino configuration.** It predates `RedactedFieldName` and is
