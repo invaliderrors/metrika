@@ -226,15 +226,20 @@ describe('the application role cannot read _prisma_migrations', () => {
     // would pass for the wrong reason too (a table that doesn't exist yet,
     // a typo'd name), so this asserts Prisma's own error code (`P2010`,
     // "raw query failed") AND the wrapped Postgres SQLSTATE (`42501`,
-    // insufficient_privilege) it carries in `meta.code`. `42501` alone is not
-    // quite specific enough — Postgres raises the same SQLSTATE for
-    // `permission denied for schema public`, which is what a revoked
-    // `GRANT USAGE ON SCHEMA public` would produce instead of this
-    // migration's table-level REVOKE — so `meta.message` is pinned too,
+    // insufficient_privilege) it carries in
+    // `meta.driverAdapterError.cause.code`. `42501` alone is not quite
+    // specific enough — Postgres raises the same SQLSTATE for `permission
+    // denied for schema public`, which is what a revoked `GRANT USAGE ON
+    // SCHEMA public` would produce instead of this migration's table-level
+    // REVOKE — so `meta.driverAdapterError.cause.message` is pinned too,
     // naming the table by name. Verified directly against a live container
-    // before writing this assertion: `PrismaClientKnownRequestError { code:
-    // 'P2010', meta: { code: '42501', message: 'ERROR: permission denied
-    // for table _prisma_migrations' } }`.
+    // on Prisma 7.9.1, with the pg driver adapter, before writing this
+    // assertion: `PrismaClientKnownRequestError { code: 'P2010', meta: {
+    // driverAdapterError: DriverAdapterError { cause: { code: '42501',
+    // message: 'permission denied for table _prisma_migrations', ... } } }
+    // }`. Unlike the pre-7 shape this replaced, the wrapped message carries
+    // no `ERROR: ` prefix — Prisma's own driver-adapter error, not a raw
+    // `pg` error, is what this is now pinning against.
     await expect(
       withDatabase(async (db) => db.$queryRaw`SELECT 1 FROM "_prisma_migrations"`),
     ).rejects.toMatchObject({

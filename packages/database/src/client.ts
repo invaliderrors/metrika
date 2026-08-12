@@ -3,7 +3,7 @@
 // `default.js`, whose body is `module.exports = { ...require(...) }` — but that
 // exact spread-re-export shape is one Node's built-in cjs-module-lexer analyses
 // statically, so named ESM imports of `PrismaClient` and `Prisma` resolve
-// correctly. Verified empirically on Prisma 6.19.3 / Node 24.19.0 / TS 6.0.3,
+// correctly. Verified empirically on Prisma 7.9.1 / Node 24.19.0 / TS 6.0.3,
 // under moduleResolution NodeNext and Bundler, compiled and stripped. There is
 // no default-import indirection anywhere in this repository; if you find one,
 // it is a leftover from a premise that was disproved, not a workaround.
