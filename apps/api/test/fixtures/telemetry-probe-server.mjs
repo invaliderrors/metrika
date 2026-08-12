@@ -106,6 +106,19 @@ const provider = typeof proxy.getDelegate === 'function' ? proxy.getDelegate() :
 const client = Sentry.getClient();
 const integrations = client === undefined ? [] : Object.keys(client['_integrations'] ?? {});
 
+// `getDsn()`, NOT `getOptions().dsn`. MEASURED, all three cases:
+//
+//   SENTRY_DSN=''          getOptions().dsn === ''          getDsn() undefined  integrations 0
+//   SENTRY_DSN='not-a-dsn' getOptions().dsn === 'not-a-dsn' getDsn() undefined  integrations 0
+//   a real DSN             the DSN                          getDsn() set        integrations 15
+//
+// `@sentry/node-core`'s `getClientOptions` does `dsn: options.dsn ?? process.env.SENTRY_DSN`,
+// so an empty string is echoed straight back and `getOptions().dsn !== undefined`
+// is TRUE for the exact state this field exists to catch — a client with no DSN,
+// which constructs no integrations at all. `getDsn()` is the parsed value and is
+// undefined for both the empty and the malformed case.
+const dsnParsed = client?.getDsn() !== undefined;
+
 process.stdout.write(
   `${JSON.stringify({
     probe: 'ready',
@@ -113,6 +126,6 @@ process.stdout.write(
     provider: provider.constructor.name,
     fields: propagation.fields(),
     integrations,
-    dsnConfigured: client?.getOptions().dsn !== undefined,
+    dsnParsed,
   })}\n`,
 );

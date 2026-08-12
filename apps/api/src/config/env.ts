@@ -28,7 +28,7 @@ export const EnvSchema = z.object({
    * `_setupIntegrations()` for a client with no DSN, so with this empty the
    * process constructs ZERO Sentry integrations — the allowlist below it is
    * subtracted from an empty set, and the decorator collision that exits 1 with
-   * the defaults left on cannot happen. ADR-0033 records a whole ADR written from
+   * the defaults left on cannot happen. ADR-0034 records a whole ADR written from
    * a measurement taken in that state. `test/telemetry.integration.test.ts` sets
    * a real DSN against a local sink for exactly this reason.
    *
@@ -67,12 +67,20 @@ export const EnvSchema = z.object({
    * The trigger for making it required instead: the first deployment that sets
    * `SENTRY_DSN` or `OTLP_TRACES_ENDPOINT` without setting this.
    *
-   * **It does not decide what a CALLER asked for.** `SentrySampler` is
-   * parent-based only for a caller that sends Sentry's own `sentry-trace`/DSC;
-   * a `traceparent` arriving with the sampled flag cleared is joined and then
-   * re-sampled at this rate. Measured and asserted in
-   * `test/telemetry.integration.test.ts`; below `1` that cuts both ways, and a
-   * caller's sampled trace can be dropped here.
+   * **It is a FLOOR, not a ceiling, and that is measured in both directions.**
+   * A `traceparent` arriving with the sampled flag SET is always honoured —
+   * exported even at `0` — because `getSamplingDecision` returns `true` for a set
+   * flag and `sampleSpan` inherits a defined `parentSampled` before it ever looks
+   * at this value. A CLEARED flag is not honoured: it reads as `undefined` and
+   * falls through to this rate. MEASURED at `0`: the `-01` traces exported in
+   * full (6 and 8 spans), the `-00` traces exported nothing.
+   *
+   * So this cannot hold sampling DOWN. Any caller that sends `-01` pins this API
+   * at 100%, and the header is caller-supplied. What it cannot do is drop a
+   * caller's sampled trace, so there is no orphaned-child failure here — which is
+   * the opposite of what this comment said before the measurement was taken
+   * (ADR-0034). Both directions are asserted in
+   * `test/telemetry.integration.test.ts`, the rate-0 half in its own child.
    */
   TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
 });

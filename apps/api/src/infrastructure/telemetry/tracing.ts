@@ -60,7 +60,7 @@ import { getRequestId } from '../../shared/request-context/request-context.js';
  *      the one LOUD failure here (`FST_ERR_DEC_ALREADY_PRESENT`, exit 1, no
  *      boot), **but only once a DSN is configured**, because `@sentry/node`
  *      constructs no integrations at all without one. ADR-0032 mistook that for
- *      the collision being harmless; ADR-0033 supersedes it and the suite now
+ *      the collision being harmless; ADR-0034 carries the 2x2 and the suite now
  *      runs against a real DSN so the control is graded rather than assumed;
  *   6. an explicit `Resource` with no async attributes, so a span processor
  *      never defers an export waiting for detectors to settle.
@@ -138,7 +138,7 @@ export const FIELD_REQUEST_ID = 'requestId';
  * the first one gradeable: `@sentry/node` never reaches `_setupIntegrations()`
  * for a client with no DSN, so with `SENTRY_DSN` empty this list is subtracted
  * from an empty set and removing it changes nothing at all. ADR-0032 measured
- * exactly that and concluded the collision was harmless; ADR-0033 supersedes it.
+ * exactly that and concluded the collision was harmless; ADR-0034 carries the 2x2.
  * `test/telemetry.integration.test.ts` now runs the child against a real DSN and
  * asserts the produced integration names, so this is a control with a fixture.
  *
