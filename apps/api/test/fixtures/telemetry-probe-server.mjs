@@ -84,6 +84,7 @@ await import('../../dist/main.js');
 // `SentryPropagator` alone.
 const { openTelemetrySetupCheck } = await import('@sentry/opentelemetry');
 const { propagation, trace } = await import('@opentelemetry/api');
+const Sentry = await import('@sentry/node');
 
 // `trace.getTracerProvider()` ALWAYS returns the API's `ProxyTracerProvider`, so
 // its own constructor name says nothing at all — a check against it would pass
@@ -92,11 +93,26 @@ const { propagation, trace } = await import('@opentelemetry/api');
 const proxy = trace.getTracerProvider();
 const provider = typeof proxy.getDelegate === 'function' ? proxy.getDelegate() : proxy;
 
+// THE ACTIVE Sentry integrations, and they are reported from here because there
+// is nowhere else they exist. `getDefaultIntegrations()` is what the allowlist is
+// SUBTRACTED FROM; `client._integrations` is what the allowlist PRODUCED, and
+// only the second one moves when the allowlist is removed.
+//
+// This is empty unless a DSN is set — `_setupIntegrations()` is not reached
+// without one — which is why the suite that reads this line runs the child
+// against a local Sentry sink. The first version of this fixture pinned
+// `SENTRY_DSN: ''`, and every Sentry assertion in the suite was therefore
+// grading a client with nothing installed.
+const client = Sentry.getClient();
+const integrations = client === undefined ? [] : Object.keys(client['_integrations'] ?? {});
+
 process.stdout.write(
   `${JSON.stringify({
     probe: 'ready',
     installed: openTelemetrySetupCheck(),
     provider: provider.constructor.name,
     fields: propagation.fields(),
+    integrations,
+    dsnConfigured: client?.getOptions().dsn !== undefined,
   })}\n`,
 );

@@ -56,12 +56,12 @@ import { getRequestId } from '../../shared/request-context/request-context.js';
  *   4. the propagator being passed THROUGH the SDK's own registration —
  *      `propagation.setGlobalPropagator` afterwards is a silent no-op, because
  *      registration has already installed one;
- *   5. Sentry's default integrations being reduced to an explicit allowlist.
- *      ADR-0029 says this one is LOUD (`FST_ERR_DEC_ALREADY_PRESENT`, exit 1);
- *      **[ADR-0032](../../../../../docs/adr/0032-sentry-fastify-collision-is-swallowed.md)
- *      measured that it is not** — Sentry catches the collision in a
- *      `.after(err)` callback that a non-debug build discards, so the failure is
- *      silent like the other four and the allowlist has no end-to-end fixture;
+ *   5. Sentry's default integrations being reduced to an explicit allowlist —
+ *      the one LOUD failure here (`FST_ERR_DEC_ALREADY_PRESENT`, exit 1, no
+ *      boot), **but only once a DSN is configured**, because `@sentry/node`
+ *      constructs no integrations at all without one. ADR-0032 mistook that for
+ *      the collision being harmless; ADR-0033 supersedes it and the suite now
+ *      runs against a real DSN so the control is graded rather than assumed;
  *   6. an explicit `Resource` with no async attributes, so a span processor
  *      never defers an export waiting for detectors to settle.
  *
@@ -130,15 +130,17 @@ export const FIELD_REQUEST_ID = 'requestId';
  * other twenty-seven of the forty-four appear only when tracing is enabled and
  * are all instrumentations.
  *
- * **REMOVING THIS LIST CHANGES NOTHING OBSERVABLE, and that is measured rather
- * than assumed — see ADR-0032.** ADR-0029 says the defaults make the application
- * exit 1 with `FST_ERR_DEC_ALREADY_PRESENT`; on this version Sentry registers
- * its colliding Fastify plugin through `fastify.register(...).after(err)` and a
- * non-debug build discards the error, so the app boots and exports a span set
- * identical to this one. The integration suite is green with the allowlist
- * mutated away. So this is a control graded by `test/telemetry.test.ts` — which
- * pins the default set by name and asserts the two patchers are absent — and by
- * nothing else. Do not read a passing end-to-end run as evidence for it.
+ * **REMOVING THIS LIST EXITS 1 — once a DSN is configured, and only then.**
+ * Sentry's `Fastify` integration and `@fastify/otel` both
+ * `decorateRequest('opentelemetry', …)`, and the second throws
+ * `FastifyError: The decorator 'opentelemetry' has already been added!` before
+ * the process listens. Measured 2×2, because the second variable is what makes
+ * the first one gradeable: `@sentry/node` never reaches `_setupIntegrations()`
+ * for a client with no DSN, so with `SENTRY_DSN` empty this list is subtracted
+ * from an empty set and removing it changes nothing at all. ADR-0032 measured
+ * exactly that and concluded the collision was harmless; ADR-0033 supersedes it.
+ * `test/telemetry.integration.test.ts` now runs the child against a real DSN and
+ * asserts the produced integration names, so this is a control with a fixture.
  *
  * **This list has FIFTEEN names and ADR-0029 says fourteen.** The count is not
  * reproduced and is not treated as a pin: ADR-0030's own correction records that
