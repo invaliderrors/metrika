@@ -8,7 +8,14 @@ import {
   type LogFn,
 } from 'pino';
 import type { Env } from '../../config/env.js';
-import { REDACTION_CENSOR, REDACTION_PATHS, redactLogObject } from './redaction.js';
+import {
+  PINO_ERROR_KEY,
+  PINO_MESSAGE_KEY,
+  REDACTION_CENSOR,
+  REDACTION_PATHS,
+  redactLogObject,
+  serialiseError,
+} from './redaction.js';
 
 /**
  * The application's log sink.
@@ -31,180 +38,125 @@ import { REDACTION_CENSOR, REDACTION_PATHS, redactLogObject } from './redaction.
  * task owns that choice.
  */
 
-/** The frame lines of a stack — `    at fn (file:line:col)` — and nothing else. */
-const STACK_FRAME = /^\s*at /;
+/** What `msg` says when pino would otherwise have taken it from the error. */
+const NO_MESSAGE_OF_ITS_OWN = 'an error was logged with no message of its own';
 
-/**
- * The frames of a stack, with the message line removed.
- *
- * **This is the decision ADR-0030 handed to this task, and this is the answer.**
- * Obligation 7 censors `err.message` AND `err.stack`, and applied literally
- * that leaves an unhandled 500 emitting `{"type":"Error","message":"[REDACTED]",
- * "stack":"[REDACTED]"}` — an Error happened, nothing else survives. Plan 0B-1
- * added that log line because an unexpected 500 otherwise produced literally
- * ZERO bytes of diagnostic, and "an Error happened" is barely more.
- *
- * A stack is `<message>\n    at <frame>\n    at <frame>…`. The SECRET is in the
- * message; the frames are file paths and function names. So the frames are kept
- * under a name of their own and the two fields obligation 7 names stay censored
- * — measured against the real `DomainExceptionFilter` in
- * `test/error-filter.test.ts`: 0 frames under obligation 7 as written, the real
- * throw site with this.
- *
- * FILTERED, not `split('\n').slice(1)`. An exception message may itself contain
- * newlines, and dropping only the first line puts the rest of it in the log —
- * `test/logger.test.ts` asserts a two-line message carrying a DSN.
- *
- * The residual risk, named rather than left to be discovered: a frame from
- * `eval`'d or `data:`-URL code carries source text in the frame itself. Nothing
- * in this application evaluates strings.
- */
-function framesOf(stack: string | undefined): readonly string[] {
-  if (stack === undefined) return [];
-  return stack
-    .split('\n')
-    .filter((line) => STACK_FRAME.test(line))
-    .map((line) => line.trim());
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 /**
- * Pino's `err` serialiser: a FIXED shape, which is the allowlist mindset
- * applied to the one object that carries free text by construction.
+ * Stops pino deriving `msg` from the error, in EVERY shape where it would.
  *
- * ADR-0029 obligation 7 asks for this as well as the paths because a static
- * `err.*` path is coupled to `errorKey` and to nesting depth and a serialiser
- * is coupled to neither. It goes one step further here and drops the Error's
- * OWN properties too: `*.password` reaches `err.password` today and stops the
- * day an error is nested one level deeper, and no path can reach a free-text
- * `err.detail` at all. Four fields go out and nothing else does.
+ * The rule is not guessed and it is not a list of shapes somebody thought of —
+ * it is `pino/lib/proto.js`'s own `write()`, transcribed:
  *
- * `message` and `stack` are emitted as the censor rather than omitted, so an
- * operator reading the line can tell the control FIRED rather than that the
- * fields were absent. `REDACTION_PATHS` censors them a second time, from the
- * other direction; that redundancy is obligation 7's point.
+ * ```js
+ * } else if (_obj instanceof Error) {
+ *   obj = { [errorKey]: _obj }
+ *   if (msg === undefined) msg = _obj.message
+ * } else {
+ *   obj = _obj
+ *   if (msg === undefined && _obj[messageKey] === undefined && _obj[errorKey]) {
+ *     msg = _obj[errorKey].message
+ *   }
+ * }
+ * ```
  *
- * A non-`Error` value is described, never stringified — ADR-0030 measured
- * `{ err: <string> }` going out in full with redaction on, because
- * `err.message` and `err.stack` match nothing on a scalar. The call site is
- * supposed to coerce (see {@link toLoggableError}); this is what happens when
- * some future call site forgets.
- */
-export function serialiseError(value: unknown): Record<string, unknown> {
-  if (!(value instanceof Error)) {
-    return { type: typeof value, message: REDACTION_CENSOR, stack: REDACTION_CENSOR, frames: [] };
-  }
-  return {
-    type: classNameOf(value),
-    message: REDACTION_CENSOR,
-    stack: REDACTION_CENSOR,
-    frames: framesOf(value.stack),
-  };
-}
-
-/**
- * The same rule `pino-std-serializers` uses for `err.type`, so an operator
- * reads the field they already know.
+ * The two branches are the two cells, and the first version of this hook
+ * implemented only the first. **The second is the shape ADR-0030 PRESCRIBES —
+ * `logger.error({ err })` — with the message argument left off**, and it leaked
+ * the full DSN into `msg` while `err` beside it was perfectly censored.
+ * MEASURED at `error`, `warn` and `fatal`, with `{ err, requestId }`, with an
+ * explicit `undefined` message, through the exception filter's own contexted
+ * child, and with a non-Error `{ err: { message } }` — which the `instanceof`
+ * guard could never have caught, because pino only requires `_obj[errorKey]` to
+ * be truthy and reads `.message` off whatever is there.
  *
- * `err.name` alone reports `Error` for `class QuoteEngineError extends Error {}`
- * unless the subclass assigns `this.name` — and with the message censored, the
- * class is the only thing left saying WHAT failed, so getting it wrong costs
- * the whole line. The fallback is for a genuinely anonymous subclass, whose
- * constructor name is the empty string.
- */
-function classNameOf(value: Error): string {
-  const constructed = value.constructor.name;
-  return constructed === '' ? value.name : constructed;
-}
-
-/**
- * What goes in `err`, and it is always an `Error` INSTANCE.
+ * That was the SUM again: the suite covered `error(err)` bare and
+ * `error({ err }, msg)`, and the leak is the cell where those two dimensions —
+ * "the error is inside the merged object" and "no message argument" — meet.
  *
- * ADR-0030's measured table: `{ err: <Error instance> }` is redacted under
- * `nestjs-pino` and under raw pino alike, and `{ err: <string> }` LEAKS under
- * both. `describeCause` — the function this replaces — returned a string, so
- * passing its output would have been the leaking row.
+ * Mirroring pino's condition rather than approximating it is deliberate: the
+ * one thing this hook must never do is disagree with the code it is guarding.
+ * `PINO_ERROR_KEY` and `PINO_MESSAGE_KEY` are named constants for the same
+ * reason, and `createLogger` does not expose either pino option.
  *
- * The coercion keeps the property that function existed for: a thrown
- * non-`Error` is arbitrary data (a plain object carrying a password is a shape
- * this has been probed with), so it is DESCRIBED by type and never
- * stringified.
+ * A caller who supplies their own message is left alone — pino uses it and
+ * routes the error through the serialiser, which is already safe.
  *
- * **The synthesised Error's stack is set to its own message**, which leaves it
- * with no frames. ADR-0030 measured 10 frames for this case and every one of
- * them pointed at the logger rather than at anything that went wrong: the
- * throw site is not in the stack, because the thrown thing never had one.
- * Frames that describe the logger are worse than no frames.
- */
-export function toLoggableError(exception: unknown): Error {
-  if (exception instanceof Error) return exception;
-  const described = new Error(`non-Error thrown (typeof ${typeof exception})`);
-  described.stack = described.message;
-  return described;
-}
-
-/**
- * Rewraps `logger.error(err)` — an Error as the ONLY argument — as
- * `logger.error({ err }, <fixed message>)`.
- *
- * MEASURED, and it is the one leak the rest of this module does not close:
- * pino takes `msg` from `err.message` when an Error arrives alone, so
- * `logger.error(new Error(dsn))` emits a perfectly censored `err` object beside
- * `"msg":"DB_DSN=postgres://user:PASSWORD@host/db"`. It is the shape a reader
- * reaches for first, at every level, and `redact` cannot help: it is
- * field-granular, so `paths:['msg']` censors every log message in the process.
- *
- * A caller who supplies their own message is left alone — pino uses that
- * message and routes the Error through the serialiser, which is already safe.
- *
- * What is still NOT closed, stated so nobody reads this as more than it is:
- * free text a caller interpolates into `msg` themselves. Removing a substring
- * of free text needs a secret DETECTOR, which is a weaker control than the
- * allowlist `docs/OBSERVABILITY.md` §3 chose and fails silently on the first
- * secret whose shape it does not match. The rule stands: do not put untrusted
- * text in `msg`, put the cause in `err`.
+ * **What is still NOT closed**, stated so nobody reads this as more than it is:
+ * the message field is free text by construction, and there are three routes
+ * into it — the second argument, an interpolation
+ * (`` logger.info(`… ${dsn}`) ``), and a `msg` key in the merged object, which
+ * pino uses verbatim. All three leak, and none is closable by an allowlist:
+ * removing a substring of free text needs a secret DETECTOR, a weaker control
+ * than the one `docs/OBSERVABILITY.md` §3 chose, failing silently on the first
+ * secret whose shape it does not match. The rule stands, and it is about the
+ * FIELD rather than about one argument: nothing untrusted goes in `msg` — put
+ * the cause in `err`.
  */
 function rewrapBareError(this: Logger, args: Parameters<LogFn>, method: LogFn): void {
   const [first, second] = args;
-  if (first instanceof Error && second === undefined) {
-    method.call(this, { err: first }, 'an Error was logged with no message of its own');
+  if (second !== undefined) {
+    method.apply(this, args);
+    return;
+  }
+  if (first instanceof Error) {
+    method.call(this, { [PINO_ERROR_KEY]: first }, NO_MESSAGE_OF_ITS_OWN);
+    return;
+  }
+  // `Boolean(...)`, not `instanceof Error`: pino's own guard is truthiness, and
+  // it then reads `.message` off whatever is there. `{ err: { message: dsn } }`
+  // is a real shape — it is what a deserialised error from a worker looks like.
+  if (isRecord(first) && first[PINO_MESSAGE_KEY] === undefined && Boolean(first[PINO_ERROR_KEY])) {
+    method.call(this, first, NO_MESSAGE_OF_ITS_OWN);
     return;
   }
   method.apply(this, args);
 }
 
 /**
- * Puts a child's BINDINGS through the same walk a merged log object gets, then
- * does the same to every logger descended from it.
+ * Puts BINDINGS through the same walk a merged log object gets — through BOTH
+ * of the two methods that create them.
  *
- * **This closes a hole the first version of this module had, and the hole is
- * the product of two things each of which was covered on its own.** MEASURED:
- * `formatters.log` is never called for child bindings, and `REDACTION_PATHS`
- * matches literal names — so `logger.child({ signedUrl })` was censored by the
- * paths and `logger.child({ signed_url })` was censored by NOTHING and went out
- * verbatim, as did `{ SIGNED_URL }` and every other spelling `isRedactedKey`
- * exists to catch. The fixtures asserted child bindings in the canonical
- * spelling and non-canonical spellings in a merged object; neither could see
- * their combination. That is this repository's recorded defect class — cover
- * the product, not the sum — and it took a third reading of the same code to
- * find.
+ * **`formatters.log` is never called for a binding**, and `REDACTION_PATHS`
+ * matches literal names, so a binding in a non-canonical spelling is reached by
+ * neither mechanism. MEASURED going out verbatim through the real
+ * `createLogger`, twice, in the same defect class both times:
  *
- * It is an own property shadowing pino's prototype method, and it **delegates
- * on `this` rather than on a bound parent** — which is the whole of the second
- * bug this function had. pino's `child()` builds the new logger with
- * `Object.create(this)`, so a child INHERITS this own property; a wrapper that
- * closed over `logger.child.bind(logger)` therefore sent
- * `logger.child(a).child(b)` back to the ROOT, and MEASURED, the grandchild
- * silently lost `a` — a correlation field vanishing from every line under it.
- * Delegating on `this` fixes it and makes the recursion unnecessary: the
- * inherited wrapper already applies at every depth. `test/redaction.test.ts`
- * asserts the chain keeps its parent's bindings, which is the assertion whose
- * absence let it through.
+ *   - `logger.child({ signed_url })` — found by grading the corpus through the
+ *     product of (binding mechanism × spelling) instead of their sum. The
+ *     fixtures covered child bindings in the canonical spelling and
+ *     non-canonical spellings in a merged object; neither could see their
+ *     combination.
+ *   - `logger.setBindings({ signed_url })` — the SAME product with a third
+ *     value in the first dimension, missed because the fix enumerated the
+ *     mechanism it had just been shown rather than enumerating the dimension.
+ *     `child` and `setBindings` are the complete set: `base` is set by
+ *     `createLogger` itself, and a `mixin`'s output is merged before
+ *     `formatters.log` runs, so it is already walked.
  *
- * Nothing inside pino calls `child`, so the only caller is application code.
+ * Both are own properties shadowing pino's prototype methods, and both
+ * **delegate on `this` rather than on a bound parent** — which was the second
+ * bug in this function. pino builds a child with `Object.create(this)`, so a
+ * child INHERITS these own properties; a wrapper closing over
+ * `logger.child.bind(logger)` therefore sent `logger.child(a).child(b)` back to
+ * the ROOT, and MEASURED, the grandchild silently lost `a` — a correlation
+ * field vanishing from every line under it. Delegating on `this` fixes it and
+ * makes recursion unnecessary: the inherited wrapper already applies at every
+ * depth. `test/redaction.test.ts` asserts the chain keeps its parent's
+ * bindings, which is the assertion whose absence let it through.
+ *
+ * Nothing inside pino calls either method, so the only caller is application
+ * code.
  */
-function redactChildBindings(logger: Logger): Logger {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- reading `child` UNBOUND is the point, and binding it is the measured bug this function's doc records: it is re-invoked below with `.call(this, …)` so that a grandchild delegates to ITS parent rather than to the root, which is what stops the chain losing the parent's bindings.
-  const inherited = logger.child;
+function redactBindings(logger: Logger): Logger {
+  /* eslint-disable @typescript-eslint/unbound-method -- reading these UNBOUND is the point, and binding them is the measured bug this function's doc records: each is re-invoked below with `.call(this, …)` so that a descendant delegates to ITSELF rather than to the root, which is what stops a chain losing its parent's bindings. */
+  const inheritedChild = logger.child;
+  const inheritedSetBindings = logger.setBindings;
+  /* eslint-enable @typescript-eslint/unbound-method -- restored immediately; the two reads above are the only ones intended. */
+
   // Generic in the same parameter pino's own `child` is, so the assignment is
   // type-safe for a caller that declares custom levels. The cast is on the
   // RETURN only: `.call` erases the instantiation, and nothing in this
@@ -215,10 +167,16 @@ function redactChildBindings(logger: Logger): Logger {
     bindings: Bindings,
     options?: ChildLoggerOptions<ChildCustomLevels>,
   ): Logger<ChildCustomLevels> {
-    const created: unknown = inherited.call(this, redactLogObject(bindings), options);
+    const created: unknown = inheritedChild.call(this, redactLogObject(bindings), options);
     return created as Logger<ChildCustomLevels>;
   }
+
+  function setBindings(this: Logger, bindings: Bindings): void {
+    inheritedSetBindings.call(this, redactLogObject(bindings));
+  }
+
   logger.child = child;
+  logger.setBindings = setBindings;
   return logger;
 }
 
@@ -246,7 +204,5 @@ export function createLogger(env: Pick<Env, 'LOG_LEVEL'>, destination?: Destinat
     redact: { paths: [...REDACTION_PATHS], censor: REDACTION_CENSOR },
     hooks: { logMethod: rewrapBareError },
   };
-  return redactChildBindings(
-    destination === undefined ? pino(options) : pino(options, destination),
-  );
+  return redactBindings(destination === undefined ? pino(options) : pino(options, destination));
 }
