@@ -307,3 +307,53 @@ describe('createLogger', () => {
     expect(captured.only()['msg']).toBe('emitted');
   });
 });
+
+/**
+ * The three `child()` options that switch the control off, REJECTED rather than
+ * documented.
+ *
+ * Measured before the guard: `{ formatters: { log } }` replaces the walk and a
+ * `signed_url` went out verbatim on that child; `{ redact }` replaces the paths
+ * that are all that still reaches `err.message` and `err.stack`; and
+ * `{ serializers: { err } }` replaces the one serialiser obligation 7 requires.
+ *
+ * A control any caller can switch off with an options bag is not a control, and
+ * CLAUDE.md asks for a fixture asserting rejection rather than a comment asking
+ * for restraint. `child()` is wiring-time, so the throw is a boot failure with a
+ * name on it.
+ */
+describe('child() options that would disable the control', () => {
+  it.each(['redact', 'serializers', 'formatters'])('rejects %s', (option) => {
+    const captured = captureLogger();
+
+    expect(() => captured.logger.child({}, { [option]: {} })).toThrow(
+      new RegExp(`may not override ${option}`),
+    );
+  });
+
+  it('names every offending option at once, not just the first', () => {
+    const captured = captureLogger();
+
+    expect(() => captured.logger.child({}, { redact: { paths: [] }, formatters: {} })).toThrow(
+      /redact, formatters/,
+    );
+  });
+
+  it('leaves the options that do not disable anything alone', () => {
+    const captured = captureLogger();
+
+    const child = captured.logger.child({ requestId: 'req_1' }, { level: 'warn' });
+    child.warn('emitted');
+
+    expect(captured.only()['requestId']).toBe('req_1');
+    expect(captured.only()['level']).toBe('warn');
+  });
+
+  it('accepts a child with no options at all, which is every call site today', () => {
+    const captured = captureLogger();
+
+    captured.logger.child({ context: 'DomainExceptionFilter' }).info('a line');
+
+    expect(captured.only()['context']).toBe('DomainExceptionFilter');
+  });
+});

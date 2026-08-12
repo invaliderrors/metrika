@@ -138,8 +138,13 @@ const STACK_FRAME = /^\s*at /;
  * `eval`'d or `data:`-URL code carries source text in the frame itself. Nothing
  * in this application evaluates strings.
  */
-function framesOf(stack: string | undefined): readonly string[] {
-  if (stack === undefined) return [];
+function framesOf(error: Error): readonly string[] {
+  // PROBED, not read: `stack` is an accessor on a V8 Error and an application
+  // can replace it with one that throws — measured escaping `logger.info()` and
+  // costing the whole line, which is the failure mode the third redact depth was
+  // removed for. A stack that cannot be read yields no frames.
+  const stack = probe(error, 'stack');
+  if (typeof stack !== 'string') return [];
   return stack
     .split('\n')
     .filter((line) => STACK_FRAME.test(line))
@@ -181,7 +186,7 @@ export function serialiseError(value: unknown): Record<string, unknown> {
     type: classNameOf(value),
     message: REDACTION_CENSOR,
     stack: REDACTION_CENSOR,
-    frames: framesOf(value.stack),
+    frames: framesOf(value),
   };
 }
 
@@ -196,8 +201,20 @@ export function serialiseError(value: unknown): Record<string, unknown> {
  * constructor name is the empty string.
  */
 function classNameOf(value: Error): string {
-  const constructed = value.constructor.name;
-  return constructed === '' ? value.name : constructed;
+  // Both reads are PROBED. `constructor` is inherited and an application can
+  // define it as `undefined` — measured, `value.constructor.name` then threw a
+  // TypeError out of `logger.info()` and the line was lost. `name` is the
+  // documented fallback and `'Error'` is the fallback for a value that answers
+  // neither, which is a stricter contract than the one an `Error` guarantees.
+  const constructor = probe(value, 'constructor');
+  const candidates = [
+    typeof constructor === 'function' ? probe(constructor, 'name') : undefined,
+    probe(value, 'name'),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate !== '') return candidate;
+  }
+  return 'Error';
 }
 
 /**
@@ -237,9 +254,12 @@ interface SelfSerialising {
  * `Date` and `Buffer` both carry `toJSON`, and both have NO own enumerable
  * keys, so a walk that rebuilt them from their keys would emit `{}` and
  * silently empty every timestamp in the log.
+ *
+ * The read is PROBED, because `toJSON` can itself be a throwing accessor —
+ * measured escaping `logger.info()` before this guard.
  */
 function serialisesItself(node: object): node is SelfSerialising {
-  return typeof (node as { toJSON?: unknown }).toJSON === 'function';
+  return typeof probe(node, 'toJSON') === 'function';
 }
 
 /**
@@ -262,10 +282,14 @@ function serialisesItself(node: object): node is SelfSerialising {
  *   - **It was a named hole**: a class whose `toJSON` returns something
  *     sensitive was not reached. Now the result is walked, so it is.
  *
- * The `toJSON` call is application code, so it is guarded exactly as a property
- * read is; and the node is marked in `rebuilt` BEFORE the call, so a `toJSON`
- * that returns a graph containing its own receiver terminates against the
- * censor rather than recursing.
+ * `rebuilt` CANNOT bound this, and that is worth stating because it looks as
+ * though it should: marking the node before the call only catches a `toJSON`
+ * that returns its own receiver, and `toJSON() { return new W() }` returns a
+ * FRESH node every time, so the map never hits. MEASURED:
+ * `RangeError: Maximum call stack size exceeded`, zero lines emitted, where
+ * baseline pino emits `{}`. What bounds it is {@link redactLogObject}'s
+ * per-entry boundary, which turns any non-terminating walk into one censored
+ * field instead of a lost line.
  */
 function redactSelfSerialising(node: SelfSerialising, rebuilt: Map<object, unknown>): unknown {
   rebuilt.set(node, REDACTION_CENSOR);
@@ -290,6 +314,26 @@ function redactSelfSerialising(node: SelfSerialising, rebuilt: Map<object, unkno
  * logger that edits the data it was handed changes program behaviour, and would
  * do it only on the lines that happened to be emitted at the configured level.
  *
+ * **Every entry is walked inside its own boundary, and a walk that cannot
+ * complete costs its FIELD rather than the line.** This is the rule the rest of
+ * this module is written to and it was, briefly, the rule this module broke:
+ * reducing every Error meant reading `.stack` and `.constructor.name` on values
+ * an application controls, and a throwing `stack` accessor or a `constructor`
+ * defined as `undefined` propagated straight out of `logger.info()` for ZERO
+ * lines emitted — from inside `DomainExceptionFilter`'s `catch`, which is the
+ * one place in this application that must never lose a line. Baseline pino
+ * emits all three. Losing the line is the failure mode the third redact depth
+ * was REMOVED for, so importing it in the fix was the same trade made twice in
+ * opposite directions.
+ *
+ * The individual reads are probed as well, so the common cases degrade to one
+ * censored value rather than one censored top-level field; the boundary here is
+ * what catches what no local guard can — a `RangeError` from a `toJSON` that
+ * never terminates, or from nesting deeper than the stack (measured at ~4,600,
+ * where baseline pino survives 200,000). Both are DECLARED costs: the field is
+ * censored and the line is emitted, so `requestId` and `traceId` survive
+ * whatever the payload does.
+ *
  * **An `Error` is reduced to {@link serialiseError}'s fixed shape, EXCEPT at the
  * top-level `err` key.** Both halves are measured.
  *
@@ -304,48 +348,83 @@ function redactSelfSerialising(node: SelfSerialising, rebuilt: Map<object, unkno
  * three going out verbatim — `{ myError: <Error with signed_url> }`,
  * `{ a: { b: { err: <Error with password> } } }` (canonical spelling, depth 4)
  * and `{ errs: [<Error with signed_url>] }`, which is the AggregateError shape.
- * The comment that used to sit here claimed the paths covered them "to depth
- * three"; that was true only of the canonical spelling and only at two of the
- * three depths, which is the difference between a control and a coincidence.
  *
- * **Reads are guarded, because a property read is arbitrary application code.**
- * `Object.entries` invokes getters, and a throwing getter propagated straight
- * out of `logger.info()` — baseline pino survives one. A read that throws yields
- * the censor: fail CLOSED, since a value that cannot be inspected cannot be
- * cleared.
+ * **`err` is a POSITION, not a type**, and that is the second half of the same
+ * finding. Reducing Error INSTANCES everywhere still left
+ * `{ ctx: { err: { message: DSN } } }` going out verbatim — an error-shaped
+ * plain object, which is exactly what a worker's deserialised error looks like
+ * and exactly the shape `logger.ts` names as real when it explains why the
+ * `msg` guard cannot test `instanceof`. Whatever sits at `err` is reduced, at
+ * every depth, which is precisely what pino's own serialiser does at depth 1.
  *
  * **Cycles are rebuilt as cycles**, via the `rebuilt` map: a node reached twice
  * yields the SAME rebuilt object both times, so pino's own safe stringifier
  * marks it `[Circular]` exactly as it would have. Returning the original on the
  * second visit would have been the obvious shape and leaks — the parent would
- * then point at an uncensored graph. There is deliberately no depth cap: a
- * finite object is finite, and the map is what bounds the infinite one.
+ * then point at an uncensored graph.
  */
 export function redactLogObject(object: Record<string, unknown>): Record<string, unknown> {
   const rebuilt = new Map<object, unknown>();
   const copy: Record<string, unknown> = {};
   rebuilt.set(object, copy);
   for (const key of Object.keys(object)) {
-    if (isRedactedKey(key)) {
-      copy[key] = REDACTION_CENSOR;
-      continue;
-    }
-    const value = read(object, key);
-    // THE one Error pino's own serialiser will reach. Everything else — including
-    // an Error at `err` nested deeper, which the serialiser never sees — goes
-    // through `redactValue` and is reduced there.
-    copy[key] =
-      key === PINO_ERROR_KEY && value instanceof Error ? value : redactValue(value, rebuilt);
+    copy[key] = redactTopLevelEntry(object, key, rebuilt);
   }
   return copy;
 }
 
-/** A property read that cannot escape. See the fail-closed note above. */
+function redactTopLevelEntry(
+  object: Record<string, unknown>,
+  key: string,
+  rebuilt: Map<object, unknown>,
+): unknown {
+  if (isRedactedKey(key)) return REDACTION_CENSOR;
+  try {
+    const value = read(object, key);
+    // THE one value pino's own serialiser reaches, whatever its type — measured
+    // running for an Error, a plain object and a string, through a merged
+    // object, `child` and `setBindings` alike, and asserted in
+    // `test/redaction.test.ts` so the pass-through is not resting on an
+    // unpinned property of somebody else's package. Left WHOLE rather than
+    // reduced here: reducing it twice loses the type the first reduction
+    // recorded (`{ err: <string> }` reported `object`), and reducing an Error
+    // here loses its frames. Anything at `err` BELOW the top level is reduced
+    // by this module, because nothing else will.
+    return key === PINO_ERROR_KEY ? value : redactValue(value, rebuilt);
+  } catch {
+    return REDACTION_CENSOR;
+  }
+}
+
+/**
+ * A property read that cannot escape, for a value that will be WRITTEN DOWN.
+ *
+ * Fails closed: a value that cannot be inspected cannot be cleared, so it is
+ * censored rather than emitted.
+ */
 function read(node: object, key: string | number): unknown {
   try {
     return (node as Record<string | number, unknown>)[key];
   } catch {
     return REDACTION_CENSOR;
+  }
+}
+
+/**
+ * A property read that cannot escape, for a value this module will DECIDE on
+ * rather than emit — `stack`, `constructor`, `name`, `toJSON`.
+ *
+ * Separate from {@link read} because the fail-closed answer differs: a decision
+ * that cannot be made must fall through to its own default (no frames, the
+ * class name `Error`, not self-serialising), and returning the censor STRING
+ * into a decision would make `typeof x === 'function'` and `typeof x ===
+ * 'string'` both answer about the failure rather than about the value.
+ */
+function probe(node: object, key: string): unknown {
+  try {
+    return (node as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
   }
 }
 
@@ -370,7 +449,15 @@ function redactValue(node: unknown, rebuilt: Map<object, unknown>): unknown {
   const copy: Record<string, unknown> = {};
   rebuilt.set(node, copy);
   for (const key of Object.keys(node)) {
-    copy[key] = isRedactedKey(key) ? REDACTION_CENSOR : redactValue(read(node, key), rebuilt);
+    if (isRedactedKey(key)) {
+      copy[key] = REDACTION_CENSOR;
+      continue;
+    }
+    const value = read(node, key);
+    // `err` is a POSITION. Whatever is in it is reduced, Error instance or not —
+    // see the note on `redactLogObject`; `{ ctx: { err: { message } } }` was
+    // going out verbatim while every Error instance was covered.
+    copy[key] = key === PINO_ERROR_KEY ? serialiseError(value) : redactValue(value, rebuilt);
   }
   return copy;
 }

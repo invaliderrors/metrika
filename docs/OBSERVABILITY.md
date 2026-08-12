@@ -140,10 +140,37 @@ called. A Pino path is a literal string, so `signedUrl` does not imply
 `signed_url` and no derivation of seventeen names could express the 956
 spellings `redaction-corpus.json` declares; the walk matches the rule instead,
 at any depth. It rebuilds rather than censoring in place (an in-place walk was
-measured editing the CALLER's object), passes an `Error` through untouched
-(`formatters.log` runs BEFORE `serializers`, so rebuilding one destroys the
-stack frames), and rebuilds a cycle as a cycle so pino's own stringifier still
-marks it `[Circular]`.
+measured editing the CALLER's object) and rebuilds a cycle as a cycle so pino's
+own stringifier still marks it `[Circular]`.
+
+**A walk that cannot finish costs the FIELD, not the line**, and that rule is
+the one the walk itself broke once. Reducing every `Error` meant reading
+`.stack` and `.constructor.name` on values an application controls, and a
+throwing `stack` accessor or a `constructor` defined as `undefined` propagated
+straight out of `logger.info()` for **zero lines emitted** — from inside
+`DomainExceptionFilter`'s `catch`, the one place in this system that must never
+lose a line, and the exact failure mode the third redact depth had just been
+removed for. Each top-level entry is now walked inside its own boundary, and the
+individual reads are probed so the common cases degrade to one censored value
+rather than one censored field. Two declared costs sit behind that boundary: a
+`toJSON` that never terminates, and nesting deeper than the stack (~4,600, where
+baseline pino survives 200,000). Both censor the field and emit the line, so
+`requestId` and `traceId` survive whatever the payload does.
+
+**`err` is a POSITION, not a type.** Reducing `Error` instances everywhere still
+let `{ ctx: { err: { message: DSN } } }` out verbatim — an error-shaped plain
+object, which is exactly what a worker's deserialised error looks like and
+exactly the shape the `msg` guard cannot test with `instanceof`. Whatever sits
+at `err` below the top level is reduced; the top-level one is left whole because
+pino's own serialiser reduces it, measured for an Error, a plain object and a
+string through all three binding routes and pinned by a test.
+
+**A child may not override `redact`, `serializers` or `formatters`.** Each
+switches off part of the control for that child and everything descended from
+it — `{ formatters: { log } }` was measured letting a `signed_url` out verbatim.
+`child()` rejects them with a named error rather than documenting the hazard: it
+is called at wiring time, so the throw is a boot failure, and a control any
+caller can switch off with an options bag is not a control.
 
 One derived path has a cost that was decided rather than discovered: `*.url`
 reaches `req.url` under `pino-http`'s default request serialiser, so every

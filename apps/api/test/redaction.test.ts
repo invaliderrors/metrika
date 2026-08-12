@@ -6,7 +6,7 @@ import {
   REDACTION_PATHS,
   redactLogObject,
 } from '../src/infrastructure/telemetry/redaction.js';
-import { captureLogger } from './log-capture.js';
+import { captureLogger, errorField } from './log-capture.js';
 
 const CORPUS = redactionCorpus();
 
@@ -585,4 +585,303 @@ describe('redactLogObject', () => {
     expect(line['body']).toStrictEqual({ type: 'Buffer', data: [104, 105] });
     expect(line['a']).toStrictEqual({ b: { type: 'Buffer', data: [104, 105] } });
   });
+});
+
+/**
+ * THE CARRIER-SHAPE DIMENSION, which the last round did not have on its list at
+ * all — and that is the finding, not the leak.
+ *
+ * Round 1 reduced every Error INSTANCE at every depth and called the dimension
+ * covered. It was half of one: an error-shaped PLAIN OBJECT is reduced only at
+ * depth 1, by pino's serialiser, so `{ ctx: { err: { message: DSN } } }` went out
+ * verbatim. That is the exact shape `logger.ts` names as real when it explains
+ * why the `msg` guard cannot test `instanceof` — a worker's deserialised error —
+ * so the uncovered cell was one the code already knew about.
+ *
+ * The dimension is (what sits at `err`) × (how deep it sits), and the rule that
+ * closes it is that **`err` is a POSITION, not a type**: whatever is in it is
+ * reduced, at every depth, which is what pino's own serialiser does at depth 1.
+ */
+describe('the err position, at every depth and whatever sits in it', () => {
+  const DSN = 'DB_DSN=postgres://user:PASSWORD@host/db';
+
+  const CARRIERS: Readonly<Record<string, () => unknown>> = {
+    'an Error instance': () => new Error(DSN),
+    'a plain object with a message': () => ({ message: DSN }),
+    'a plain object with a stack': () => ({ stack: DSN }),
+    'a plain object with both': () => ({ message: DSN, stack: DSN, name: 'Error' }),
+    'a string': () => DSN,
+  };
+
+  const POSITIONS: Readonly<Record<string, (carried: unknown) => Record<string, unknown>>> = {
+    'at the top level': (carried) => ({ err: carried }),
+    'one level down': (carried) => ({ ctx: { err: carried } }),
+    'three levels down': (carried) => ({ a: { b: { c: { err: carried } } } }),
+    'inside an array': (carried) => ({ attempts: [{ err: carried }] }),
+  };
+
+  for (const [carrierName, carrier] of Object.entries(CARRIERS)) {
+    for (const [positionName, position] of Object.entries(POSITIONS)) {
+      it(`reduces ${carrierName} ${positionName}`, () => {
+        const captured = captureLogger();
+
+        captured.logger.info(position(carrier()), 'm');
+
+        expect(captured.raw()).not.toContain('PASSWORD');
+      });
+
+      it(`reduces ${carrierName} ${positionName}, as a child binding`, () => {
+        const captured = captureLogger();
+
+        captured.logger.child(position(carrier())).info('m');
+
+        expect(captured.raw()).not.toContain('PASSWORD');
+      });
+    }
+  }
+
+  it('still keeps the frames of a real Error below the top level', () => {
+    // The reduction must not be a deletion: an Error nested under `ctx` is as
+    // worth diagnosing as one at `err`, and the frames are the diagnosis.
+    const captured = captureLogger();
+    function thrower(): never {
+      throw new Error(DSN);
+    }
+    try {
+      thrower();
+    } catch (error: unknown) {
+      captured.logger.info({ ctx: { err: error } }, 'm');
+    }
+
+    const frames = (captured.only()['ctx'] as { err: { frames: string[] } }).err.frames;
+    expect(frames[0]).toContain('thrower');
+    expect(captured.raw()).not.toContain('PASSWORD');
+  });
+});
+
+/**
+ * THE FAILURE-MODE DIMENSION: what the walk does when it cannot finish.
+ *
+ * **This is the rule the module is written to and the one it briefly broke.**
+ * Reducing every Error meant reading `.stack` and `.constructor.name` on values
+ * an application controls, so a throwing `stack` accessor propagated out of
+ * `logger.info()` and the line was LOST — from inside `DomainExceptionFilter`'s
+ * `catch`, the one place in this application that must never lose a line.
+ * Losing the line is the failure mode the third redact depth was removed for,
+ * so the fix for one finding imported the very cost another finding had just
+ * paid to avoid.
+ *
+ * Every row asserts the same three things, because any one of them alone is
+ * satisfiable by a control that has quietly stopped working: the line is
+ * EMITTED, the offending field is CENSORED, and its siblings — the correlation
+ * fields an operator navigates by — SURVIVE.
+ */
+describe('a walk that cannot finish costs the field, not the line', () => {
+  const PATHOLOGICAL: Readonly<Record<string, () => unknown>> = {
+    'a throwing getter': () => ({
+      get detail(): string {
+        throw new Error('nope');
+      },
+    }),
+    'an Error whose stack getter throws': () => {
+      const error = new Error('boom');
+      Object.defineProperty(error, 'stack', {
+        get(): string {
+          throw new Error('nope');
+        },
+      });
+      return error;
+    },
+    'an Error whose constructor is undefined': () => {
+      const error = new Error('boom');
+      Object.defineProperty(error, 'constructor', { value: undefined });
+      return error;
+    },
+    'a throwing toJSON': () => ({
+      toJSON: (): unknown => {
+        throw new Error('nope');
+      },
+    }),
+    'a toJSON that never terminates': () => {
+      class Runaway {
+        toJSON(): unknown {
+          return new Runaway();
+        }
+      }
+      return new Runaway();
+    },
+    'nesting deeper than the stack': () => {
+      let node: Record<string, unknown> = { end: 1 };
+      for (let depth = 0; depth < 6000; depth += 1) node = { node };
+      return node;
+    },
+    'a throwing ownKeys trap': () =>
+      new Proxy(
+        {},
+        {
+          ownKeys(): string[] {
+            throw new Error('nope');
+          },
+        },
+      ),
+  };
+
+  it.each(Object.keys(PATHOLOGICAL))('still emits the line for %s', (shape) => {
+    const captured = captureLogger();
+
+    captured.logger.info({ requestId: 'req_01H', boom: PATHOLOGICAL[shape]?.(), keep: 'yes' }, 'm');
+
+    const line = captured.only();
+    expect(line['requestId'], 'the correlation field must survive the payload').toBe('req_01H');
+    expect(line['keep']).toBe('yes');
+    expect(line['msg']).toBe('m');
+  });
+
+  /**
+   * The invariant that actually matters, and it is NOT "the field is censored".
+   *
+   * A first version of this asserted the censor and was FLAKY: the walk either
+   * completes or exhausts the stack depending on how much stack the caller has
+   * left, so `nesting deeper than the stack` censored under one call depth and
+   * walked cleanly under another. Pinning the censor pinned an artefact of the
+   * harness.
+   *
+   * What holds either way is that the payload never reaches the log unredacted —
+   * whether the walk finished and censored the key, or gave up and censored the
+   * whole field. Each shape below therefore CARRIES a secret wherever it can,
+   * and the assertion is that no route writes it down.
+   */
+  const SECRET_BEARING: Readonly<Record<string, () => unknown>> = {
+    'a throwing getter beside a secret': () => ({
+      password: 'SECRET-VALUE',
+      get detail(): string {
+        throw new Error('nope');
+      },
+    }),
+    'a toJSON returning a secret': () => ({
+      toJSON: (): unknown => ({ password: 'SECRET-VALUE' }),
+    }),
+    'nesting deeper than the stack, with a secret at the bottom': () => {
+      let node: Record<string, unknown> = { password: 'SECRET-VALUE' };
+      for (let depth = 0; depth < 6000; depth += 1) node = { node };
+      return node;
+    },
+    'an Error carrying a secret whose stack getter throws': () => {
+      const error = Object.assign(new Error('boom'), { signed_url: 'SECRET-VALUE' });
+      Object.defineProperty(error, 'stack', {
+        get(): string {
+          throw new Error('nope');
+        },
+      });
+      return error;
+    },
+  };
+
+  it.each(Object.keys(SECRET_BEARING))('writes nothing down unredacted for %s', (shape) => {
+    const captured = captureLogger();
+
+    captured.logger.info({ requestId: 'req_01H', boom: SECRET_BEARING[shape]?.() }, 'm');
+
+    expect(captured.raw()).not.toContain('SECRET-VALUE');
+    expect(captured.only()['requestId'], 'and the line still arrives').toBe('req_01H');
+  });
+
+  /**
+   * The per-entry boundary makes every row above SAFE, so these two assert what
+   * the boundary alone does NOT give: a local guard degrades the value, where
+   * the boundary censors the whole field. Both were measured green under a
+   * mutation that removed the local guard — the boundary caught it and the
+   * diagnostic quietly got worse — which is why they assert the REDUCTION
+   * rather than the safety.
+   */
+  it('still reduces an Error whose constructor was removed, rather than censoring it', () => {
+    const captured = captureLogger();
+    const error = new Error('boom');
+    Object.defineProperty(error, 'constructor', { value: undefined });
+    error.name = 'QuoteEngineFailure';
+
+    captured.logger.info({ boom: error }, 'm');
+    const boom = captured.only()['boom'] as Record<string, unknown>;
+
+    expect(boom['type'], 'the class name is all a censored message leaves').toBe(
+      'QuoteEngineFailure',
+    );
+    expect((boom['frames'] as string[]).length).toBeGreaterThan(0);
+  });
+
+  it('still walks a value whose toJSON getter throws, rather than censoring it', () => {
+    // Baseline pino emits `{}` for this; without the local probe the whole field
+    // becomes the censor instead.
+    const captured = captureLogger();
+    const value = { keep: 'yes' };
+    Object.defineProperty(value, 'toJSON', {
+      get(): unknown {
+        throw new Error('nope');
+      },
+    });
+
+    captured.logger.info({ boom: value }, 'm');
+
+    expect(captured.only()['boom']).toStrictEqual({ keep: 'yes' });
+  });
+
+  it('emits the line even when the pathological value is at the err key itself', () => {
+    // The filter's own call shape. `serialiseError` runs as pino's serialiser
+    // here, outside the walk's per-entry boundary, so its internal guards are
+    // what carry this case.
+    const captured = captureLogger();
+    const error = new Error('boom');
+    Object.defineProperty(error, 'stack', {
+      get(): string {
+        throw new Error('nope');
+      },
+    });
+
+    captured.logger.error({ err: error }, 'Unhandled exception (requestId=req-1)');
+
+    expect(captured.only()['msg']).toBe('Unhandled exception (requestId=req-1)');
+    expect(errorField(captured.only())['frames']).toStrictEqual([]);
+  });
+});
+
+/**
+ * The property the top-level `err` pass-through rests on, pinned here rather
+ * than assumed.
+ *
+ * `redactLogObject` leaves the top-level `err` WHOLE — reducing it twice loses
+ * the type, and reducing an Error loses its frames — which is only safe because
+ * pino applies `serializers.err` to that key itself. MEASURED for an Error, a
+ * plain object and a string, through a merged object, `child` and `setBindings`
+ * alike. If a pino upgrade ever narrows that to Error instances, this goes red
+ * here instead of leaking in production.
+ */
+describe('pino reduces the top-level err itself, whatever its type', () => {
+  const DSN = 'DB_DSN=postgres://user:PASSWORD@host/db';
+  const CARRIED: Readonly<Record<string, unknown>> = {
+    'an Error': new Error(DSN),
+    'a plain object': { message: DSN },
+    'a string': DSN,
+  };
+
+  for (const [carrier, value] of Object.entries(CARRIED)) {
+    it(`reduces ${carrier} arriving in a merged object`, () => {
+      const captured = captureLogger();
+      captured.logger.error({ err: value }, 'm');
+      expect(captured.raw()).not.toContain('PASSWORD');
+      expect(errorField(captured.only())['message']).toBe(REDACTION_CENSOR);
+    });
+
+    it(`reduces ${carrier} arriving through child()`, () => {
+      const captured = captureLogger();
+      captured.logger.child({ err: value }).error('m');
+      expect(captured.raw()).not.toContain('PASSWORD');
+    });
+
+    it(`reduces ${carrier} arriving through setBindings()`, () => {
+      const captured = captureLogger();
+      captured.logger.setBindings({ err: value });
+      captured.logger.error('m');
+      expect(captured.raw()).not.toContain('PASSWORD');
+    });
+  }
 });
