@@ -197,6 +197,29 @@ describe('apiFetch', () => {
   });
 
   /**
+   * `apiUrl`'s origin guard constrains the request this wrapper MAKES and
+   * nothing after it. `fetch` follows redirects by default, and a cross-origin
+   * redirect strips only `Authorization`, `Cookie` and `Proxy-Authorization` —
+   * a custom header like `X-Request-Id` survives it. So the origin guard is not
+   * the whole property without this.
+   *
+   * A default rather than a rule: it sits before the `...init` spread, so a
+   * caller that genuinely needs to follow a redirect says so and the decision
+   * is visible.
+   */
+  it('does not follow redirects, which would carry the header to another origin', async () => {
+    await apiFetch('/quotes');
+
+    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe('error');
+  });
+
+  it('lets a caller opt into following one deliberately', async () => {
+    await apiFetch('/quotes', { redirect: 'follow' });
+
+    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe('follow');
+  });
+
+  /**
    * THE CONTROL, and it is asserted as an ABSENCE.
    *
    * `NO_REQUEST_ID` is inside the acceptable character class, so the API rejects

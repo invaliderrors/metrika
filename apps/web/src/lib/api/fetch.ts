@@ -34,6 +34,15 @@ const API_BASE = clientEnv.NEXT_PUBLIC_API_BASE_URL.replace(/\/+$/, '');
  * Concatenation rather than `new URL(path, API_BASE)` is the second half of the
  * defence, and it also preserves a base URL carrying a path prefix
  * (`https://api.example.com/v1`), which `new URL` would discard.
+ *
+ * **WHAT THIS DOES NOT COVER, stated because the obvious reading is wrong:** it
+ * constrains the origin of the REQUEST THIS FUNCTION MAKES, and nothing else.
+ * `fetch` follows redirects by default, and a cross-origin redirect strips only
+ * `Authorization`, `Cookie` and `Proxy-Authorization` — a custom header such as
+ * `X-Request-Id` survives it. So a compromised or misconfigured API answering
+ * `302` to another origin would carry the correlation ID there regardless of
+ * this check. `apiFetch` closes that half with `redirect: 'error'`; the guard
+ * here is not sufficient on its own and never was.
  */
 export function apiUrl(path: string): string {
   if (!path.startsWith('/') || path.startsWith('//') || path.startsWith('/\\')) {
@@ -62,10 +71,22 @@ export function apiUrl(path: string): string {
  * `headers` is placed after the `...init` spread for the same reason. Before
  * it, a caller's `headers` key would overwrite the whole object and the header
  * would silently vanish.
+ *
+ * **`redirect: 'error'` is the other half of `apiUrl`'s origin guard**, and it
+ * sits BEFORE the spread rather than after, which makes it a default rather
+ * than a rule. Following a redirect is a legitimate thing for some future
+ * endpoint to need; doing it by accident is not, because a cross-origin
+ * redirect carries `X-Request-Id` — and every header this wrapper grows later —
+ * to whatever answered. A caller that needs to follow one writes
+ * `redirect: 'follow'` and the decision is visible in review.
+ *
+ * The cost, so it is not a surprise at the first 308: a redirect now rejects
+ * with a `TypeError` instead of being followed. For an API on our own origin
+ * that is the correct signal — the path was wrong.
  */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
   headers.set(REQUEST_ID_HEADER, currentRequestId());
 
-  return fetch(apiUrl(path), { ...init, headers });
+  return fetch(apiUrl(path), { redirect: 'error', ...init, headers });
 }
