@@ -23,6 +23,7 @@ import { BatchSpanProcessor, type SpanProcessor } from '@opentelemetry/sdk-trace
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { ATTR_DEPLOYMENT_ENVIRONMENT_NAME } from '@opentelemetry/semantic-conventions/incubating';
 import { FastifyOtelInstrumentation } from '@fastify/otel';
+import { redactSentryEvent } from '@metrika/contracts';
 import * as Sentry from '@sentry/node';
 import {
   SentryAsyncLocalStorageContextManager,
@@ -323,6 +324,65 @@ export type TelemetryEnv = Pick<
   'NODE_ENV' | 'SENTRY_DSN' | 'OTLP_TRACES_ENDPOINT' | 'TRACES_SAMPLE_RATE'
 >;
 
+/**
+ * The `Sentry.init` options this process ships, as a VALUE.
+ *
+ * Extracted for the reason every other pure export in this file was:
+ * `startTelemetry()` registers process-global state and refuses a second
+ * call, so anything it decides has to be reachable without calling it or it
+ * cannot be graded. `test/sentry-redaction.test.ts` builds a real
+ * `NodeClient` from THIS object with a capturing transport, so the redaction
+ * hook is asserted on the options the application actually passes rather than
+ * on a restatement of them — which is the difference between a fixture and a
+ * second copy of the configuration.
+ */
+export function sentryOptions(env: TelemetryEnv): Sentry.NodeOptions {
+  return {
+    dsn: env.SENTRY_DSN === '' ? undefined : env.SENTRY_DSN,
+    environment: env.NODE_ENV,
+    // Not optional plumbing: `SentrySampler` returns NOT_RECORD for every span
+    // when `hasSpansEnabled(options)` is false, and a non-recording span still
+    // carries a perfectly valid trace ID. So without a sample rate the log lines
+    // would still show `traceId` and nothing would ever be exported — a broken
+    // pipeline wearing the evidence of a working one.
+    tracesSampleRate: env.TRACES_SAMPLE_RATE,
+    // ─────────────────────────────────────────────────────────────────────────
+    // THE REDACTION CONTROL, AND ITS ABSENCE WAS THE 0B-1 CARRY-FORWARD
+    // REOPENED AGAINST AN EXTERNAL SERVICE.
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // Plan 0C's whole ordering rule was that no exporter ships before the
+    // exception filter stops writing an `Error`'s message to a sink. Task 2
+    // closed that for PINO — `logger.ts` and `redaction.ts` beside this file —
+    // and this client was wired without the equivalent hook, so the same string
+    // went to Sentry instead. Measured at this exact option set, with a real DSN
+    // and a capturing transport: one envelope carried the exception message
+    // (`DB_DSN=…PASSWORD…`), a presigned URL from `extra`, an `Authorization`
+    // bearer from `tags` and an `originalFilename` from a context.
+    //
+    // It was latent only because `SENTRY_DSN` defaults to empty, and a
+    // deployment default is not a control.
+    //
+    // ONE traversal, in `packages/contracts` beside the list and the matching
+    // rule that grade it. A second implementation here is exactly the drift that
+    // module exists to prevent — 27 of 140 probe names were measured disagreeing
+    // when only the MATCHING RULE was duplicated, and a traversal is far more
+    // logic than a matching rule. `test/sentry-redaction.test.ts` asserts this
+    // hook is installed and asserts the four shapes above at a capturing
+    // transport; `packages/contracts/test/sentry-event.test.ts` grades the walk.
+    beforeSend: redactSentryEvent,
+    skipOpenTelemetrySetup: true,
+    defaultIntegrations: false,
+    integrations: sentryIntegrations(Sentry.getDefaultIntegrations({})),
+    // One ESM loader hook in this process, and it is the one registered above.
+    // Sentry's exists so ITS instrumentations can patch ESM dependencies, and
+    // the allowlist keeps none of those; ADR-0029 records the duplicate as a
+    // benign `import-in-the-middle hook has already been initialized` warning at
+    // boot, which is a line an operator would reasonably read as a fault.
+    registerEsmLoaderHooks: false,
+  };
+}
+
 let started = false;
 
 /**
@@ -386,25 +446,7 @@ export function startTelemetry(
   // flag kills OTLP export; OTel-first kills Sentry performance monitoring. Both
   // exit 0 and keep delivering Sentry errors, which is what makes the wrong one
   // so easy to ship.
-  const client = Sentry.init({
-    dsn: env.SENTRY_DSN === '' ? undefined : env.SENTRY_DSN,
-    environment: env.NODE_ENV,
-    // Not optional plumbing: `SentrySampler` returns NOT_RECORD for every span
-    // when `hasSpansEnabled(options)` is false, and a non-recording span still
-    // carries a perfectly valid trace ID. So without a sample rate the log lines
-    // would still show `traceId` and nothing would ever be exported — a broken
-    // pipeline wearing the evidence of a working one.
-    tracesSampleRate: env.TRACES_SAMPLE_RATE,
-    skipOpenTelemetrySetup: true,
-    defaultIntegrations: false,
-    integrations: sentryIntegrations(Sentry.getDefaultIntegrations({})),
-    // One ESM loader hook in this process, and it is the one registered above.
-    // Sentry's exists so ITS instrumentations can patch ESM dependencies, and
-    // the allowlist keeps none of those; ADR-0029 records the duplicate as a
-    // benign `import-in-the-middle hook has already been initialized` warning at
-    // boot, which is a line an operator would reasonably read as a fault.
-    registerEsmLoaderHooks: false,
-  });
+  const client = Sentry.init(sentryOptions(env));
   if (client === undefined) {
     throw new Error('Sentry.init() returned no client, so SentrySampler cannot be constructed.');
   }

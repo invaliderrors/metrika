@@ -1,27 +1,38 @@
-import { isRedactedKey } from '@metrika/contracts';
+import { isRedactedKey } from './redaction.js';
 
 /**
- * The Sentry sink's half of the redaction control.
+ * The Sentry sink's traversal, for every runtime that has one.
  *
- * **Neither the list nor the rule is here.** `RedactedFieldName` and
- * `isRedactedKey` both live in `packages/contracts/src/redaction.ts`, and this
- * module imports the matcher rather than implementing one. That module's header
- * records why: an earlier version of it said each sink's matching was its own
- * business, and review measured the cost — 27 of 140 probe names disagreed
- * between two matchers that had each been written carefully. A first draft of
- * THIS file was one of the two, and the shapes it let through were `url2`,
- * `presigned_url_v2` and `signedurl`.
+ * **THE THIRD TIME "THAT PART IS EACH SINK'S OWN" HAS BEEN WRONG, and it is
+ * worth writing the sequence down because the next candidate will look just as
+ * local as these two did.** `redaction.ts` first said the LIST was shared and
+ * the matching rule was each sink's business; review measured 27 of 140 probe
+ * names disagreeing between two carefully written matchers, and the rule moved
+ * here. This module then said the list and the rule were shared and the
+ * TRAVERSAL was each sink's business — and `apps/api` shipped a Sentry client
+ * with no traversal at all, which is a stronger version of the same failure: not
+ * two implementations drifting, but one existing and one missing. A traversal is
+ * far more logic than a matching rule, so a second copy would have drifted
+ * harder; there is now exactly one, graded once, in the package that already
+ * crosses every boundary as generated code.
  *
- * What is genuinely this sink's own is TRAVERSAL, and that is all this module
- * does. Pino matches paths, structlog matches a flat event dict's keys, and
- * Sentry hands `beforeSend` an arbitrary object graph — so the walk below is
- * the part that cannot be shared, and the verdict is the part that must be.
+ * What is genuinely per-sink is the SHAPE OF THE SINK: Pino matches paths and
+ * needs `apps/api`'s two traversals for the shapes a path cannot reach,
+ * structlog matches a flat event dict's keys, and Sentry hands `beforeSend` an
+ * arbitrary object graph. This module is the third of those.
  *
- * `redaction-corpus.json`, emitted through the same `contracts:emit` seam with
- * its verdicts DECLARED rather than computed, is what grades this sink:
- * `test/sentry-redaction.test.ts` runs every row through the walk itself, not
- * through the matcher, so a traversal that stops reaching some part of an event
- * is red even though the shared rule is untouched.
+ * **No dependency, and that was a constraint rather than an outcome.**
+ * `packages/contracts` imports nothing but `zod`, and this walk imports nothing
+ * at all beyond `isRedactedKey` from its own package — no Sentry types either.
+ * `redactSentryEvent` is generic over the event, so `apps/api` passes
+ * `@sentry/node`'s `ErrorEvent` and `apps/web` passes `@sentry/nextjs`'s, and
+ * neither type reaches this package.
+ *
+ * `redaction-corpus.json` — emitted through `contracts:emit` with its verdicts
+ * DECLARED rather than computed — grades this walk as well as the matcher:
+ * `test/sentry-event.test.ts` runs every row through the traversal itself, so a
+ * walk that stops reaching part of an event is red even though the shared rule
+ * is untouched.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * IT BUILDS A CLEANED COPY. IT DOES NOT MUTATE THE EVENT.
@@ -43,7 +54,7 @@ import { isRedactedKey } from '@metrika/contracts';
  *     sent as `{ request: { a: A, b: B } }` produced
  *     `{"a":"[REDACTED]","b":{"up":{"down":"[Circular ~]","password":"x"}}}`.
  *
- * The reasoning error in (3) is exact and is the reason for this rewrite: *"the
+ * The reasoning error in (3) is exact and is the reason for the rewrite: *"the
  * failing node's subtree becomes unreachable" holds only when the descendant is
  * reachable solely through the failing node.* A back-edge is precisely a
  * descendant reachable from outside it. And circularity does not save it —
@@ -93,9 +104,17 @@ export const REDACTION_CENSOR = '[REDACTED]';
  * `contexts`, `contexts.trace.data`, `contexts.flags`, `extra` and
  * `spans[].data`. **`request`, `tags` and
  * `exception.values[].stacktrace.frames[].vars` are depth-limited NOWHERE** —
- * not before this hook, not after it. `LocalVariablesAsync` is on this
- * application's integration allowlist, so those `vars` are populated in
- * practice, and `request.data` is a request body.
+ * not before this hook, not after it.
+ *
+ * **RE-DERIVED FOR `apps/api` RATHER THAN CARRIED OVER**, because the browser's
+ * answer is not evidence about the server's: the whole workspace resolves ONE
+ * physical `@sentry/core@10.70.0`
+ * (`node_modules/.pnpm/@sentry+core@10.70.0`), so `@sentry/node` and
+ * `@sentry/nextjs` run the same `normalizeEvent` and the same regions are
+ * uncovered on both. The exposure is larger on the server, not smaller:
+ * `RequestData` populates `request` from real middleware, and
+ * `LocalVariablesAsync` — on `apps/api`'s allowlist as well as the browser's —
+ * populates `frames[].vars`.
  *
  * **12, AND THE COST OF THE NUMBER IS DESTRUCTION RATHER THAN EXPOSURE.** Past
  * the cap the subtree becomes the censor, so everything below it is gone — not
@@ -106,9 +125,9 @@ export const REDACTION_CENSOR = '[REDACTED]';
  * holding a local variable sits at **depth 8** — `event`(0) `exception`(1)
  * `values`(2) `values[0]`(3) `stacktrace`(4) `frames`(5) `frames[0]`(6)
  * `vars`(7) `vars.local`(8) — so a frame's locals get four levels of their own
- * structure and a request body gets ten. `test/sentry-redaction.test.ts` pins
- * the boundary in both directions, so raising this is a deliberate edit with a
- * red test in front of it rather than a number somebody nudges.
+ * structure and a request body gets ten. `test/sentry-event.test.ts` pins the
+ * boundary in both directions, so raising this is a deliberate edit with a red
+ * test in front of it rather than a number somebody nudges.
  */
 const MAX_DEPTH = 12;
 
@@ -156,7 +175,7 @@ export const BREADTH_MARKER = '[MaxProperties ~]';
  * what `Object.keys` actually returns, so copying it is O(present) and the copy
  * is the same size as the input — there is nothing to amplify, and capping would
  * drop real data for no safety reason. An array's `length` is a NUMBER SOMEBODY
- * SET. `test/sentry-redaction.test.ts` pins the object case so the code and this
+ * SET. `test/sentry-event.test.ts` pins the object case so the code and this
  * paragraph cannot drift apart again, and the uncovered-cells list names it.
  *
  * **This is the one place the copy deliberately diverges from
@@ -177,9 +196,9 @@ type Zone = 'none' | 'stacktrace' | 'frames' | 'frame';
  * `filename` is on the shared list — file names are customer intellectual
  * property — and inside a STACK FRAME it is not a file name at all. It is the
  * path of a JavaScript bundle or of our own source, and censoring it takes
- * Sentry's `culprit` with it, which is the very field this module's `beforeSend`
- * doc offers as the compensation for censoring `url`. Measured: every frame's
- * path became `[REDACTED]` and so did the culprit.
+ * Sentry's `culprit` with it, which is the very field `redactSentryEvent`'s doc
+ * offers as the compensation for censoring `url`. Measured: every frame's path
+ * became `[REDACTED]` and so did the culprit.
  *
  * So the exemption is POSITIONAL, and deliberately not a change to the shared
  * list — which is not negotiable, and would be wrong to narrow for every sink
@@ -191,7 +210,7 @@ type Zone = 'none' | 'stacktrace' | 'frames' | 'frame';
  * rather than hidden: a customer payload that itself nests
  * `stacktrace.frames[]` and puts `lineno` beside `filename` would be exempted
  * too. That takes four of Sentry's own key names in the right order in the
- * customer's own data, and `test/sentry-redaction.test.ts` asserts a bare
+ * customer's own data, and `test/sentry-event.test.ts` asserts a bare
  * `{ filename }` — with no frame marker, and outside the zone — is still
  * censored.
  */
@@ -407,12 +426,12 @@ function cleanValue(
  * a PRESIGNED S3 URL whose `X-Amz-Signature` is a bearer credential for the
  * object. That single field is why `url` is on the shared list in its bare form.
  *
- * The cost is stated rather than discovered: `event.request.url` — the page the
- * error happened on — is also called `url`, so it is censored too. That is the
- * same trade `packages/contracts/src/redaction.ts` describes for `req.url` under
- * Pino, and the answer is the same one: the identity of the page survives under
- * a name that is not `url` — Sentry's `transaction`, and the `culprit` derived
- * from the stack frames, which is why `FRAME_PATH_KEY` above exists.
+ * The cost is stated rather than discovered: `event.request.url` — the page or
+ * route the error happened on — is also called `url`, so it is censored too.
+ * That is the same trade `redaction.ts` describes for `req.url` under Pino, and
+ * the answer is the same one: the identity of the page survives under a name
+ * that is not `url` — Sentry's `transaction`, and the `culprit` derived from the
+ * stack frames, which is why `FRAME_PATH_KEY` above exists.
  *
  * **Returns a COPY. The event handed in is not modified**, which is asserted
  * rather than assumed — it is the property that makes every hostile value shape
@@ -423,10 +442,11 @@ function cleanValue(
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * This is not defensive habit and it is not about tidiness. When `beforeSend`
- * throws, `@sentry/core` (`client.js:590-593`) captures the throw as an
- * **internal** event carrying `data.__sentry__ = true`, and that flag
- * SHORT-CIRCUITS `processBeforeSend` — so the replacement event goes out with
- * the whole scope attached and no redaction at all. Measured on the wire:
+ * throws, `@sentry/core` captures the throw as an **internal** event carrying
+ * `data.__sentry__ = true` (`client.js:635-652`), and `_processEvent` returns
+ * that event straight past `processBeforeSend` on the strength of the flag
+ * (`client.js:591-594`) — so the replacement goes out with the whole scope
+ * attached and no redaction at all. Measured on the wire:
  *
  * ```
  * "extra":{"password":"hunter2"},"tags":{"authorization":"Bearer TOPSECRET"},
@@ -437,19 +457,27 @@ function cleanValue(
  * The presigned URL this module exists to stop ships unredacted, AND the real
  * event is dropped. One throw turns the control inside out.
  *
+ * **Verified in `@sentry/node`'s own resolution rather than assumed from the
+ * browser's**: the whole workspace resolves ONE physical `@sentry/core@10.70.0`,
+ * so the two clients run this identical code path. Symmetry is not assumed in
+ * the other direction either — `apps/api`'s Pino sink has NO analogue of this
+ * short-circuit, which is why its own `logger.ts` carries a separate guard.
+ *
  * Every known thrower is contained at its own node — a revoked `Proxy` reaching
  * `Array.isArray`, a throwing `ownKeys` trap, a throwing getter, a throwing
  * `toJSON` — so this catch has no reachable trigger today. That is exactly why
- * it is here and why `test/sentry-redaction.test.ts` reaches it by making the
- * shared matcher throw: "this function never throws" is an argument, and this
+ * it is here and why `test/sentry-event.test.ts` reaches it by making
+ * `isRedactedKey` throw: "this function never throws" is an argument, and this
  * repository's rule is that the difference between an argument and a control is
- * a fixture asserting rejection. The sibling sink in `apps/api` was found with
- * the same class in the same week — a throwing `stack` getter escaped
- * `logger.info` and emitted zero lines — so fail-closed belongs at the boundary
- * of the walk rather than in reasoning about its inside.
+ * a fixture asserting rejection.
  *
  * `null` is Sentry's "do not send". Losing one report is the correct trade
  * against sending an unredacted one.
+ *
+ * **Generic over the event, so no Sentry type reaches this package.** Each app
+ * passes its own SDK's `ErrorEvent`; the walk needs nothing from the type beyond
+ * "it is an object", which is what `packages/contracts` importing only `zod`
+ * requires.
  */
 export function redactSentryEvent<TEvent>(event: TEvent): TEvent | null {
   try {

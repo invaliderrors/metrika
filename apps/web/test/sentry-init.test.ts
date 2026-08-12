@@ -51,7 +51,7 @@ async function shared(): Promise<{
   keepAllowedIntegrations: unknown;
 }> {
   const [redaction, sentryOptions] = await Promise.all([
-    import('../src/lib/telemetry/redaction.js'),
+    import('@metrika/contracts'),
     import('../src/lib/telemetry/sentry.js'),
   ]);
   return {

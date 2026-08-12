@@ -13,4 +13,5 @@ export * from './ids.js';
 export * from './money.js';
 export * from './redaction.js';
 export * from './result.js';
+export * from './sentry-event.js';
 export * from './units.js';
