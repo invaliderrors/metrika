@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { redactionCorpus } from '@metrika/contracts';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { REDACTION_CENSOR, redactSentryEvent } from '../src/lib/telemetry/redaction.js';
 import { ALLOWED_INTEGRATION_NAMES, keepAllowedIntegrations } from '../src/lib/telemetry/sentry.js';
@@ -32,12 +32,15 @@ function cleaned<TEvent extends object>(event: TEvent): TEvent {
  * `envelope.js:56-61` catches that throw and re-serialises through `normalize()`,
  * which writes `[Circular ~]` and KEEPS every other value.
  *
- * ANCESTORS ONLY, and that is the load-bearing detail. Cutting on every object
- * seen — the obvious `WeakSet` — would also cut a repeated NON-cyclic node, and
- * a secret sitting in an aliased subtree would vanish from the string this
- * fixture greps. The assertion would then pass because the fixture stopped
- * looking, which is the failure mode this file has been paying for all round.
- * `normalize()` unmemoises on the way out for the same reason.
+ * ANCESTORS ONLY, and the reason is fidelity rather than safety — the first
+ * version of this comment claimed otherwise and was wrong. A `WeakSet` would
+ * collect a shared node's strings on its FIRST visit and skip it afterwards, so
+ * a secret in an aliased non-cyclic subtree would still be in the string this
+ * fixture greps; the assertion would not have been weakened. What ancestors-only
+ * buys is that this helper reproduces what Sentry actually does: `normalize()`
+ * builds its memo with `memoBuilder` and UNMEMOISES on the way out, so it cuts
+ * true cycles and re-emits everything else. A fixture that models the transport
+ * differently from the transport is a fixture answering a question nobody asked.
  */
 function wireStrings(value: unknown, ancestors: Set<object>, out: string[]): void {
   if (typeof value === 'string') {
@@ -821,8 +824,163 @@ describe('a stack frame path', () => {
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
+ * A THROW ESCAPING THE WALK IS A FULL-SCOPE PLAINTEXT LEAK
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * The worst outcome this module has, and it is not "the event is lost". When
+ * `beforeSend` throws, `@sentry/core` (`client.js:590-593`) captures the throw
+ * as an INTERNAL event carrying `data.__sentry__ = true`, and that flag
+ * short-circuits `processBeforeSend` — so a replacement event goes out with the
+ * whole scope attached and nothing redacted at all: `extra`, `tags`, `user`, and
+ * the fetch breadcrumb carrying the presigned URL this module exists to stop.
+ * The real event is dropped as well. One throw turns the control inside out.
+ *
+ * So "this function never throws" has to be a control rather than an argument,
+ * which in this repository means a fixture that reaches the `catch`.
+ */
+describe('a throw inside the walk', () => {
+  it('yields null rather than escaping into Sentry', async () => {
+    vi.resetModules();
+    vi.doMock('@metrika/contracts', () => ({
+      isRedactedKey: () => {
+        throw new Error('matcher exploded');
+      },
+      redactionCorpus: () => [],
+    }));
+
+    const fragile = await import('../src/lib/telemetry/redaction.js');
+    const event = { extra: { password: 'hunter2' } };
+
+    expect(() => fragile.redactSentryEvent(event)).not.toThrow();
+    expect(fragile.redactSentryEvent(event)).toBeNull();
+
+    vi.doUnmock('@metrika/contracts');
+    vi.resetModules();
+  });
+
+  /**
+   * The two throwers review found live and unguarded, each contained at its own
+   * node so one hostile value costs its subtree rather than the report.
+   */
+  it('contains a revoked Proxy, which makes Array.isArray itself throw', () => {
+    const revocable = Proxy.revocable({ password: SECRET }, {});
+    revocable.revoke();
+
+    const event = { request: { data: revocable.proxy, other: { password: SECRET } } };
+    const walked = cleaned(event);
+    const request = walked.request as Record<string, unknown>;
+
+    expect(request['data']).toBe(REDACTION_CENSOR);
+    expect((request['other'] as Record<string, unknown>)['password']).toBe(REDACTION_CENSOR);
+  });
+
+  it('survives a graph whose own __proto__ properties are cyclic', () => {
+    const first: Record<string, unknown> = { name: 'first' };
+    const second: Record<string, unknown> = { name: 'second' };
+    const shape = { enumerable: true, writable: true, configurable: true };
+    Object.defineProperty(first, '__proto__', { ...shape, value: second });
+    Object.defineProperty(second, '__proto__', { ...shape, value: first });
+
+    expect(() => cleaned({ request: { data: first } })).not.toThrow();
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `__proto__` IS A LYING SETTER, WHICH IS THE CLASS `write()` WAS
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * `Object.prototype.__proto__` is an accessor, so `output[key] = value` for that
+ * one key name sets the prototype and stores nothing. Not a leak — the field is
+ * silently DESTROYED — but "there is no such thing as a node that cannot be
+ * written" was false for one key name, which is the same shape as the `write()`
+ * that reported successes it had not achieved.
+ */
+describe('an own __proto__ data property', () => {
+  function parsed(): unknown {
+    // `JSON.parse` is how one really arrives — from a request body — and it is
+    // the only literal-looking way to create an own `__proto__` property.
+    return JSON.parse('{"__proto__":{"modelId":"mv_1","password":"hunter2"},"keep":"yes"}');
+  }
+
+  it('survives as a property instead of becoming a prototype', () => {
+    const walked = cleaned({ request: { data: parsed() } });
+    const data = (walked.request as Record<string, unknown>)['data'] as object;
+
+    expect(Object.keys(data)).toContain('__proto__');
+    expect(Object.getPrototypeOf(data)).toBe(Object.prototype);
+    expect((data as Record<string, unknown>)['keep']).toBe('yes');
+  });
+
+  it('is walked like any other value, so what is inside it is still redacted', () => {
+    const walked = cleaned({ request: { data: parsed() } });
+    const data = (walked.request as Record<string, unknown>)['data'] as object;
+    const inherited = Object.getOwnPropertyDescriptor(data, '__proto__')?.value as Record<
+      string,
+      unknown
+    >;
+
+    expect(inherited['modelId']).toBe('mv_1');
+    expect(inherited['password']).toBe(REDACTION_CENSOR);
+    expect(onTheWire(walked)).not.toContain('hunter2');
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ARRAY BREADTH — THE ONE PLACE THE COPY DIVERGES FROM `JSON.stringify`
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * The copy is dense, because `JSON.stringify` emits a `null` per hole. That also
+ * means a declared length materialises: `a.length = 5_000_000` on an array with
+ * no elements produced five million entries inside `beforeSend`, measured at
+ * 130 ms on an error path.
+ *
+ * `MAX_BREADTH` is 1000 — `normalizeMaxBreadth`'s default, which Sentry already
+ * applies to `extra`, `contexts` and `breadcrumbs[].data` before this hook runs,
+ * so the three regions it protects nowhere now get the same guarantee. Both
+ * sides of the boundary are pinned, and the truncation is VISIBLE on the wire
+ * rather than silent.
+ */
+describe('array breadth', () => {
+  function dataArray(walked: object): unknown[] {
+    return (walked as { request: { data: unknown[] } }).request.data;
+  }
+
+  it('keeps an array exactly at the cap whole', () => {
+    const exact = Array.from({ length: 1000 }, (_, index) => `v${String(index)}`);
+    const walked = dataArray(cleaned({ request: { data: exact } }));
+
+    expect(walked.length).toBe(1000);
+    expect(walked[999]).toBe('v999');
+  });
+
+  it('truncates one past the cap, and says so on the wire', () => {
+    const long = Array.from({ length: 1001 }, (_, index) => `v${String(index)}`);
+    const walked = dataArray(cleaned({ request: { data: long } }));
+
+    expect(walked.length).toBe(1001);
+    expect(walked[999]).toBe('v999');
+    expect(walked[1000]).toBe(REDACTION_CENSOR);
+  });
+
+  it('does not materialise a declared-but-empty length', () => {
+    const sparse: unknown[] = [];
+    sparse.length = 5_000_000;
+
+    expect(dataArray(cleaned({ request: { data: sparse } })).length).toBe(1001);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
  * CELLS DELIBERATELY NOT COVERED, AND WHY
  * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * This list is load-bearing precisely because it is where a reader looks for
+ * what was NOT done, so it is kept complete and each entry says what would have
+ * to change for the cell to matter. Review found the previous version both
+ * incomplete and wrong in one claim; the correction is marked.
  *
  *  - **Symbol keys, non-enumerable properties and inherited properties.** The
  *    walk does not visit them and does not copy them, and `JSON.stringify` never
@@ -833,11 +991,30 @@ describe('a stack frame path', () => {
  *    covered in `request` only. The cap is region-independent by construction —
  *    it is a counter on the recursion, with no knowledge of where it is — so the
  *    other four cells would be asserting the same line of code four more times.
- *  - **The `Proxy` `getOwnPropertyDescriptor` and `has` traps.** Only `ownKeys`
- *    and `get` are on the walk's path; the others are never consulted.
  *  - **Depth × back-edge in `frames[].vars`.** Covered in `request`, for the same
  *    reason as the cap boundary: neither the memo nor the depth counter can see
  *    the region.
+ *  - **`Proxy` traps other than `get`, `ownKeys` and
+ *    `getOwnPropertyDescriptor`.** CORRECTED: the previous version of this list
+ *    claimed `getOwnPropertyDescriptor` is never consulted, and that is FALSE —
+ *    `Object.keys` calls it for every own key, to decide enumerability. It is on
+ *    the walk's path, it is inside the `try` that wraps `Object.keys`, and a
+ *    throwing one is covered by the revoked-`Proxy` case, which revokes every
+ *    trap at once. `has`, `deleteProperty`, `defineProperty` and `apply` are not
+ *    reached: the walk never tests membership, never deletes, never defines on
+ *    the INPUT, and never calls a function on it other than `toJSON`.
+ *  - **`__proto__` at the cap, and `__proto__` crossed with aliasing.** The key
+ *    name is handled by `define()`, which is a property of the OUTPUT and
+ *    independent of both the depth counter and the memo; the direct cases below
+ *    cover the mechanism.
+ *  - **Array breadth crossed with anything.** `MAX_BREADTH` truncates before any
+ *    element is walked, so the elements past it are never reached by depth,
+ *    aliasing or hostility. The boundary itself is pinned on both sides.
+ *  - **A throw from a place that is not the shared matcher.** The boundary
+ *    `try` in `redactSentryEvent` is reached through `isRedactedKey` because
+ *    that is the one call the walk makes outside its own guards. Every other
+ *    thrower is contained at its node and asserted there; a second route to the
+ *    same `catch` would assert the same line twice.
  */
 
 /**
