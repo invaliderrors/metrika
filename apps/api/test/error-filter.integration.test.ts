@@ -35,6 +35,7 @@ import { DomainError } from '../src/shared/errors/domain-error.js';
 import { DomainExceptionFilter } from '../src/shared/errors/domain-exception.filter.js';
 import { DOMAIN_ERROR_RESPONSE } from '../src/shared/errors/error-mapping.js';
 import { RequestContextModule } from '../src/shared/request-context/request-context.module.js';
+import { captureLogger, type CapturedLog } from './log-capture.js';
 
 const DSN = 'DB_DSN=postgres://user:PASSWORD@host/db';
 const POD = 'upstream slicer pod slicer-7f2 unreachable';
@@ -91,12 +92,20 @@ class BoomModule {}
 
 let app: NestFastifyApplication;
 let baseUrl: string;
+/**
+ * The REAL sink, into memory. `logger: false` above silences Nest's own output
+ * but says nothing about this filter's, which is now written through
+ * `createLogger` — so the suite that already drives a DSN over real HTTP can
+ * assert what reaches the log as well as what reaches the client.
+ */
+let log: CapturedLog;
 
 beforeAll(async () => {
   app = await NestFactory.create<NestFastifyApplication>(BoomModule, new FastifyAdapter(), {
     logger: false,
   });
-  app.useGlobalFilters(new DomainExceptionFilter());
+  log = captureLogger();
+  app.useGlobalFilters(new DomainExceptionFilter(log.logger));
   await app.listen({ port: 0, host: '127.0.0.1' });
   baseUrl = await app.getUrl();
 });
@@ -199,11 +208,32 @@ describe('DomainExceptionFilter', () => {
     expect((JSON.parse(raw) as ErrorBody).error.code).toBe('INTERNAL_ERROR');
   });
 
+  /**
+   * The same request, from the LOG's side — the half that was still open until
+   * Plan 0C Task 2. Keeping the DSN out of the response was Plan 0B-1's fix,
+   * and its own comment recorded that the filter still wrote the exception's
+   * stack, which begins with its message, to stdout. This asserts the whole
+   * round trip: over real HTTP, through the real filter, into the real sink.
+   */
+  it('and writes no part of it to the log either', async () => {
+    await fetch(`${baseUrl}/boom/http-500`);
+
+    expect(log.raw()).not.toContain('PASSWORD');
+    expect(log.raw()).not.toContain('postgres://');
+    expect(log.raw()).not.toContain('DB_DSN');
+    // Not merely quiet: the line is there, and it names the throw site.
+    const frames = log
+      .lines()
+      .flatMap((line) => (line['err'] as { frames?: string[] } | undefined)?.frames ?? []);
+    expect(frames.length).toBeGreaterThan(0);
+  });
+
   it('treats a terminus-shaped 503 the same way, naming no internal host', async () => {
     const response = await fetch(`${baseUrl}/boom/http-503`);
     const raw = await response.text();
     expect(response.status).toBe(500);
     expect(raw).not.toContain('slicer-7f2');
+    expect(log.raw()).not.toContain('slicer-7f2');
     expect((JSON.parse(raw) as ErrorBody).error.code).toBe('INTERNAL_ERROR');
   });
 

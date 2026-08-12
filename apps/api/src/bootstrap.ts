@@ -2,6 +2,8 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module.js';
+import { EnvService } from './config/env.service.js';
+import { createLogger } from './infrastructure/telemetry/logger.js';
 import { buildOpenApiDocument } from './openapi/build-document.js';
 import { handleClientError } from './shared/errors/client-error.handler.js';
 import { DomainExceptionFilter } from './shared/errors/domain-exception.filter.js';
@@ -35,7 +37,19 @@ export async function createApiApp(): Promise<NestFastifyApplication> {
   });
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter);
   app.setGlobalPrefix(API_PREFIX, { exclude: ['health/live', 'health/ready', 'health/deep'] });
-  app.useGlobalFilters(new DomainExceptionFilter());
+
+  // The log sink, built from validated configuration and handed to the one
+  // thing that writes to it. `app.get(EnvService)` rather than `loadEnv()`:
+  // configuration is parsed exactly once, in ConfigModule's factory, so a
+  // second parse here would be a second source of truth for LOG_LEVEL.
+  //
+  // NOT `app.useLogger(...)`. That needs a Nest `LoggerService` adapter, and
+  // ADR-0030 measured a hand-written raw-pino one silently DISCARDING the cause
+  // this filter exists to record. The `{ err }` call shape the filter uses is
+  // safe under either adapter, so whoever adopts `nestjs-pino` inherits a
+  // reversible decision rather than a prerequisite one. Nest's own boot output
+  // still goes through ConsoleLogger until then.
+  app.useGlobalFilters(new DomainExceptionFilter(createLogger(app.get(EnvService).values)));
 
   // The served document and the committed apps/api/openapi/openapi.json come
   // out of the SAME function, so a running server cannot describe itself
