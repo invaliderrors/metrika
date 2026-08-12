@@ -352,6 +352,20 @@ WEB_PORT=3000
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 NEXT_PUBLIC_DEFAULT_LOCALE=es-CO
 
+# --- Telemetry ---
+# All four are read and all four default to OFF, which is the point: an empty
+# OTLP endpoint constructs no exporter at all, and an empty SENTRY_DSN builds a
+# Sentry client with ZERO integrations. Correlation does not depend on either —
+# `requestId`, `traceId` and `spanId` come from the live trace context, so they
+# are on every log line whether or not anything is exported.
+SENTRY_DSN=
+OTLP_TRACES_ENDPOINT=
+TRACES_SAMPLE_RATE=1
+NEXT_PUBLIC_SENTRY_DSN=
+
+# --- Workers --- (METRIKA_WORKER_*; the OTLP one is commented out in the file)
+# METRIKA_WORKER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+
 # Present in docker compose, wired up in later plans
 REDIS_URL=redis://localhost:6379
 S3_ENDPOINT=http://localhost:9000
@@ -359,5 +373,10 @@ S3_BUCKET=metrika-local
 S3_FORCE_PATH_STYLE=true
 SMTP_URL=smtp://localhost:1025
 ```
+
+**Leave `SENTRY_DSN` empty for `apps/api`.** That client has no `beforeSend`
+today, so it is the one sink in the repository with no redaction in front of it —
+see [OBSERVABILITY.md](./OBSERVABILITY.md#the-sinks-counted--there-are-four-and-one-of-them-has-no-control).
+An empty DSN is what stands in for the control until one exists.
 
 Configuration is read in exactly two files — `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts`, both of which now exist. Each is a Zod schema parsed at startup. A missing or malformed value crashes the process immediately with a readable list of what is wrong — never a mysterious `undefined` three layers into a request. A lint rule forbids `process.env` everywhere else; `apps/web/playwright.config.ts` carries the single narrow exemption, documented in the file and in `apps/web/eslint.config.js`, because a Playwright config has to load with no environment at all.
