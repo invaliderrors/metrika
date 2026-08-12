@@ -75,12 +75,19 @@ exported in full — while a CLEARED flag (`-00`) reads as no decision at all an
 falls through to the rate. **On Sentry's own `sentry-trace` header the caller
 decides outright, in both directions, and overrides `traceparent` either way**:
 measured, `sentry-trace: …-0` exports zero spans at a rate of `1` and `…-1`
-exports in full at a rate of `0`. That path is live — `apps/web` ships
-`@sentry/nextjs`, so a browser's client-side sample rate arrives on that header
-and silently becomes this API's, including zero.
+exports in full at a rate of `0`. That path is open to any caller — nothing in
+the API restricts who may send `sentry-trace`, and whoever does decides this
+API's sampling for that trace in both directions. It is **not** our own browser
+today: `apps/web` ships `@sentry/nextjs`, but its integration allowlist drops
+`BrowserTracing` and no other browser integration attaches the header —
+measured, a `fetch` from the shipped client configuration carries neither
+`sentry-trace` nor `baggage`, while the same `fetch` under the SDK's defaults
+carries both.
 [ADR-0034](./adr/0034-sampling-is-a-floor-not-a-ceiling.md) has the W3C half,
 [ADR-0035](./adr/0035-the-sampling-label-is-propagator-specific.md) the Sentry
-half and why they differ.
+half and why they differ, and
+[ADR-0036](./adr/0036-our-browser-does-not-send-sentry-trace.md) is the
+positive-control measurement behind the paragraph above.
 
 **Two sampling behaviours are open and deliberately not worked around.** A
 conformant sampled caller is dropped: `traceparent: …-03` — sampled, plus an
@@ -88,12 +95,15 @@ unknown future flag bit — gives 8 spans at rate `1` and **0 at rate `0`**,
 because `getSamplingDecision` tests `traceFlags === TraceFlags.SAMPLED` strictly
 while OTel parses `03` to `3`, and W3C requires unknown bits to be ignored. That
 is a conformance gap in `@sentry/core`, and a local fix would put a second,
-divergent sampling rule in the one place this stack has to agree with itself. The
-second is latent rather than active: **`apps/web`'s Sentry sample rate can
-silently govern this API's server tracing, including to zero**, by the
-`sentry-trace` mechanism above. Nothing in Phase 0C sets `tracesSampleRate` in
-`apps/web`, and the fix when something does is a deliberate `tracesSampler`,
-which is not this phase's.
+divergent sampling rule in the one place this stack has to agree with itself.
+
+The second is that **any caller sending `sentry-trace` decides this API's
+sampling for that trace**, in both directions and over `traceparent`. An earlier
+revision of this section named our own browser as the live route; ADR-0036
+measured that and it is false — the shipped `apps/web` configuration attaches
+neither `sentry-trace` nor `baggage`. What remains is the general case, which is
+a property of accepting the header from anyone, and the answer when it matters is
+a deliberate `tracesSampler` rather than a rate. Not this phase's.
 
 ### What is wired, and what is named here but not instrumented
 
@@ -134,7 +144,7 @@ Structured JSON everywhere. Pino (Node), structlog (Python). Never `console.log`
 names_, not of Pino paths: `pnpm contracts:emit` carries it into
 `metrika_core.contracts` as a `StrEnum`, so the Python side reads the same list
 as generated code and CI fails on a diff. `isRedactedKey` is the decision each
-sink makes about a key it has reached, and all three call it.
+sink makes about a key it has reached, and all four call it.
 
 What differs per sink is TRAVERSAL, and only traversal — Pino needs a path per
 name (`password` and `*.password` are two rules), structlog walks a flat event
@@ -142,64 +152,103 @@ dict, Sentry's `beforeSend` walks an arbitrary object graph. `redaction-corpus.j
 is emitted from the rule and asserted by every sink, so a change to one without
 the others goes red.
 
-#### The sinks, counted — there are FOUR, and one of them has no control
+#### The sinks, counted — there are FOUR, and all four are controlled
 
-This document, `packages/contracts/src/redaction.ts`, `metrika_core.logging` and
-three ADRs all say "three sinks". Counted against the tree there are four, and
-the fourth is the one with nothing in front of it:
+"Three sinks" is the phrase this document and several modules grew up with, and
+counted against the tree it is wrong: `apps/api` runs **two**, a Pino logger and
+a Sentry client, and for most of Plan 0C the second had nothing in front of it.
+It does now.
 
-| Sink                   | Where                                                               | Redaction | Graded by                                                                     |
-| ---------------------- | ------------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------- |
-| Pino                   | `apps/api/src/infrastructure/telemetry/{redaction,logger}.ts`       | yes       | 956 corpus rows × six binding shapes, `apps/api/test/redaction.test.ts`       |
-| structlog              | `apps/workers/…/metrika_core/logging.py`                            | yes       | the same 956 rows through the real pipeline, `tests/test_redaction_corpus.py` |
-| Sentry, `apps/web`     | `apps/web/src/lib/telemetry/redaction.ts`, both `Sentry.init` calls | yes       | the same 956 rows through the walk, `apps/web/test/sentry-redaction.test.ts`  |
-| **Sentry, `apps/api`** | `apps/api/src/infrastructure/telemetry/tracing.ts` `Sentry.init(…)` | **none**  | **nothing**                                                                   |
+| Sink               | Where                                                              | Redaction | Graded by                                                                          |
+| ------------------ | ------------------------------------------------------------------ | --------- | ---------------------------------------------------------------------------------- |
+| Pino               | `apps/api/src/infrastructure/telemetry/{redaction,logger}.ts`      | yes       | 956 corpus rows × six binding shapes, `apps/api/test/redaction.test.ts`            |
+| structlog          | `apps/workers/…/metrika_core/logging.py`                           | yes       | the same 956 rows through the real pipeline, `tests/test_redaction_corpus.py`      |
+| Sentry, `apps/web` | `packages/contracts/src/sentry-event.ts`, both `Sentry.init` calls | yes       | the same 956 rows through the walk, `packages/contracts/test/sentry-event.test.ts` |
+| Sentry, `apps/api` | the same module, `tracing.ts`'s `beforeSend: redactSentryEvent`    | yes       | `apps/api/test/sentry-redaction.test.ts`, against a real DSN                       |
 
-**MEASURED**, `@sentry/node@10.70.0`, at the exact option set `tracing.ts` ships
-(`defaultIntegrations: false` plus the fifteen-name allowlist, a real DSN, a
-capturing transport): 15 integrations constructed, `beforeSend` **undefined**, and
-one envelope carrying, verbatim —
+**One traversal, in one module, for both Sentry clients.** The walk was
+`apps/web`'s and now lives in `packages/contracts/src/sentry-event.ts` (558
+lines), so wiring the second client added an import rather than a second copy —
+which is the outcome the shared-rule argument demands, and the reason it was
+worth doing properly rather than quickly.
 
-- the exception message, so `new Error('DB_DSN=postgres://user:PASSWORD@host/db')`
-  ships the password. **This is the Plan 0B-1 carry-forward this plan exists to
-  close, reopened against an external service**: Task 2 closed it for the log
-  sink, and the Sentry sink Task 3 wired sends the same string;
-- an `extra` carrying a presigned URL, `X-Amz-Signature` included;
-- a `tag` carrying `Authorization: Bearer …`;
-- a `context` carrying `originalFilename`.
+Two things that walk does which no key-name list could:
 
-`RequestData`, `ContextLines` and `LocalVariablesAsync` are all on the kept list,
-so those are the shapes a real event acquires without any call site asking for
-them. Nothing in ADR-0029–0034 names this: obligation 7 covers Pino's paths and
-serialiser, and ADR-0029's own limits paragraph says only that the spike never
-measured `beforeSend` because it used a stub transport.
+- **`exception.values[].value` is censored** — that field IS the exception
+  message, and the walk redacts by key NAME, so it went straight past it.
+  Measured leaving `apps/api`'s own client with `extra`, `tags` and `contexts`
+  already correctly censored. Adding `value` to the shared list was rejected as
+  far too generic a name for a list four sinks read. The decisive argument is
+  consistency inside one process: the Pino sink already censors `err.message` and
+  keeps the frames, so sending the same string to Sentry would let the secret
+  leave by the other door. The cost is real and is not hidden — every Sentry
+  issue title becomes `SomeError: [REDACTED]`, and what survives is `type`,
+  `mechanism`, the full stack trace with each frame's `filename`, `culprit` and
+  `transaction`.
+- **`filename` inside a stack frame is exempted**, positionally and behind a
+  frame marker, because there it is a bundle path rather than customer data —
+  and censoring it takes `culprit` with it.
 
-It has **no fixture**, and by this repository's own rule that makes it not a
-control but an absence of one. Closing it needs a traversal, and the honest
-options are to share `apps/web`'s — which is 460 lines of measured, hostile-input
-walk that must not be re-derived by hand — or to write a second one, which is the
-drift `packages/contracts/src/redaction.ts` exists to prevent. **That is a task,
-not a line, and it is owed before `SENTRY_DSN` is populated in any deployment of
-`apps/api`.** Until it is, an empty `SENTRY_DSN` is the control.
+Verified independently against a real DSN with a capturing transport:
+`exception.values[0].value` is `[REDACTED]`, `extra`/`tags`/`contexts` are
+censored, and 4 frames with their `filename` survive.
 
-#### The reach of the three that DO have a control is not equal
+#### Where the two sinks in one process still disagree
 
-`apps/api` rebuilds the whole object graph and `apps/web` cleans an arbitrary
-event to a declared depth. **`metrika_core`'s `_redact` visits the event dict's
-own keys and stops.** MEASURED, through the real pipeline:
+One shape, and it is the same argument the message censor was built on, so it is
+worth naming rather than leaving to be rediscovered.
+
+**A thrown plain object.** `Sentry.captureException({ detail: …, modelId: … })`
+puts the object's own properties in `event.extra.__serialized__`, which the walk
+filters **by key name only** — so `detail`, not being on the list, ships
+verbatim. MEASURED, on the redacting client:
+`{ detail: 'plain object HUNTER2-CANARY' }` reached the wire in full, beside a
+correctly censored `exception.values[0].value`. Pino's `serialiseError` reduces
+the identical throw to four fields and emits no `detail` at all.
+
+So for a thrown non-`Error` the two sinks in one process still answer
+differently, which is exactly the condition `exception.values[].value` was
+censored to remove. A deserialised worker error is precisely this shape. The
+`__serialized__` position is a candidate for the same positional treatment the
+message got; it is open.
+
+#### The reach of the sinks is not equal
+
+`apps/api`'s Pino sink rebuilds the whole object graph and the Sentry walk cleans
+an arbitrary event to a declared depth. **`metrika_core`'s `_redact` visits the
+event dict's own keys and stops.** MEASURED, through the real pipeline:
 `log.info('nested', payload={'password': …})` and
 `log.info('listed', items=[{'signed_url': …}])` both go out verbatim. So "one
-list, three sinks" is true of the LIST and of the RULE, and stops being true of
+list, every sink" is true of the LIST and of the RULE, and stops being true of
 the TRAVERSAL one level down. `tests/test_redaction_corpus.py` pins it in that
 direction, so closing it starts from a red assertion; until then a Python
 caller's rule is **put the sensitive field at the top level of the event, where
 the control can see it.**
 
-A second thing that side does not do at all is render exception text:
-`log.exception()` emits `"exc_info": true` and nothing else. That is diagnostic
-loss rather than exposure — the traceback is not written down anywhere — and it
-is the mirror image of the decision `apps/api` made in `serialiseError`, where
-the frames are kept and the message is censored.
+**`exc_info` was exposure, not loss, and the earlier wording here said the
+opposite.** It is not a field name the shared list can reach, and it has four
+shapes. MEASURED through the real pipeline with
+`ValueError("connect failed DB_DSN=postgres://user:HUNTER2@host/db")`:
+
+| shape                                     | before                          | now            |
+| ----------------------------------------- | ------------------------------- | -------------- |
+| `log.exception('boom')`                   | `"exc_info": true`              | unchanged      |
+| `log.error('m', exc_info=True)`           | `"exc_info": true`              | unchanged      |
+| `log.error('m', exc_info=sys.exc_info())` | **the full repr, DSN included** | `"[REDACTED]"` |
+| `log.error('m', exc_info=<exception>)`    | **the full repr, DSN included** | `"[REDACTED]"` |
+
+`JSONRenderer` renders an unknown value with `default=repr`, so the last two put
+the message on the wire. Both are ordinary Python, neither is a corner, and the
+previous claim that this was "diagnostic loss rather than exposure — the
+traceback is not written down anywhere" was true of the first two and false of
+the other two. `_redact` now censors a non-boolean `exc_info`; a boolean is kept,
+because it carries no text and is the only signal this side emits that an
+exception was attached at all. Nothing in the repository passes `exc_info` today,
+so the change was free.
+
+What is still owed is the RENDERING. `apps/api` keeps an exception's frames and
+censors only its message; this side emits no frames in any shape. That is loss,
+and closing it means a real exception renderer here rather than a censor.
 
 **The block below is the original blueprint list, kept for the record. Do not
 copy it into a Pino configuration.** It predates `RedactedFieldName` and is

@@ -374,9 +374,14 @@ S3_FORCE_PATH_STYLE=true
 SMTP_URL=smtp://localhost:1025
 ```
 
-**Leave `SENTRY_DSN` empty for `apps/api`.** That client has no `beforeSend`
-today, so it is the one sink in the repository with no redaction in front of it —
-see [OBSERVABILITY.md](./OBSERVABILITY.md#the-sinks-counted--there-are-four-and-one-of-them-has-no-control).
-An empty DSN is what stands in for the control until one exists.
+Both `SENTRY_DSN` keys are safe to populate: each Sentry client runs the shared
+redaction walk in its `beforeSend`, so an event is cleaned before it leaves the
+process — see [OBSERVABILITY.md](./OBSERVABILITY.md#the-sinks-counted--there-are-four-and-all-four-are-controlled).
+Empty is still the default, because a local run has nothing to send events to.
+
+Note what an empty DSN costs you as a local signal, since it is not obvious:
+`@sentry/node` constructs **no integrations at all** for a client with no DSN, so
+running locally with it empty tells you nothing about how Sentry behaves — the
+integration suite runs against a local sink for exactly that reason.
 
 Configuration is read in exactly two files — `apps/api/src/config/env.ts` and `apps/web/src/config/env.ts`, both of which now exist. Each is a Zod schema parsed at startup. A missing or malformed value crashes the process immediately with a readable list of what is wrong — never a mysterious `undefined` three layers into a request. A lint rule forbids `process.env` everywhere else; `apps/web/playwright.config.ts` carries the single narrow exemption, documented in the file and in `apps/web/eslint.config.js`, because a Playwright config has to load with no environment at all.

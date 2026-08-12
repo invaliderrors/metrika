@@ -27,10 +27,15 @@ are Phases 3 and 6.
 Observability is Plan 0C's spine and not the end state:
 [`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md) §2 has the link-by-link table
 and the gap list — no metrics, no OTLP log pipeline, no Temporal search
-attributes, no `@prisma/instrumentation`, and **`apps/api`'s Sentry client has no
-`beforeSend`**, which makes it the one log/error sink of four with no redaction
-in front of it. Do not populate `SENTRY_DSN` for `apps/api` in a deployment until
-that is closed.
+attributes, no `@prisma/instrumentation`, and buffered spans lost on SIGTERM.
+
+**There are FOUR log/error sinks, not three**, and all four are controlled:
+Pino and a Sentry client in `apps/api`, structlog in `apps/workers`, and Sentry
+in `apps/web`. Both Sentry clients share one traversal
+(`packages/contracts/src/sentry-event.ts`) rather than a copy each. What is still
+open there is a thrown **plain object**, whose properties reach
+`event.extra.__serialized__` filtered by key name only, where Pino's
+`serialiseError` reduces the same throw to four fields.
 
 Read [`docs/ROADMAP.md`](./docs/ROADMAP.md) before starting work and confirm
 which phase and which sub-plan the work belongs to.

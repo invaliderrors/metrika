@@ -191,8 +191,8 @@ The corpus path was added by Plan 0C Task 6 and is not decoration.
 step named only the models directory. MEASURED: delete a row from the corpus and
 `git diff --exit-code -- apps/workers/…/contracts/` exits **0** — the gate did
 not merely pass, the corpus was outside it. It is the 956 declared verdicts that
-three redaction traversals grade themselves against, and `apps/workers` reads it
-from disk, so a stale copy is three sinks agreeing with a snapshot of a rule that
+every redaction traversal grades itself against, and `apps/workers` reads it
+from disk, so a stale copy is every sink agreeing with a snapshot of a rule that
 has moved.
 
 **There is deliberately no `workers` job, and its absence is not an omission.**
