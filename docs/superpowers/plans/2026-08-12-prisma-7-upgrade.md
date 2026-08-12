@@ -25,6 +25,8 @@
 
 `pnpm verify` exit 0 · `pnpm test:integration` exit 0 (Docker required) · both CI suppression greps at `.github/workflows/ci.yml` run **verbatim**, exit 0, re-run immediately before each commit · `pnpm --filter @metrika/api openapi:emit` and `pnpm contracts:emit` produce no diff.
 
+**One deliberate exception, at exactly one commit.** Task 2 lands the version bump, and `apps/api`'s integration suite is red between that commit and Task 3's — the lazy `$connect()` is a consequence of the bump and its fix belongs in `apps/api`, not `packages/database`. At Task 2's commit the gate is `pnpm verify` plus `packages/database`'s integration suite; `turbo run test:integration --filter=@metrika/api` is expected to fail, must be named in the commit body, and must be green again at Task 3. Nowhere else in this plan is a red gate acceptable.
+
 **`pnpm verify` is not the whole gate.** CI additionally runs two suppression greps that `verify` does not. A task in the previous plan reported exit 0 and was still CI-red on that step.
 
 ## What this plan already knows, measured
