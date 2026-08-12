@@ -84,30 +84,78 @@ redact: {
 }
 ```
 
-**`apps/api` has no logger and no `redact` configuration yet** — `grep -rn
-RedactedFieldName apps/api/src` returns nothing today, and the only mentions
-there are two "arrives later" comments in `domain-exception.filter.ts`. When it
-gets one, its paths must be **derived from `RedactedFieldName` in code**, as two
-paths per name — `name` and `*.name` — because `redact.paths` matches paths and
-neither form implies the other. Written out rather than derived, that list would
-be thirty-four entries and would go stale the first time the shared list moved;
-the point of deriving it is that it cannot.
+`apps/api`'s sink is `src/infrastructure/telemetry/{redaction,logger}.ts`, and it
+has **two traversals**, because neither reaches what the other does — MEASURED
+against `pino@10.3.1`:
 
-The _key-matching rule_ is shared too, and separately: `isRedactedKey` in
-`packages/contracts/src/redaction.ts`. What differs per sink is TRAVERSAL — Pino
-walks paths, structlog walks a flat event dict, Sentry walks an arbitrary object
-graph. The decision "does this key name a redacted field?" is one algorithm, and
-copies of it drift exactly as copies of the list would: 27 of 140 probe names
-were measured disagreeing between two of the sinks before
-`redaction-corpus.json` was emitted to hold them together.
+| shape                                   | `redact.paths` | `formatters.log` |
+| --------------------------------------- | -------------- | ---------------- |
+| `logger.info({ signedUrl }, 'm')`       | yes            | yes              |
+| `logger.child({ signedUrl }).info('m')` | **yes**        | **never called** |
+| `err.message` / `err.stack`             | **yes**        | non-enumerable   |
+| `{ signed_url }`, `{ SIGNED_URL }`      | no             | **yes**          |
+| `{ presignedUrls }`, `{ signedURLs2 }`  | no             | **yes**          |
+| four levels down                        | no             | **yes**          |
 
-One derived path has a cost worth deciding rather than discovering: `*.url`
+`REDACTION_PATHS` is **derived from `RedactedFieldName` in code**, at **three**
+depths per name — `name`, `*.name`, `*.*.name`. Not two: a Pino `*` matches
+exactly one level, and `pino-http`'s default request serialiser puts headers at
+`req.headers.authorization`, so stopping at two forms lets the single most
+important key on the list out verbatim — which is why the superseded block above
+named that path explicitly. Written out rather than derived, the list would be
+fifty-one entries and would go stale the first time the shared list moved; the
+point of deriving it is that it cannot.
+
+`formatters.log` is the second traversal, and it is where `isRedactedKey` is
+called. A Pino path is a literal string, so `signedUrl` does not imply
+`signed_url` and no derivation of seventeen names could express the 956
+spellings `redaction-corpus.json` declares; the walk matches the rule instead,
+at any depth. It rebuilds rather than censoring in place (an in-place walk was
+measured editing the CALLER's object), passes an `Error` through untouched
+(`formatters.log` runs BEFORE `serializers`, so rebuilding one destroys the
+stack frames), and rebuilds a cycle as a cycle so pino's own stringifier still
+marks it `[Circular]`.
+
+One derived path has a cost that was decided rather than discovered: `*.url`
 reaches `req.url` under `pino-http`'s default request serialiser, so every
 request line would lose its path. The answer is for `apps/api` to emit the
-request path under a name that is not `url` — not to drop `url` from the shared
-list, which would narrow a control that was widened deliberately after
-`download_url`, `s3_url` and `upload_url` were measured going through
-untouched.
+request path under a name that is not `url` — `requestPath`, asserted in
+`apps/api/test/redaction.test.ts` — not to drop `url` from the shared list,
+which would narrow a control that was widened deliberately after `download_url`,
+`s3_url` and `upload_url` were measured going through untouched.
+
+### What an operator is left with after the control fires
+
+ADR-0029 obligation 7 redacts `err.message` **and** `err.stack`, and applied
+literally that is the whole of an unhandled 500: `{"type":"Error","message":
+"[REDACTED]","stack":"[REDACTED]"}`. An `Error` happened; nothing else survives —
+barely better than the zero bytes that log line was added to prevent.
+
+A stack is `<message>` followed by its frames. **The secret is in the message;
+the frames are file paths and function names.** So `serialiseError` emits a fixed
+four-field shape — `type`, a censored `message`, a censored `stack`, and
+`frames`, the `    at …` lines with the message line filtered out (filtered, not
+`slice(1)`, because a message may itself contain newlines). Measured against the
+real `DomainExceptionFilter`: 0 frames under obligation 7 as written, the real
+throw site with the serialiser, and no leak either way. A thrown non-`Error` gets
+**no** frames — `toLoggableError` blanks the synthesised stack, because the only
+frames available point at the logger.
+
+The error's own properties are dropped rather than left to a path: `*.password`
+reaches `err.password` today and stops the day the error is nested one level
+deeper, and no allowlist can reach a free-text `err.detail`.
+
+Two shapes the sink closes that a path list alone does not: `logger.error(err)`
+with no message, where pino takes `msg` from `err.message` — a `hooks.logMethod`
+rewrap puts the Error in `err` and a fixed string in `msg`; and a string in
+`err`, which serialises as a scalar that `err.message` cannot match and which
+ADR-0030 measured leaking under both candidate adapters.
+
+What is **not** closed: free text a caller interpolates into `msg` themselves.
+Redaction is field-granular, so `paths: ['msg']` censors every log message in the
+process; removing a substring of free text needs a secret detector, which is a
+weaker control than the allowlist this section chose. The rule stands: do not put
+untrusted text in `msg`, put the cause in `err`.
 
 Two categories deserve comment:
 
