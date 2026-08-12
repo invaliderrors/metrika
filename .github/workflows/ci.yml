@@ -40,7 +40,15 @@ concurrency:
 env:
   # ── DATABASE_ADMIN_URL ────────────────────────────────────────────────────
   # LOAD-BEARING. Deleting this line breaks `verify`, `web`, `openapi` and
-  # `contracts` — all four, at the build step, before a single test runs.
+  # `integration` — all four, at the build step, before a single test runs.
+  #
+  # NOT `contracts`, which is the job you would expect to be on that list and is
+  # not: it runs no `pnpm build` at all, and `pnpm contracts:emit` shells out to
+  # `turbo run build --filter=@metrika/contracts`, which schedules
+  # `@metrika/contracts#build` and its two config-package dependencies and never
+  # reaches `@metrika/database#build`. MEASURED with `--dry=json`. The negative
+  # is recorded because an earlier draft of this comment listed `contracts` and
+  # omitted `integration` — exactly backwards.
   #
   # packages/database's `build` is `pnpm db:generate && tsc -b`, and on Prisma 7
   # `generate` resolves this variable. Not through schema.prisma — its datasource

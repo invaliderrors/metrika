@@ -40,14 +40,20 @@ afterAll(async () => {
  *
  * The previous design polled `pg_stat_activity` from a separate observer
  * client every 10 ms and kept the highest sample. It was replaced because a
- * starved observer UNDER-COUNTS, and the assertions here are equalities:
- * MEASURED, with the poll loop forcibly delayed by 250/400/700 ms, 7 runs —
- * the sampler reported `{base: 4, url: 3, opt: 3}`, i.e. it reported the URL
- * parameter as HONOURED. That is not flakiness; it is a false positive in the
- * exact shape of a genuine Prisma regression, and no one-sided bound fixes it.
- * The design below measured 10/10/3 in all 22 runs of the same comparison,
- * including 6 under 28 CPU burners at load 35 and 5 under the real root gate
- * at load 40-50.
+ * starved observer UNDER-COUNTS, and the assertions here are equalities — so a
+ * starved sampler does not merely go red, it reports the URL parameter as
+ * HONOURED. That is not flakiness; it is a false positive in the exact shape of
+ * a genuine Prisma regression, and no one-sided bound fixes it.
+ *
+ * MEASURED BY THE BRANCH REVIEW, not by this file, and recorded here as the
+ * provenance of the design rather than as something any run re-measures: a
+ * paired comparison over 22 runs, in which the sampler reported
+ * `{base: 4, url: 3, opt: 3}` under forced 250/400/700 ms poll delays (7 runs)
+ * while the pid design below reported 10/10/3 in all 22 — including 6 under 28
+ * CPU burners at load 35 and 5 under the real root gate at load 40-50. Neither
+ * synthetic load nor the real gate reproduced the false positive on its own;
+ * the mechanism had to be forced. What THIS file re-measures on every run is
+ * its own three numbers and the relationships between them, below.
  *
  * What it gives up, stated because it is a different concept and not a
  * strictly better one:
