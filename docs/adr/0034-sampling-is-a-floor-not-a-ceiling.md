@@ -1,6 +1,19 @@
 # ADR-0034 — Sampling is a floor, not a ceiling; and `dsnConfigured` never detected what it was named for
 
-**Status:** Accepted, supersedes [ADR-0033](./0033-sentry-fastify-collision-measured-with-sentry-on.md) · **Date:** 2026-08-12
+**Status:** Accepted, supersedes [ADR-0033](./0033-sentry-fastify-collision-measured-with-sentry-on.md), **corrected in part by [ADR-0035](./0035-the-sampling-label-is-propagator-specific.md)** · **Date:** 2026-08-12
+
+> **This document's headline is scoped too widely, and the body below is
+> kept as written.** Its title, its `Correction 1` heading and its closing
+> “There is no orphaned-child failure, because the API never drops a trace its
+> caller sampled” are all unqualified. They hold **only for callers that send
+> W3C trace context**. ADR-0035 measured the second propagator: an inbound
+> `sentry-trace: …-0` exports **0 spans at rate 1**, and it overrides a
+> `traceparent: …-01` on the same request — a caller-sampled trace, dropped.
+> On `sentry-trace` the caller decides in both directions and the local rate is
+> never consulted. Every measurement in this document reproduces; only the
+> scope of the label moves. ADR-0035 has the eight cells and the mechanism;
+> [ADR-0036](./0036-our-browser-does-not-send-sentry-trace.md) corrects
+> ADR-0035's own claim about which callers send that header in practice.
 
 ADR-0033's central content is **restated here unchanged and still holds**: ADR-0029
 obligation 2's severity is correct, ADR-0032 measured it with Sentry switched

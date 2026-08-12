@@ -6,7 +6,10 @@ of Phase 0 ([ROADMAP](../ROADMAP.md) row 0.11) by pinning what
 **Corrected in part by [ADR-0030](./0030-nest-logger-argument-shape.md)**, which
 replaces **obligation 8** — the three-argument `Logger.error` this document
 recommends **discards the cause** at the filter's real call site — and qualifies
-four smaller assertions. Read the two together.
+four smaller assertions, and by
+**[ADR-0031](./0031-sentry-nextjs-integration-allowlist.md)**, which replaces
+**obligation 2** — `defaultIntegrations: false` is unusable on `@sentry/nextjs`.
+Read the three together.
 
 > **On the number.** `docs/adr/README.md` ended at
 > [0028](./0028-temporal-bind-on-ip.md) and `docs/adr/` on disk ended at the
