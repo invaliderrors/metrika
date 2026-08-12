@@ -4,7 +4,11 @@ import path from 'node:path';
 import { redactionCorpus } from '@metrika/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { REDACTION_CENSOR, redactSentryEvent } from '../src/lib/telemetry/redaction.js';
+import {
+  BREADTH_MARKER,
+  REDACTION_CENSOR,
+  redactSentryEvent,
+} from '../src/lib/telemetry/redaction.js';
 import { ALLOWED_INTEGRATION_NAMES, keepAllowedIntegrations } from '../src/lib/telemetry/sentry.js';
 
 const CORPUS = redactionCorpus();
@@ -961,7 +965,7 @@ describe('array breadth', () => {
 
     expect(walked.length).toBe(1001);
     expect(walked[999]).toBe('v999');
-    expect(walked[1000]).toBe(REDACTION_CENSOR);
+    expect(walked[1000]).toBe(BREADTH_MARKER);
   });
 
   it('does not materialise a declared-but-empty length', () => {
@@ -969,6 +973,81 @@ describe('array breadth', () => {
     sparse.length = 5_000_000;
 
     expect(dataArray(cleaned({ request: { data: sparse } })).length).toBe(1001);
+  });
+
+  /**
+   * The two markers mean OPPOSITE things to an operator — "this sink removed a
+   * value" against "more elements were here and none were looked at" — so one
+   * token doing both jobs is a lie rather than an economy. Measured with the
+   * shared token: `frames[0].vars.vertices` of 2500 shipped ending `[REDACTED]`,
+   * which reads as a secret in a vertex buffer.
+   */
+  it('marks truncation with a token that does not mean redaction', () => {
+    expect(BREADTH_MARKER).not.toBe(REDACTION_CENSOR);
+    // Sentry's own, `@sentry/core/utils/normalize.js:62`, so the wire carries
+    // one vocabulary rather than two.
+    expect(BREADTH_MARKER).toBe('[MaxProperties ~]');
+  });
+
+  /**
+   * Sentry truncates first for the regions it normalises, and the walk then sees
+   * an array of 1001 whose last element is already Sentry's marker. Re-truncating
+   * must be a no-op in MEANING as well as in length — with the shared token it
+   * replaced Sentry's marker with `[REDACTED]`, turning "1500 elements dropped"
+   * into "a secret was removed".
+   */
+  it('does not relabel a truncation Sentry had already marked', () => {
+    const preNormalised = [
+      ...Array.from({ length: 1000 }, (_, index) => `v${String(index)}`),
+      BREADTH_MARKER,
+    ];
+    const walked = dataArray(cleaned({ request: { data: preNormalised } }));
+
+    expect(walked.length).toBe(1001);
+    expect(walked[1000]).toBe(BREADTH_MARKER);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * OBJECT BREADTH IS NOT CAPPED, AND THAT IS THE DECISION
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * `normalizeMaxBreadth` caps object PROPERTIES as well as array elements, and
+ * `MAX_BREADTH` lives only in the array branch — so the three regions Sentry
+ * protects nowhere are NOT brought level with the ones it does. An earlier
+ * version of the module's comment claimed they were.
+ *
+ * The asymmetry is deliberate. An array's `length` is a number somebody set, so
+ * a dense copy can manufacture five million entries the input never held; an
+ * object's key count is what `Object.keys` really returns, so the copy is the
+ * same size as the input and there is nothing to amplify. Capping it would drop
+ * real data for no safety reason.
+ *
+ * Pinned here so the code and that paragraph cannot drift apart again — if
+ * object breadth is ever capped, this test is the one that has to be changed
+ * deliberately.
+ */
+describe('object breadth', () => {
+  it('keeps every property of a wide object in an unprotected region', () => {
+    const wide: Record<string, unknown> = {};
+    for (let index = 0; index < 3000; index += 1) wide[`k${String(index)}`] = index;
+
+    const walked = cleaned({ request: { data: wide } });
+    const data = (walked.request as Record<string, unknown>)['data'] as object;
+
+    expect(Object.keys(data).length).toBe(3000);
+  });
+
+  it('still redacts by name at any width', () => {
+    const wide: Record<string, unknown> = { password: 'hunter2' };
+    for (let index = 0; index < 2000; index += 1) wide[`k${String(index)}`] = index;
+
+    const walked = cleaned({ request: { data: wide } });
+    const data = (walked.request as Record<string, unknown>)['data'] as Record<string, unknown>;
+
+    expect(data['password']).toBe(REDACTION_CENSOR);
+    expect(Object.keys(data).length).toBe(2001);
   });
 });
 
@@ -1010,6 +1089,15 @@ describe('array breadth', () => {
  *  - **Array breadth crossed with anything.** `MAX_BREADTH` truncates before any
  *    element is walked, so the elements past it are never reached by depth,
  *    aliasing or hostility. The boundary itself is pinned on both sides.
+ *  - **OBJECT breadth — not covered because it is not capped.** Sentry's
+ *    `normalizeMaxBreadth` caps properties as well as elements; this walk caps
+ *    only elements, so `request`, `tags` and `frames[].vars` keep every property
+ *    of a wide object. Deliberate: an object's key count is what `Object.keys`
+ *    really returns, so the copy is the same size as the input and there is
+ *    nothing to amplify, whereas an array's `length` is a number somebody set.
+ *    The behaviour is pinned in `describe('object breadth')` rather than left
+ *    implicit, so capping it later is a deliberate edit with a red test in front
+ *    of it.
  *  - **A throw from a place that is not the shared matcher.** The boundary
  *    `try` in `redactSentryEvent` is reached through `isRedactedKey` because
  *    that is the one call the walk makes outside its own guards. Every other
