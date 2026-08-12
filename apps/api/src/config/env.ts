@@ -21,7 +21,16 @@ export const EnvSchema = z.object({
   /**
    * Where this process sends error events. **Empty disables Sentry**, and that
    * is the local default rather than a placeholder: a developer with no Sentry
-   * project boots with the same code path a deployment runs, minus a transport.
+   * project boots without a transport.
+   *
+   * **It disables more than the transport, and that is worth knowing before
+   * concluding anything from a local run.** `@sentry/node` does not reach
+   * `_setupIntegrations()` for a client with no DSN, so with this empty the
+   * process constructs ZERO Sentry integrations — the allowlist below it is
+   * subtracted from an empty set, and the decorator collision that exits 1 with
+   * the defaults left on cannot happen. ADR-0033 records a whole ADR written from
+   * a measurement taken in that state. `test/telemetry.integration.test.ts` sets
+   * a real DSN against a local sink for exactly this reason.
    *
    * Not `z.url()`: a DSN is a URL with structure Sentry itself validates, and a
    * second, weaker statement of that rule here would reject a valid DSN shape we
@@ -50,6 +59,20 @@ export const EnvSchema = z.object({
    * `0` is not "off with the correlation intact": a dropped span still has a
    * valid trace ID, so log lines keep `traceId` and `spanId` while nothing is
    * ever exported. Set it to `0` only when that is what is wanted.
+   *
+   * **The default is `1`, and a deployment that leaves it there samples
+   * everything.** Kept, on the grounds that it is inert until somebody
+   * configures a sink — no OTLP endpoint and no DSN means nothing is sent at any
+   * rate — and that the act of configuring one is the moment to choose a rate.
+   * The trigger for making it required instead: the first deployment that sets
+   * `SENTRY_DSN` or `OTLP_TRACES_ENDPOINT` without setting this.
+   *
+   * **It does not decide what a CALLER asked for.** `SentrySampler` is
+   * parent-based only for a caller that sends Sentry's own `sentry-trace`/DSC;
+   * a `traceparent` arriving with the sampled flag cleared is joined and then
+   * re-sampled at this rate. Measured and asserted in
+   * `test/telemetry.integration.test.ts`; below `1` that cuts both ways, and a
+   * caller's sampled trace can be dropped here.
    */
   TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
 });

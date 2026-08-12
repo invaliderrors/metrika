@@ -47,11 +47,15 @@ The diagram above is the end state. Four of its six links are built and asserted
 | Activity dispatch → OTel baggage → Python worker              | half   | the API SETS `metrika.request_id` as baggage and propagates it on every outbound call; `metrika_core.telemetry` reads it and binds it to every structlog line. Nothing dispatches an activity yet |
 | API error response carries `{ error: { requestId } }`         | built  | `DomainExceptionFilter`                                                                                                                                                                           |
 
-Two things are worth knowing before writing anything that depends on this.
+Four things are worth knowing before writing anything that depends on this.
 
 **A request ID arriving is not evidence that the trace joined.** Measured on both sides: dropping baggage leaves a worker's span correctly parented and merely empties `requestId`, while dropping trace context roots the span. They are two mechanisms with two failure modes, and `apps/api/test/telemetry.integration.test.ts` asserts them apart from each other for that reason.
 
 **Nothing exports a trace unless a deployment configures one.** `OTLP_TRACES_ENDPOINT` empty means no exporter is constructed at all; the correlation fields still reach every log line, because they come from the live trace context rather than from the exporter. `pnpm infra:up` does not start a collector.
+
+**An empty `SENTRY_DSN` switches off the whole Sentry half, not just its transport.** `@sentry/node` does not construct a single integration for a client with no DSN, so a local run with it empty says nothing about Sentry's behaviour — including whether its default integrations would collide with `@fastify/otel` and stop the process booting, which is [ADR-0029](./adr/0029-observability-stack.md) obligation 2 and which [ADR-0033](./adr/0033-sentry-fastify-collision-measured-with-sentry-on.md) exists because a measurement missed. The integration suite runs the API against a local Sentry sink for that reason.
+
+**The API does not honour a caller's sampling decision.** A `traceparent` arriving with the sampled flag cleared (`-00`) is joined — same trace, correct parent — and then re-sampled at `TRACES_SAMPLE_RATE`, because `SentrySampler` is parent-based only for callers that also send Sentry's own `sentry-trace`. Below a rate of `1` this cuts both ways, and a browser's sampled trace can be dropped at this hop.
 
 ---
 

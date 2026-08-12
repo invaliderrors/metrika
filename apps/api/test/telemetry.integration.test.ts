@@ -43,6 +43,35 @@ const PARENT_TRACE_ID = 'a1a2a3a4b1b2b3b4c1c2c3c4d1d2d3d4';
 const PARENT_SPAN_ID = 'e1e2e3e4f1f2f3f4';
 const TRACEPARENT = `00-${PARENT_TRACE_ID}-${PARENT_SPAN_ID}-01`;
 
+/**
+ * A second trace, for a request to a REAL Nest route.
+ *
+ * The probe route is attached to the root Fastify instance through a
+ * diagnostics channel, so it never enters Nest's pipeline and produces no
+ * `instrumentation-nestjs-core` span at all — measured. A suite that asserted
+ * "spans from Fastify and from Nest" against it was asserting the first half and
+ * naming the second, and deleting `new NestInstrumentation()` left it green.
+ */
+const NEST_TRACE_ID = 'b1b2b3b4c1c2c3c4d1d2d3d4e1e2e3e4';
+const NEST_SPAN_ID = 'f1f2f3f4a1a2a3a4';
+const NEST_TRACEPARENT = `00-${NEST_TRACE_ID}-${NEST_SPAN_ID}-01`;
+/** The Nest route the second request hits — a real controller, under the prefix exclusion. */
+const NEST_ROUTE = '/health/live';
+
+/**
+ * A third trace, arriving with the sampled flag CLEARED.
+ *
+ * `SentrySampler` is not parent-based for a caller that sends W3C trace context
+ * without Sentry's own `sentry-trace` / DSC: it makes its own head-based decision
+ * for any span whose parent is remote. So `-00` is joined and then re-sampled,
+ * and the spans are exported anyway. That is a real property with a real cost at
+ * `TRACES_SAMPLE_RATE < 1` — see the test, which exists so the behaviour cannot
+ * change without somebody noticing.
+ */
+const UNSAMPLED_TRACE_ID = 'c1c2c3c4d1d2d3d4e1e2e3e4f1f2f3f4';
+const UNSAMPLED_SPAN_ID = 'a2a3a4a5b2b3b4b5';
+const UNSAMPLED_TRACEPARENT = `00-${UNSAMPLED_TRACE_ID}-${UNSAMPLED_SPAN_ID}-00`;
+
 /** Inside `normaliseRequestId`'s allowlist, and not its sentinel. */
 const REQUEST_ID = 'req-correlation-0001';
 const SENTINEL = 'unknown';
@@ -189,6 +218,45 @@ async function startEcho(): Promise<Echo> {
   };
 }
 
+/**
+ * A local Sentry ingest, so the child can be given a REAL DSN.
+ *
+ * Not a nicety. `@sentry/node` does not run `_setupIntegrations()` for a client
+ * with no DSN, so `SENTRY_DSN: ''` — which the first version of this suite
+ * hardcoded — leaves `client._integrations` EMPTY and every Sentry assertion in
+ * this file grading a switched-off subject. MEASURED 2×2 against `dist/main.js`,
+ * reading `Object.keys(getClient()._integrations)`:
+ *
+ * | | allowlist | allowlist removed |
+ * | --- | --- | --- |
+ * | `SENTRY_DSN=''` | exit 0, `[]` | exit 0, `[]` |
+ * | DSN set | exit 0, the 15 names | **exit 1, `FST_ERR_DEC_ALREADY_PRESENT`** |
+ *
+ * So the DSN is what makes the allowlist gradeable at all, and its absence is
+ * what made a task report the allowlist mutation green and write an ADR on it.
+ * The sink answers 200 to everything and is never read: what matters is that the
+ * DSN parses and the transport has somewhere to go, not what it sends.
+ */
+interface SentrySink {
+  readonly dsn: string;
+  readonly close: () => Promise<void>;
+}
+
+async function startSentrySink(): Promise<SentrySink> {
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{}');
+    });
+  });
+  await listen(server);
+  return {
+    dsn: `http://0123456789abcdef0123456789abcdef@127.0.0.1:${String(portOf(server))}/1`,
+    close: async (): Promise<void> => closeServer(server),
+  };
+}
+
 async function listen(server: Server): Promise<void> {
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve);
@@ -251,20 +319,36 @@ const ReadyLine = z.object({
   installed: z.array(z.string()),
   provider: z.string(),
   fields: z.array(z.string()),
+  integrations: z.array(z.string()),
+  dsnConfigured: z.boolean(),
 });
 type ReadyLine = z.infer<typeof ReadyLine>;
 
 let child: ChildProcessWithoutNullStreams | undefined;
 let receiver: Receiver;
 let echo: Echo;
+let sentry: SentrySink;
 let stdout = '';
 let stderr = '';
 let ready: ReadyLine;
 
-/** Every JSON object the child wrote to stdout. Nest's own boot output is not JSON. */
+/**
+ * Every JSON object the child wrote to stdout. Nest's own boot output is not
+ * JSON, so it is skipped by shape.
+ *
+ * **The last element of `split('\n')` is dropped unless the buffer ends in a
+ * newline**, because it is a line the child has not finished writing. Without
+ * that, a chunk boundary landing mid-line makes `JSON.parse` throw a
+ * `SyntaxError` from inside `until()`'s predicate — replacing the diagnostic
+ * this harness exists to produce with one about the harness. It is a race, so it
+ * would have shown up as a suite that fails once a fortnight.
+ */
 function jsonLines(): readonly Record<string, unknown>[] {
+  const lines = stdout.split('\n');
+  if (!stdout.endsWith('\n')) lines.pop();
+
   const parsed: Record<string, unknown>[] = [];
-  for (const line of stdout.split('\n')) {
+  for (const line of lines) {
     if (!line.startsWith('{')) continue;
     parsed.push(JSON.parse(line) as Record<string, unknown>);
   }
@@ -278,15 +362,20 @@ function probeLines(): readonly Record<string, unknown>[] {
   });
 }
 
-/** The spans of the trace the request was supposed to JOIN. */
+function spansOn(traceId: string): readonly ReceivedSpan[] {
+  return receiver.spans().filter((span) => span.traceId === traceId);
+}
+
+/** The spans of the trace the probe request was supposed to JOIN. */
 function requestSpans(): readonly ReceivedSpan[] {
-  return receiver.spans().filter((span) => span.traceId === PARENT_TRACE_ID);
+  return spansOn(PARENT_TRACE_ID);
 }
 
 beforeAll(async () => {
   const database = await startTestDatabase();
   receiver = await startOtlpReceiver();
   echo = await startEcho();
+  sentry = await startSentrySink();
   const port = await freePort();
 
   child = spawn(process.execPath, [FIXTURE, echo.url], {
@@ -298,7 +387,10 @@ beforeAll(async () => {
       LOG_LEVEL: 'info',
       DATABASE_URL: database.applicationUrl,
       HEALTH_DEEP_TOKEN: TEST_HEALTH_DEEP_TOKEN,
-      SENTRY_DSN: '',
+      // A REAL DSN, pointed at a local sink. See `startSentrySink`: with an
+      // empty one the client constructs no integrations at all and every
+      // assertion below about Sentry grades a subject that is switched off.
+      SENTRY_DSN: sentry.dsn,
       OTLP_TRACES_ENDPOINT: receiver.url,
       TRACES_SAMPLE_RATE: '1',
     },
@@ -317,7 +409,9 @@ beforeAll(async () => {
   );
   ready = ReadyLine.parse(jsonLines().find((line) => line['probe'] === 'ready'));
 
-  const response = await fetch(`http://127.0.0.1:${String(port)}${PROBE_ROUTE}`, {
+  const base = `http://127.0.0.1:${String(port)}`;
+
+  const response = await fetch(`${base}${PROBE_ROUTE}`, {
     headers: {
       'x-request-id': REQUEST_ID,
       traceparent: TRACEPARENT,
@@ -326,11 +420,24 @@ beforeAll(async () => {
   });
   expect(response.status).toBe(200);
 
+  // A REAL Nest route, on its own trace. The probe route above never enters
+  // Nest's pipeline, so this is the only request in this file that can show
+  // `instrumentation-nestjs-core` doing anything.
+  expect(
+    (await fetch(`${base}${NEST_ROUTE}`, { headers: { traceparent: NEST_TRACEPARENT } })).status,
+  ).toBe(200);
+
+  // The same route again, with the sampled flag CLEARED on the way in.
+  expect(
+    (await fetch(`${base}${NEST_ROUTE}`, { headers: { traceparent: UNSAMPLED_TRACEPARENT } }))
+      .status,
+  ).toBe(200);
+
   // `BatchSpanProcessor` exports on its own schedule, so the suite waits for the
   // spans rather than for a duration. Waiting for a DURATION is what turns "the
   // pipeline is broken" into "the machine was busy".
   await until(
-    () => requestSpans().length > 0,
+    () => requestSpans().length > 0 && spansOn(NEST_TRACE_ID).length > 0,
     30_000,
     () =>
       [
@@ -344,29 +451,41 @@ beforeAll(async () => {
         `The child reported provider=${ready.provider} installed=[${ready.installed.join(', ')}].`,
       ].join(' '),
   );
+
+  // The unsampled trace is waited for SEPARATELY and non-fatally: its absence is
+  // a legitimate outcome (it would mean the caller's `-00` was honoured), and it
+  // is asserted as a behaviour further down rather than as a precondition here.
+  await Promise.race([
+    until(
+      () => spansOn(UNSAMPLED_TRACE_ID).length > 0,
+      15_000,
+      () => 'the unsampled trace',
+    ),
+    new Promise((resolve) => setTimeout(resolve, 15_000)),
+  ]).catch(() => undefined);
 }, 180_000);
 
 afterAll(async () => {
   child?.kill('SIGKILL');
   await receiver.close();
   await echo.close();
+  await sentry.close();
   await stopDatabase();
 });
 
 describe('one request, one trace, one request id', () => {
   /**
-   * A weak assertion, kept and LABELLED as weak. ADR-0029 says Sentry's default
-   * integrations and `@fastify/otel` collide on a Fastify decorator named
-   * `opentelemetry` and exit 1 before the first request; ADR-0032 measured that
-   * they do not — Sentry registers its plugin through
-   * `fastify.register(...).after(err)` and a non-debug build discards the error.
-   * So this catches a boot failure of any kind, and is NOT a fixture for the
-   * integration allowlist. Nothing here is: mutating the allowlist away leaves
-   * this whole file green, which is stated in ADR-0032 and in the allowlist's
-   * own comment rather than hidden by a test that looks like it covers it.
+   * ADR-0029 obligation 2, and it IS the loud failure that document says it is —
+   * once the subject is switched on. Sentry's `Fastify` integration and
+   * `@fastify/otel` both `decorateRequest('opentelemetry', …)`, the second throws
+   * `FST_ERR_DEC_ALREADY_PRESENT` inside avvio, and the process exits 1 before it
+   * listens. Measured with the allowlist removed and a DSN set; measured NOT to
+   * happen with the allowlist removed and no DSN, because a client without a DSN
+   * constructs no integrations at all. ADR-0033 records the pair.
    */
-  it('boots at all, and says so with a diagnostic rather than a silence', () => {
+  it('boots at all, with Sentry actually constructed', () => {
     expect(ready.probe).toBe('ready');
+    expect(ready.dsnConfigured).toBe(true);
     expect(stderr).not.toContain('FST_ERR_DEC_ALREADY_PRESENT');
   });
 
@@ -427,10 +546,80 @@ describe('one request, one trace, one request id', () => {
     expect(withRoute.length).toBeGreaterThan(0);
   });
 
-  it('produces spans from Fastify and from Nest, not only from node:http', () => {
+  /**
+   * NAMED for what it actually covers. The probe route is attached to the ROOT
+   * Fastify instance through a diagnostics channel, so it never enters Nest's
+   * pipeline: measured, 6 spans and **zero** from `instrumentation-nestjs-core`.
+   * An earlier version of this case said "and from Nest" while asserting only
+   * these two, and deleting `new NestInstrumentation()` left it green. The Nest
+   * assertion is its own case below, against a real controller.
+   */
+  it('produces spans from Fastify and from node:http on the probe route', () => {
     const scopes = new Set(requestSpans().map((span) => span.scope));
     expect(scopes).toContain('@fastify/otel');
     expect(scopes).toContain('@opentelemetry/instrumentation-http');
+    expect(scopes).not.toContain('@opentelemetry/instrumentation-nestjs-core');
+  });
+});
+
+describe('a real Nest route, on its own trace', () => {
+  it('produces instrumentation-nestjs-core spans', () => {
+    const nest = spansOn(NEST_TRACE_ID).filter(
+      (span) => span.scope === '@opentelemetry/instrumentation-nestjs-core',
+    );
+    expect(nest.length).toBeGreaterThan(0);
+    expect(nest.map((span) => span.name)).toContain('HealthController.live');
+  });
+
+  it('joins the caller`s trace there too, with the same parent linkage', () => {
+    const server = spansOn(NEST_TRACE_ID).find((span) =>
+      span.scope.includes('instrumentation-http'),
+    );
+    expect(server?.parentSpanId).toBe(NEST_SPAN_ID);
+  });
+
+  /**
+   * The route TEMPLATE on a route that has one under a global prefix exclusion.
+   * `/health/live` is excluded from `api/v1`, and the attribute still has to be
+   * the template rather than the URL — that is what keeps the histogram
+   * `docs/OBSERVABILITY.md` §8 asks for at bounded cardinality.
+   */
+  it('carries the route template rather than the URL', () => {
+    const routes = spansOn(NEST_TRACE_ID).flatMap((span) =>
+      span.attributeKeys.includes('http.route') ? [span.name] : [],
+    );
+    expect(routes.length).toBeGreaterThan(0);
+  });
+});
+
+describe('sampling, for a caller that sends only W3C trace context', () => {
+  /**
+   * MEASURED AND DELIBERATE, and it is here because it is surprising.
+   * `SentrySampler` is not parent-based for a caller with no `sentry-trace` /
+   * DSC of its own: for any span whose parent is REMOTE it makes its own
+   * head-based decision from `tracesSampleRate`. So a `traceparent` arriving
+   * with the sampled flag CLEARED (`-00`) is joined — same trace id, correct
+   * parent — and then re-sampled to `-01` and exported.
+   *
+   * The decision is to keep it: ADR-0029 obligation 1 puts `SentrySampler` on the
+   * shared provider, and swapping in a `ParentBasedSampler` would take Sentry's
+   * DSC handling with it. The COST, stated so it is not discovered in a
+   * dashboard: at `TRACES_SAMPLE_RATE < 1` this cuts both ways — a caller's
+   * sampled trace can be dropped here, leaving whatever it calls next as
+   * orphaned children.
+   *
+   * This test asserts the current behaviour, so changing it is a red test rather
+   * than a silent change of what a browser's sampling decision means.
+   */
+  it('re-samples an unsampled parent rather than honouring the flag', () => {
+    expect(spansOn(UNSAMPLED_TRACE_ID).length).toBeGreaterThan(0);
+  });
+
+  it('still joins that trace and parents on the caller', () => {
+    const server = spansOn(UNSAMPLED_TRACE_ID).find((span) =>
+      span.scope.includes('instrumentation-http'),
+    );
+    expect(server?.parentSpanId).toBe(UNSAMPLED_SPAN_ID);
   });
 });
 
@@ -507,6 +696,50 @@ describe('Sentry and OpenTelemetry on one provider', () => {
     // `TracerProvider` is what `@opentelemetry/sdk-trace-node@2.10.0` calls its
     // class; `NodeSDK` constructs it. Pinned by name so a swap is visible.
     expect(ready.provider).toBe('TracerProvider');
+  });
+
+  /**
+   * THE ALLOWLIST'S END-TO-END FIXTURE, and the reason this suite runs the child
+   * against a real DSN. `client._integrations` is what the allowlist PRODUCED —
+   * not `getDefaultIntegrations()`, which is what it was subtracted from, and not
+   * an empty object, which is all a DSN-less client ever has.
+   *
+   * Asserted as a SET EQUALITY rather than a subset: an integration this project
+   * did not choose is exactly what the allowlist direction exists to exclude, so
+   * an extra name has to be as red as a missing one.
+   */
+  it('constructs exactly the allowlisted Sentry integrations, and nothing else', () => {
+    expect(new Set(ready.integrations)).toEqual(
+      new Set([
+        'InboundFilters',
+        'FunctionToString',
+        'LinkedErrors',
+        'RequestData',
+        'NodeSystemError',
+        'ConversationId',
+        'Console',
+        'OnUncaughtException',
+        'OnUnhandledRejection',
+        'ContextLines',
+        'LocalVariablesAsync',
+        'Context',
+        'ChildProcess',
+        'ProcessSession',
+        'Modules',
+      ]),
+    );
+  });
+
+  /**
+   * The two that must not be there, named individually. They are the ones with an
+   * OpenTelemetry counterpart installed by this bootstrap, and `Fastify` is the
+   * one whose collision exits the process — so a change that let any of the three
+   * back in should fail on a line that says which.
+   */
+  it('constructs no Sentry integration that patches a module', () => {
+    expect(ready.integrations).not.toContain('Http');
+    expect(ready.integrations).not.toContain('NodeFetch');
+    expect(ready.integrations).not.toContain('Fastify');
   });
 
   it('exports under an explicit resource naming this service', () => {
