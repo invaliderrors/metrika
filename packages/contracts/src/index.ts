@@ -11,5 +11,6 @@ export * from './ids.js';
 // the index costs nothing; one that is re-exported costs whatever the bundler
 // fails to prove.
 export * from './money.js';
+export * from './redaction.js';
 export * from './result.js';
 export * from './units.js';

@@ -26,6 +26,7 @@ describe('emitJsonSchemas', () => {
         'PrinterProfileVersionId',
         'ProjectId',
         'QuoteId',
+        'RedactedFieldName',
         'Seconds',
         'SliceJobId',
         'SquareMillimeters',

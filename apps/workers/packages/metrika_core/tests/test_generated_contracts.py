@@ -40,6 +40,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticUndefined
 
 from metrika_core import contracts
 from metrika_core.contracts import CurrencyCode, DomainErrorCode, Money, OrderId, QuoteId
@@ -710,17 +711,70 @@ def test_only_the_generated_module_is_exempt_from_disallow_any_explicit() -> Non
 
 
 def test_only_the_generated_module_waives_the_wire_naming_rule() -> None:
-    """N815 is off for the generated file and for nothing else.
+    """N815 and S105 are off for the generated file and for nothing else.
 
     `amountMinor` is the WIRE name -- renaming it would break the contract this
     file exists to carry. Every other module in the workspace is hand-written
     Python and has no excuse for a camelCase attribute.
+
+    S105 joined it with `RedactedFieldName`, whose members are the NAMES of
+    credential-bearing fields (`password = "password"`), which the rule cannot
+    tell from a credential. The two tests below are what replaces it; this one is
+    what keeps the waiver from growing a third entry or a second path.
     """
     per_file = _workspace_table("tool", "ruff", "lint", "per-file-ignores")
-    waivers = {pattern: rules for pattern, rules in per_file.items() if "N815" in str(rules)}
+    waivers = {
+        pattern: rules
+        for pattern, rules in per_file.items()
+        if any(rule in str(rules) for rule in ("N815", "S105"))
+    }
 
-    assert waivers == {"packages/metrika_core/src/metrika_core/contracts/**": ["N815"]}, (
-        f"N815 is waived somewhere it should not be, or in company: {waivers}"
+    assert waivers == {"packages/metrika_core/src/metrika_core/contracts/**": ["N815", "S105"]}, (
+        f"a generated-file waiver is somewhere it should not be, or in company: {waivers}"
+    )
+
+
+def test_every_generated_enum_member_is_its_own_name() -> None:
+    """Half of what replaces S105 in the generated module.
+
+    S105 is waived there because `RedactedFieldName` is a list of credential
+    FIELD NAMES and every entry reads like a hardcoded credential. This is the
+    property that makes that safe: an enum member in this file is always
+    `name = "name"`, so an S105-shaped line cannot carry a value that is not
+    already its own identifier. A generator (or a schema) that started emitting
+    `password = "hunter2"` fails here, which is the case the waived rule covered.
+    """
+    for name, enum in _generated_enums().items():
+        for member in enum:
+            assert member.name == member.value, (
+                f"{name}.{member.name} has a value that is not its own name ({member.value!r}); "
+                "S105 is waived for this file on the assumption that it cannot"
+            )
+
+
+def test_no_generated_field_carries_a_default() -> None:
+    """The other half, and the shape S105 would otherwise have caught.
+
+    A JSON Schema `default` becomes `field: str = "..."` in the generated model,
+    which is the one way a literal that is NOT an identifier could enter this
+    file -- `z.string().default('hunter2')` on a field called `password`, say.
+    Nothing emits a default today, and this is what makes that a decision rather
+    than a coincidence.
+
+    It also guards something the boundary already documents: `z.toJSONSchema()`
+    DEGRADES `.catch(x)` into a non-validating `default: x`, so a default
+    appearing here is evidence of a Zod check that was silently dropped.
+    """
+    offenders = {
+        f"{name}.{field_name}": field.default
+        for name, model in _generated_models().items()
+        for field_name, field in model.model_fields.items()
+        if field.default is not PydanticUndefined or field.default_factory is not None
+    }
+
+    assert offenders == {}, (
+        f"a generated field carries a default: {offenders}. Either a Zod `.catch()` was "
+        "silently degraded into one, or a literal has entered a file where S105 is waived"
     )
 
 
