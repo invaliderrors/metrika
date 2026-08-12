@@ -184,8 +184,19 @@ pushes to `main`:
 | `integration` | `pnpm build` then `pnpm test:integration` — Testcontainers starts its own Postgres, so there is no `services:` block and no `docker compose up`              |
 | `web`         | `pnpm build` · `playwright install --with-deps chromium` · `pnpm --filter @metrika/web test:e2e` — Playwright's `webServer` builds and starts the app itself |
 | `openapi`     | `pnpm --filter @metrika/api openapi:emit` then `git diff --exit-code -- apps/api/openapi/openapi.json`                                                       |
+| `contracts`   | `pnpm contracts:emit` then `git diff --exit-code` on the generated pydantic models — the only job besides `verify`/`integration` that installs `uv`          |
 
-The four jobs are independent and run in parallel; each does its own install
+**There is deliberately no `workers` job, and its absence is not an omission.**
+`apps/workers` exposes `lint`, `typecheck`, `test:unit` and `format:check` as
+`uv run …` shims, so Turbo already schedules every one of them inside `verify`
+— MEASURED with `turbo run <task> --dry=json`, which lists
+`uv run --locked --all-packages ruff check .`, `… mypy .`, `… pytest` and
+`… ruff format --check .` for `@metrika/workers`. `integration` and
+`contracts` install `uv` for their own reasons. A separate job would re-run
+all of that on a second runner: slower CI, no additional coverage, and a
+second place to forget a pin.
+
+The five jobs are independent and run in parallel; each does its own install
 and build, because nothing is shared between GitHub Actions jobs. The two
 `NEXT_PUBLIC_` keys and `DATABASE_ADMIN_URL` are set once at the **workflow**
 level rather than per job, so a job added later inherits them instead of
@@ -220,8 +231,7 @@ the conditions for lifting this are in the workflow file itself; read them
 before adding a cache step.
 
 **Growing into this table** as the runtimes that need them land: `ruff` and
-`mypy --strict` and the Python test job (Plan 0B-3), `contracts:emit` with its
-own diff gate (Plan 0B-3), Redis/MinIO/Temporal
+`mypy --strict` and the Python test job (Plan 0B-3), Redis/MinIO/Temporal
 Testcontainers (with their harnesses), per-package coverage gates, bundle-size
 budgets for `web` (Phase 4), container
 builds, and `security` (`pnpm audit`, gitleaks, Trivy, CodeQL — Plan 0D).

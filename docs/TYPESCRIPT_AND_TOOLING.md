@@ -190,6 +190,7 @@ export { nest } from './nest.js';
 export { react } from './react.js';
 export { next } from './next.js';
 export { test } from './test.js';
+export { workflows } from './workflows.js';
 export {
   contractsBoundary,
   featureBoundary,
@@ -205,7 +206,11 @@ The package is JavaScript with JSDoc types, not TypeScript — a config package 
 
 The boundaries are **seven named exports, not one `boundaries` profile**, and that is deliberate: a consumer composes exactly the zones its own layout has. `prismaBoundary` is the two-half composition `apps/api` uses (`prismaImportBoundary` + `rawSqlBan`); `packages/database` needs the raw-SQL half without the import half, and reaching for it as `prismaBoundary.slice(1)` is precisely the silent swap the split exists to prevent. `webBoundary`, `serverActionBoundary` and `featureBoundary` are `apps/web`'s three zones and are composed in that order — see the block comment above `webBoundary` in `src/boundaries.js` for why the order is load-bearing.
 
-A `workflows` profile (Temporal determinism, per the rule in CLAUDE.md) is **target state** and arrives with `apps/api/src/workflows`. There is no `script` profile.
+`workflows` is the Temporal determinism gate for `apps/api/src/workflows/**`, and it landed before the directory it constrains. Replay re-executes workflow code against the recorded history, so the clock, randomness, the environment and any infrastructure import produce a workflow that passes today and fails **on replay after a deploy** — a failure that surfaces long after the change that caused it. It bans the `Date`, `crypto`, `performance`, `process` and `require` globals, `Math.random` and `globalThis.*` by property (`Math` as a whole stays legal — a gate that rejects `Math.max` is a gate that gets switched off), and admits only `@temporalio/workflow`, `@temporalio/common`, `@metrika/contracts` and relative paths as imports, in both the static and the `import()` forms. An **allowlist**, deliberately: a denylist of `node:*` and `@prisma/client` would leave `fastify`, `ioredis` and every future dependency reachable. It is a plain array rather than a factory for the same reason `react` is — not one of its rules is type-aware, and `parserOptions.project` on a profile with no type-aware rules buys a TypeScript program for zero findings and a fatal parse error on any file that program lacks.
+
+It is composed **last** in `apps/api/eslint.config.js` and it owns three rule ids earlier profiles also own, so it carries `base`'s `process.env` ban and `rawSqlBan`'s selectors (from shared constants, so the copies cannot drift) and subsumes `prismaImportBoundary`'s denylist under its own allowlist. Flat config replaces a rule's options wholesale rather than merging them; the composition cases in `packages/eslint-config/test/workflows.test.ts` are what prove none of the three went missing, because every per-rule case lints a file only one profile speaks to and would pass either way.
+
+There is no `script` profile.
 
 ### Type-checked rules
 
@@ -298,7 +303,16 @@ Every suppression must carry a justification, enforced mechanically:
 
 `--report-unused-disable-directives` is on, and a CI script fails on any `eslint-disable` or `@ts-expect-error` without a `--` justification. `@ts-ignore` is banned outright — `@ts-expect-error` at least fails when the underlying error disappears.
 
-There is no warning tier; a rule is either worth enforcing or it is off. `--max-warnings=0` lives in the root `lint` script (`turbo run lint -- --max-warnings=0`), and CI's `Lint` step is a bare `pnpm lint`, so the local gate and the CI gate are the same command — see §7.
+**On the Python side the same rule has a different shape, and getting it wrong suppresses nothing.** The justification goes in a **second comment**, not inline:
+
+```python
+value = untyped()  # type: ignore[no-any-return]  # -- upstream stub lags the runtime
+result = subprocess.run(argv)  # noqa: S603  # -- argv is literal; no untrusted input
+```
+
+Written the TypeScript way — `# type: ignore[no-any-return] -- reason` — mypy reports `Invalid "type: ignore" comment` and applies **no suppression at all**, so the line lints clean, passes the `--` grep, and silently stops suppressing the error it was written for. `# mypy: ignore-errors` is banned outright beside `@ts-ignore`: it silences a whole file and neither ruff nor mypy can be made to report it. §4 has the measurements and the rule sets that enforce the rest.
+
+There is no warning tier; a rule is either worth enforcing or it is off. `--max-warnings=0` lives in the root `lint` script, and CI's `Lint` step is a bare `pnpm lint`, so the local gate and the CI gate are the same command — see §7, which also explains why that script is now two `turbo run lint` invocations rather than one (the flag is an ESLint flag, and `ruff` exits 2 on it).
 
 ---
 
@@ -320,7 +334,15 @@ The version is pinned **exactly** (not `^`), because a Prettier patch release th
 
 The reason it is a test and not a convention: this repository has twice shipped a version outside a peer range and lost a whole class of checking silently — `typescript-eslint`'s type-aware rules once, and `eslint-plugin-react`'s under ESLint 10. A range is how that happens without anyone choosing it.
 
-Python: `ruff format` + `ruff check` with an equivalently strict rule set, and `mypy --strict` on `apps/workers`. The Python side gets the same treatment as TypeScript — an untyped worker is exactly as capable of producing a wrong price.
+Python: `ruff format` + `ruff check` with an equivalently strict rule set, and `mypy --strict` on `apps/workers`. The Python side gets the same treatment as TypeScript — an untyped worker is exactly as capable of producing a wrong price. Both live in `apps/workers/pyproject.toml`: ruff selects `E F I N UP B A C4 SIM ARG PTH RUF ASYNC S PGH DTZ T20` (the Node side runs typescript-eslint's strict and stylistic sets plus type-aware rules; this is the closest equivalent ruff offers), and `[tool.mypy]` carries `strict`, `warn_unreachable`, `disallow_any_explicit`, `enable_error_code = ["ignore-without-code"]` and `plugins = ["pydantic.mypy"]`. `disallow_any_explicit` is the Python half of "no `any`, no exceptions", since `strict` alone still permits a hand-written one.
+
+**Two measured consequences of that pair, because both look like bugs in your own code.** The plugin is not optional: without it mypy reads pydantic's `dataclass_transform` and synthesises `__init__` with every field **required**, so `WorkerSettings()` — the only way a settings class is ever constructed, since the values come from the environment — is `Missing named argument "s3_bucket"`. And `disallow_any_explicit` reports `Explicit "Any" is not allowed [explicit-any]` on the **class line of every pydantic model**, `class S(BaseModel): pass` included; the `Any` is inside the synthesised `__init__` and there is nothing in the checked file to remove. `metrika_core.settings` carries one justified inline suppression for it, chosen over a per-module override because `strict` implies `warn_unused_ignores` and will therefore delete it when mypy stops attributing a synthesised member to our source. A **generated** model cannot carry one, which is why the generated contracts package gets a scoped `[[tool.mypy.overrides]]` instead.
+
+**Suppressions are gated on both sides, and the Python shape is not the TypeScript shape.** The last three ruff rule sets are each a Node-side rule this repository already enforces: `T20` is `no-console`, `DTZ` is the timezone rule ADR-0027 asked for, and `PGH` is the suppression half — measured, a first-line `# type: ignore` makes mypy skip the **entire file** at exit 0 (`ignore-without-code` does not see it; ruff's `PGH003` does). CI's two suppression steps now include `*.py`: a `noqa` or `type: ignore` needs a `-- <justification>` like every `eslint-disable`, and `# mypy: ignore-errors` is banned outright beside `@ts-ignore`, because it silences a file and neither tool can be made to report it. The justification goes in a **second comment** — `# type: ignore[return-value]  # -- why` — because the inline form makes mypy report `Invalid "type: ignore" comment` and suppress nothing, which is a rule that would quietly un-suppress what it was written to allow.
+
+**And the pin gate covers `pyproject.toml` too.** `uv add` writes `>=` ranges rather than pins, so the same test walks every `pyproject.toml` in the repository — `[project] dependencies`, `[project.optional-dependencies]`, `[dependency-groups]`, `[tool.uv] dev-dependencies` and `[build-system] requires` — and fails on `>=`, `~=`, `!=`, a wildcard, a comma-joined range or a bare name. Two exemptions, both deliberate: `[project] requires-python`, because it is the interpreter range and `==3.12.*` is its correct shape, and a name carrying `[tool.uv.sources] <name> = { workspace = true }` **in the same file**, which is the uv analogue of `workspace:*` and is bare by design because the version comes from the member. `{ git = … }`, `{ path = … }` and `{ url = … }` sources are not exempt. Two non-vacuity tests guard the small TOML reader, for the reason the YAML one is guarded: a reader that quietly matches nothing is indistinguishable from a repository with nothing to check. A third asserts every member package on disk appears in `uv.lock`'s `[manifest] members`, because a member the globs do not match is silently not a member and `uv lock --check` is content either way.
+
+**`uv.lock` is enforced, not asserted.** Every script in `apps/workers/package.json` runs `uv run --locked --all-packages`, and `tests/test_toolchain.py` runs `uv lock --check`. Measured, and the reason both exist: after an edit to `pyproject.toml`, a bare `uv run` **re-locks and exits 0** — the Python-side twin of a lockfile-less `pnpm install`, and precisely what ADR-0027 obligation 1 is about. `--locked` exits 2 instead; `--frozen` is weaker, declining to update the lockfile without checking whether it still matches. `--all-packages` is what installs workspace members, without which `mypy` reports `import-not-found` on the workspace's own sources.
 
 ---
 
@@ -360,9 +382,12 @@ This keeps the inner loop free of a build step everywhere it safely can: editing
 
 ```
 .nvmrc            24.x  (pinned to the exact LTS patch)
-.python-version   3.12.x
+.python-version   3.12.x   (root, and again in apps/workers — uv reads the nearest one)
+mise.toml         node = "24", python = "3.12", uv = "0.12.3"
 package.json      "packageManager": "pnpm@x.y.z", "engines": { "node": ">=24 <25" }
 ```
+
+**`uv` is the one exact version in `mise.toml`, and the asymmetry is deliberate.** `node` and `python` float their major there because the exact patch lives in a file the ecosystem's own tools already read; `uv` has no companion file, so the version is carried in `mise.toml` or nowhere. "Nowhere" is what [ADR-0027](./adr/0027-python-toolchain.md)'s spike actually found — `uv` reachable only through a global `~/.config/mise/config.toml` at `latest`, an unpinned per-machine version no checkout reproduces. CI installs the same version through `astral-sh/setup-uv` and needs no `actions/setup-python` step at all: `uv` provisions its own CPython from `.python-version`.
 
 **Node is pinned to 24 (Krypton), not 22.** Resolved from nodejs.org's release schedule: v24 is **Active LTS**, v22 has moved to **Maintenance LTS**, and v26 is **Current** — production must not run a Current release. Revisit this pin once v26 reaches Active LTS.
 
@@ -383,7 +408,7 @@ The root manifest, as it stands:
   "preinstall": "node scripts/check-node-version.mjs",
   "build": "node --env-file-if-exists=.env scripts/turbo.mjs run build",
   "dev": "node --env-file-if-exists=.env scripts/turbo.mjs run dev",
-  "lint": "turbo run lint -- --max-warnings=0",
+  "lint": "turbo run lint --filter=!@metrika/workers -- --max-warnings=0 && turbo run lint --filter=@metrika/workers",
   "lint:fix": "turbo run lint -- --fix",
   "typecheck": "turbo run typecheck",
   "test:unit": "node --env-file-if-exists=.env scripts/turbo.mjs run test:unit",
@@ -396,21 +421,25 @@ The root manifest, as it stands:
   "db:deploy": "node --env-file-if-exists=.env scripts/prisma.mjs migrate deploy",
   "db:reset": "node --env-file-if-exists=.env scripts/prisma.mjs migrate reset --force",
   "db:studio": "node --env-file-if-exists=.env scripts/prisma.mjs studio",
-  "format": "prettier --write .",
-  "format:check": "prettier --check .",
+  "format": "prettier --write . && turbo run format",
+  "format:check": "prettier --check . && turbo run format:check",
   "verify": "pnpm format:check && pnpm build && pnpm lint && pnpm typecheck && pnpm test:unit",
   "ci": "pnpm verify",
 }
 ```
 
-Four of them are not the bare `turbo run <task>` they look like they should be, and each deviation is load-bearing:
+Six of them are not the bare `turbo run <task>` they look like they should be, and each deviation is load-bearing:
 
 - **`verify` runs `build`, as its second step.** It is not `format:check + lint + typecheck + test:unit`; anything describing it that way is out of date. `lint` and `typecheck` both `dependsOn: ["^build"]`, so a workspace dependency that does not compile has to fail as a build rather than as a confusing downstream type error — and `apps/web`'s `next build` is the only gate that sees a missing `NEXT_PUBLIC_` key, an unresolvable `@metrika/contracts` import, or a Tailwind sheet that emits nothing.
 - **`build`, `dev`, `test:unit` and `test:integration` go through `scripts/turbo.mjs` under `node --env-file-if-exists=.env`.** `apps/web/src/app/layout.tsx` imports `clientEnv`, which parses `NEXT_PUBLIC_*` at module scope, and all four of those tasks schedule `@metrika/web#build`. Without the root `.env` loaded into the process they fail on a missing variable. The wrapper is `spawnSync` plus `process.exit(status ?? 1)`: it forwards its arguments unchanged and swallows nothing, including a signal-killed child. `--env-file-if-exists` cannot be passed to `next build` directly — Next propagates its exec argv into `NODE_OPTIONS` for its workers, and Node rejects the flag there.
 - **`lint` carries `--max-warnings=0` itself.** CI's `Lint` step is a bare `pnpm lint`, so a developer's `pnpm verify` and CI run the identical command. The flag used to live only in the workflow, which made `pnpm verify` systematically weaker than CI: every warning-severity rule was invisible locally, and that bit twice during Plan 0B-2 alone. Two places to change is how the two drift apart.
+- **`lint` is two `turbo run lint` invocations, split on `@metrika/workers`.** Turbo forwards everything after `--` to _every_ task it schedules, and `--max-warnings=0` is an ESLint flag: MEASURED, `uv run ruff check . --max-warnings=0` exits **2** with `unexpected argument '--max-warnings' found`, so a single invocation cannot cover both languages. The flag stays in the root script rather than moving into each package's own `lint` script — seven copies of it is seven chances to forget one, and a forgotten copy fails _silently_, by making warnings invisible in that package. `lint:fix` needs no split, because `--fix` is valid for `eslint` and `ruff` alike.
+- **`format` and `format:check` are Prettier at the root _plus_ `turbo run format[:check]`.** Prettier owns every language it can parse and runs once over the whole tree; the turbo half exists for the languages it cannot, which today means `ruff format` in `apps/workers` and nothing else. It is a turbo task rather than `pnpm --filter @metrika/workers run format:check` for a measured reason: `pnpm --filter <no-match> run <script>` exits **0**, so a package rename would delete the Python half of `format:check` from `pnpm verify` in silence. `turbo run` exits **1** on a filter that matches nothing.
 - **`db:*` go through `scripts/prisma.mjs`** rather than `pnpm --filter @metrika/database …`, for the same environment reason plus one more: they pass `--schema` explicitly, because a bare `pnpm exec prisma` inside `packages/database` cannot find `DATABASE_ADMIN_URL`. `db:reset` is the destructive one.
 
-**Not yet created**, and named here so their absence is not mistaken for an omission: `test:e2e` (a package script only — `pnpm --filter @metrika/web test:e2e`; a root one would put a chromium download in everyone's inner loop), `db:seed` and `contracts:emit` (Plan 0B-3), and the `ruff` half of `format`/`format:check` (there is no `apps/workers` to format yet). There is no aggregate `test` script either; `test:unit` and `test:integration` are run by name, and only the second one needs Docker.
+- **`contracts:emit` goes through `scripts/contracts-emit.mjs`**, for the same reason `db:*` go through `scripts/prisma.mjs`: it is one command driving two toolchains, and the shape has to be identical wherever it is run from. It builds `@metrika/contracts` first (it imports the emitted `dist/json-schema.js`), then runs `datamodel-codegen` under `uv run --locked` in `apps/workers`. **The emitter cannot live inside `packages/contracts`**: writing a file needs `node:fs`, and the `contractsBoundary` ESLint rule forbids every import there but `zod`. A companion script under `packages/contracts/scripts/` does not bridge it either — MEASURED on node 24.19.0, Node's native type stripping does not rewrite a `.js` specifier to the `.ts` file on disk, and importing `../dist/…` instead makes `pnpm typecheck` depend on a build turbo's `typecheck` task does not schedule for the package itself.
+
+**Not yet created**, and named here so their absence is not mistaken for an omission: `test:e2e` (a package script only — `pnpm --filter @metrika/web test:e2e`; a root one would put a chromium download in everyone's inner loop), and `db:seed` (Plan 0B-3). The `ruff` half of `format`/`format:check` used to be on this list and no longer is: `apps/workers` exists, and all five of `lint`, `typecheck`, `test:unit`, `format` and `format:check` reach it. There is no aggregate `test` script either; `test:unit` and `test:integration` are run by name, and only the second one needs Docker.
 
 ---
 

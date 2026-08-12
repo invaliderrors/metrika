@@ -1,8 +1,18 @@
-import { nest, prismaBoundary } from '@metrika/eslint-config';
+import { nest, prismaBoundary, workflows } from '@metrika/eslint-config';
 
 export default [
   ...nest({ tsconfigRootDir: import.meta.dirname, project: './tsconfig.json' }),
   ...prismaBoundary,
+  // The Temporal determinism gate, scoped to src/workflows/** by the profile
+  // itself. AFTER `prismaBoundary` deliberately: it owns `no-restricted-imports`
+  // and `no-restricted-syntax` for the files it matches, and flat config gives
+  // those ids to the LAST entry that supplies options. Reversed, the zone would
+  // lose both halves for every workflow file with no error and no warning.
+  // It carries what it displaces — `base`'s process.env ban and `rawSqlBan`'s
+  // selectors — and subsumes the Prisma denylist under its own import
+  // allowlist; see the header of packages/eslint-config/src/workflows.js and
+  // the composition cases in that package's test/workflows.test.ts.
+  ...workflows,
   {
     // The one sanctioned process.env reader, per CLAUDE.md. Everything else in
     // the app takes configuration through EnvService.

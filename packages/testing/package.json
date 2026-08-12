@@ -14,6 +14,10 @@
       "types": "./dist/images.d.ts",
       "default": "./dist/images.js"
     },
+    "./temporal": {
+      "types": "./dist/temporal.d.ts",
+      "default": "./dist/temporal.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -26,6 +30,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@temporalio/client": "1.22.0",
     "@testcontainers/postgresql": "12.1.0",
     "testcontainers": "12.1.0"
   },

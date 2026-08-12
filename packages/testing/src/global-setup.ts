@@ -6,6 +6,13 @@ import {
   type StartDatabaseOptions,
 } from './database.js';
 
+// Deliberately NO import of './temporal.js' here. This module is reachable
+// from the package root, so importing it would pull `@temporalio/*` into every
+// consumer of `@metrika/testing` — including packages/database and apps/api,
+// which never dial a workflow server. `createTemporalGlobalSetup` therefore
+// lives in temporal.ts, behind the `@metrika/testing/temporal` subpath export;
+// src/index.ts carries the measurement.
+
 /**
  * Builds the default export of a Vitest `globalSetup` file.
  *

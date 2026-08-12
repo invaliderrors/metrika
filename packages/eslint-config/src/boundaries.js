@@ -163,23 +163,29 @@ export const prismaImportBoundary = [
  * silently drop whichever one applied first. If that composition is ever
  * needed, it has to keep both rule-sets under one `no-restricted-syntax`
  * entry rather than two config objects.
+ *
+ * That situation IS reachable for `workflows`, which apps/api composes after
+ * this profile and which owns `no-restricted-syntax` for `src/workflows/**`.
+ * The selectors are exported as their own constant so that profile carries the
+ * same objects rather than a second transcription of them.
  */
+export const RAW_SQL_SELECTORS = [
+  {
+    selector: "CallExpression[callee.property.name='$queryRawUnsafe']",
+    message: 'Use the tagged-template $queryRaw — $queryRawUnsafe does not parameterise',
+  },
+  {
+    selector: "CallExpression[callee.property.name='$executeRawUnsafe']",
+    message: 'Use the tagged-template $executeRaw — $executeRawUnsafe does not parameterise',
+  },
+];
+
 export const rawSqlBan = [
   {
     files: ['**/*.ts'],
     languageOptions: { parser: tseslint.parser },
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: "CallExpression[callee.property.name='$queryRawUnsafe']",
-          message: 'Use the tagged-template $queryRaw — $queryRawUnsafe does not parameterise',
-        },
-        {
-          selector: "CallExpression[callee.property.name='$executeRawUnsafe']",
-          message: 'Use the tagged-template $executeRaw — $executeRawUnsafe does not parameterise',
-        },
-      ],
+      'no-restricted-syntax': ['error', ...RAW_SQL_SELECTORS],
     },
   },
 ];

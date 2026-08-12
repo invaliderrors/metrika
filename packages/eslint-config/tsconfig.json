@@ -31,9 +31,12 @@
     "test/eslint.next-typechecked.config.js",
     "test/eslint.typechecked-next.config.js",
     "test/eslint.web-boundaries.config.js",
+    "test/eslint.workflows.config.js",
+    "test/eslint.workflows-composed.config.js",
     "test/rules.test.ts",
     "test/react.test.ts",
     "test/web-boundaries.test.ts",
+    "test/workflows.test.ts",
     // Listed because eslint.config.js lints `**/*.ts` with `project:
     // './tsconfig.json'`, so a .ts file absent from this program is a lint
     // error about project membership rather than about its contents.

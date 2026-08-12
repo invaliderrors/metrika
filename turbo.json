@@ -61,6 +61,24 @@
       "dependsOn": ["^build", "build"],
       "cache": false
     },
+    // The `ruff` half of the root `format` / `format:check`. Prettier owns the
+    // Node side and runs ONCE from the root over the whole tree, so these two
+    // tasks exist for the languages Prettier cannot parse — today that is
+    // `@metrika/workers` and nothing else.
+    //
+    // Routed through turbo rather than `pnpm --filter @metrika/workers run
+    // format:check` for one measured reason: `pnpm --filter <no-match> run x`
+    // exits **0**, so a package rename would silently delete the Python half of
+    // `format:check` from `pnpm verify` with nothing to show for it. Turbo exits
+    // **1** on a filter that matches nothing, and errors outright on a task no
+    // package declares. A gate that can quietly stop running is not a gate.
+    //
+    // `cache: false` on both: `format` rewrites the source tree, which is the
+    // wrong shape for a cache entry, and `format:check` is one `ruff format
+    // --check` over one package — tens of milliseconds, against which a stale
+    // cache hit reporting a false green is a bad trade at any speed.
+    "format": { "cache": false },
+    "format:check": { "cache": false },
     // The same two keys as `build`, for a DIFFERENT reason, since `cache: false`
     // makes hashing moot here.
     //

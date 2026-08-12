@@ -1,0 +1,47 @@
+[project]
+name = "metrika-geometry"
+version = "0.0.0"
+# Restated rather than inherited, for the reason `packages/metrika_core` states
+# it: a uv workspace member resolves its own `requires-python`, and a member
+# that quietly widened it would let the shared lock resolve a package the root's
+# own bound was chosen to exclude. This one is the member that will feel it —
+# `trimesh@5.0.0` classifies only up to 3.13 and installs on 3.14 with no
+# warning at all (ADR-0027).
+requires-python = "==3.12.*"
+# `metrika-core` and NOTHING ELSE, deliberately, and this is the state Task 6
+# leaves it in rather than an oversight. No `trimesh`, because there is no
+# geometry here yet: this package is the process — settings, logging, a Temporal
+# client and one stub activity — and the mesh work arrives in a later task with
+# its own review.
+#
+# What that buys today is a small, readable closure, which is the thing
+# `packages/metrika_core/tests/test_dependencies.py` asserts over. The list of
+# what a compromised mesh parser can reach is worth keeping short from the start
+# rather than trimming later.
+#
+# Bare, with no version, and that is the sanctioned shape: the version comes
+# from the member below, not from an index. The pin gate
+# (`packages/typescript-config/test/dependency-pins.test.ts`) exempts a name
+# carrying a `workspace = true` source IN THE SAME FILE, exactly as the
+# TypeScript half exempts `workspace:*`.
+dependencies = ["metrika-core"]
+
+[tool.uv.sources]
+metrika-core = { workspace = true }
+
+[build-system]
+# Pinned exactly, for the same reason every other requirement here is: the build
+# backend decides what the wheel contains, and `dependency-pins.test.ts` grades
+# `[build-system] requires` alongside the rest.
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# src layout, so the installed package is what the tests import — never the
+# working directory shadowing it.
+packages = ["src/metrika_geometry"]
+
+# DELIBERATELY NO `[tool.ruff]` AND NO `ruff.toml`. ruff resolves configuration
+# from the nearest ancestor manifest, so a section here would silently narrow the
+# rule set for this subtree only; `tests/test_toolchain.py` fails the build on
+# one. The workspace has one rule set, in apps/workers/pyproject.toml.

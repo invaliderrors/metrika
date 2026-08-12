@@ -24,8 +24,27 @@ export const CURRENCY_REGISTRY: Readonly<
  * "+5") would decode to the same bigint yet fail to compare equal as
  * strings, which is exactly the kind of divergence that breaks equality
  * checks and canonical hashing downstream.
+ *
+ * `[0-9]` and not `\d`, and this is NOT a style preference. In JavaScript the
+ * two are identical, so nothing on this side of the boundary can tell them
+ * apart. In Python they are not: `\d` is Unicode-aware, so the ASCII-digit
+ * assumption silently stops holding the moment this schema is emitted as JSON
+ * Schema and generated into a pydantic model.
+ *
+ * MEASURED on the string `"3\u0665\u0660"` — an ASCII 3 followed by two
+ * Arabic-Indic digits:
+ *
+ *   /^(0|-?[1-9]\d*)$/      JS: rejects   Python: ACCEPTS
+ *   /^(0|-?[1-9][0-9]*)$/    JS: rejects   Python: rejects
+ *
+ * and `int("3\u0665\u0660")` is `350` in Python while `BigInt` on the same
+ * string throws. So the `\d` form lets Python accept a money amount that
+ * TypeScript refuses and read it as a different number — a divergence in the
+ * one direction that matters, across the one boundary no test on either side
+ * observes on its own. `test/money.test.ts` guards the source text, because a
+ * behavioural test here would pass against both forms.
  */
-const INTEGER_STRING = /^(0|-?[1-9]\d*)$/;
+const INTEGER_STRING = /^(0|-?[1-9][0-9]*)$/;
 
 export const Money = z.object({
   amountMinor: z.string().regex(INTEGER_STRING, 'must be an integer string'),

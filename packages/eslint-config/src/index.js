@@ -4,6 +4,7 @@ export { nest } from './nest.js';
 export { react } from './react.js';
 export { next } from './next.js';
 export { test } from './test.js';
+export { workflows } from './workflows.js';
 export {
   contractsBoundary,
   featureBoundary,

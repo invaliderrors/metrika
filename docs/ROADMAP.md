@@ -71,21 +71,24 @@
 | 0.6  | ✅ `packages/database`: Prisma init, `createPrismaClient()` with RLS + soft-delete extensions, migration harness                                                                                         | `packages/database`                                                           |
 | 0.7  | ✅ `apps/api` skeleton: Nest + Fastify, `config/env.ts` (Zod), exception filter, request-context middleware, `/health/{live,ready,deep}`                                                                 | `apps/api/src`                                                                |
 | 0.8  | ✅ `apps/web` skeleton: Next App Router, Tailwind, shadcn init, `config/env.ts`, root layout, `next-intl` with `es-CO`                                                                                   | `apps/web/src`                                                                |
-| 0.9  | `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                                                   | `apps/workers`                                                                |
-| 0.10 | ◐ `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit — all but `temporal`/`temporal-ui`, which land in Plan 0B-3                                                               | `infra/docker`                                                                |
+| 0.9  | ✅ `apps/workers`: uv workspace, `metrika_core` (settings via pydantic-settings, S3 client, structlog, Temporal base), geometry + slicer entrypoint stubs                                                | `apps/workers`                                                                |
+| 0.10 | ✅ `docker-compose.yml`: postgres, redis, minio, temporal, temporal-ui, mailpit — all six, each pinned by exact tag in [IMAGE_PINS.md](../infra/docker/IMAGE_PINS.md) and each with a healthcheck        | `infra/docker`                                                                |
 | 0.11 | OpenTelemetry bootstrap in API and workers; correlation ID propagation across all three runtimes; Pino + structlog with the redaction list                                                               | `apps/api/src/infrastructure/telemetry`, `apps/workers/packages/metrika_core` |
 | 0.12 | ✅ GitHub Actions CI with every gate from [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd)                                                                                                                | `.github/workflows`                                                           |
-| 0.13 | ◐ `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env — Postgres done; Redis, MinIO and Temporal follow their consumers                                           | `packages/testing`                                                            |
+| 0.13 | ◐ `packages/testing`: Testcontainers harnesses for Postgres, Redis, MinIO, Temporal test env — Postgres and Temporal done; Redis and MinIO follow their consumers                                        | `packages/testing`                                                            |
 | 0.14 | Terraform `shared` state: ECR, state bucket, GitHub OIDC role                                                                                                                                            | `infra/terraform/shared`                                                      |
 | 0.15 | ✅ **Spike: ts-rest viability.** Verify against the chosen Zod major, Nest+Fastify, and OpenAPI 3.1 emission. Decide and record in an ADR. **Outcome: ts-rest failed; `nestjs-zod` adopted in ADR-0019** | throwaway branch                                                              |
 | 0.16 | Root docs: `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, ADRs 0001–0018                                                                                                                                 | root, `docs/`                                                                 |
 
 ✅ = done · ◐ = partially done, with the remainder named on the row.
 
-Progress: 0.1–0.8, 0.12, 0.13 (Postgres harness), 0.15 complete. 0.10 partially:
-`postgres`, `redis`, `minio` and `mailpit` exist; `temporal` and `temporal-ui`
-land in Plan 0B-3. Remaining: 0.9, 0.11, 0.14, and 0.13's Redis/MinIO/Temporal
-harnesses.
+Progress: 0.1–0.10, 0.12 and 0.15 are complete. 0.13 is partial: the Postgres
+and Temporal harnesses exist in `packages/testing`; Redis and MinIO follow
+their consumers. Remaining: 0.11, 0.14, and 0.13's Redis and MinIO harnesses.
+
+0.9 ships the runtime skeleton only — a shared library, two entry points and a
+stub activity each. There is no geometry, no slicing and no OrcaSlicer image;
+those are Phases 3 and 6.
 
 Caveats on the ✅ rows: several describe end-state work that lands incrementally
 as the runtimes that need it are built. 0.1's Turbo remote caching is still off
@@ -97,12 +100,15 @@ convert CI's cross-package type gate into a pass. `.github/workflows/ci.yml`
 carries the measurement. 0.2 is complete — `base`, `node`, `react-library`,
 `web-library`, `nest` and `next` all exist. 0.3's `react` and `next` profiles landed with
 Plan 0B-2 Task 2, each with a fixture asserting a named rule reports; the
-`workflows` profile arrives with `apps/api/src/workflows` (Plan 0B-3).
+`workflows` profile landed with Plan 0B-3 Task 7, ahead of the
+`apps/api/src/workflows` directory it constrains, and is composed into
+`apps/api` today.
 `base`, `typeChecked`, `nest`, `test` and seven boundary exports
 (`contractsBoundary`, `prismaImportBoundary`, `rawSqlBan`, their `prismaBoundary`
 composite, and `webBoundary`, `serverActionBoundary`, `featureBoundary` from Plan
-0B-2 Task 7) exist. 0.4's `ruff`/`mypy` land with
-`apps/workers` (Plan 0B-3); only the Prettier/`.editorconfig` half is done.
+0B-2 Task 7) exist, plus `workflows` from Plan 0B-3 Task 7. 0.4's `ruff` and
+`mypy --strict` are live in `apps/workers`, wired into `pnpm lint`, `typecheck`,
+`test:unit` and `format:check` through Turbo shims.
 0.8 is the **shell** the row describes and no more: App Router, Tailwind v4 with
 the shadcn tokens, `config/env.ts`, a localised root layout, `next-intl` on
 `es-CO` and a seven-case Playwright suite. There is no data fetching, no route
@@ -111,7 +117,7 @@ store and no viewer — those arrive with the phases that need them (1.8, 1.10,
 Phase 4). An `en-US` catalogue exists so the structure is exercised, but nothing
 serves it: `DEFAULT_LOCALE` is a constant and there is no negotiation, and the
 locale itself is V1 in the scope table above.
-0.12's CI now runs four jobs — `verify` (format, build, lint, typecheck, unit
+0.12's CI now runs five jobs — `verify` (format, build, lint, typecheck, unit
 tests, suppression greps), `integration` (Testcontainers Postgres), `web`
 (`pnpm build` + the Playwright suite in chromium, added by Plan 0B-2 Task 8) and
 `openapi` (re-emit and diff) — but the rest of

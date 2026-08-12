@@ -273,7 +273,7 @@ The prerequisite is landing project `references`, not a cache token. `.github/wo
 
 ## 6. Complete repository tree
 
-**This is the TARGET tree, not the current one, and nothing checks it.** Most of it does not exist yet: today `apps/` holds `api` and `web`, `packages/` holds `contracts`, `database`, `eslint-config`, `testing` and `typescript-config`, and `infra/` holds only `docker`. `apps/api/src` additionally contains `bootstrap.ts`, `openapi/` and `scripts/`, which are absent below. Read this as the shape the phases are building towards; read `ROADMAP.md` and the repository itself for what is there now.
+**This is the TARGET tree, not the current one, and nothing checks it.** Most of it does not exist yet: today `apps/` holds `api`, `web` and `workers`, `packages/` holds `contracts`, `database`, `eslint-config`, `testing` and `typescript-config`, and `infra/` holds only `docker`. `apps/api/src` additionally contains `bootstrap.ts`, `openapi/` and `scripts/`, which are absent below. Read this as the shape the phases are building towards; read `ROADMAP.md` and the repository itself for what is there now.
 
 `apps/web` is the entry most likely to be misread off the tree below, because the target shape and the shell that exists share almost nothing. What Plan 0B-2 built, in full:
 
@@ -432,7 +432,7 @@ The rules, and whether the ESLint zone that enforces each one exists yet. A rule
 | Only `apps/api/src/infrastructure/persistence/**` may import `brandUnsafe`                           | not yet — **the helper itself does not exist** | The single controlled place where a DB `string` becomes a branded ID                                    |
 | `apps/*` may not import from another app's `src`                                                     | not yet — there is only one app                | Cross-app sharing goes through a package or it does not happen                                          |
 
-The Python side is to consume contracts by **generating pydantic models from JSON Schema emitted by `packages/contracts`** in a `pnpm contracts:emit` step, committed and diffed in CI. **That script does not exist yet** — neither does `apps/workers` — and no CI job runs it. Both land in Plan 0B-3. The design intent is one source of truth across the language boundary without a runtime dependency.
+The Python side consumes contracts by **generating pydantic models from JSON Schema emitted by `packages/contracts`** in a `pnpm contracts:emit` step, committed and diffed in CI by the `contracts` job. The chain is `z.toJSONSchema()` → one JSON Schema document → `datamodel-code-generator` — **not** `zod-to-json-schema`, which this repository does not depend on and must not: Zod 4 emits JSON Schema natively, and the rule directly above is that `packages/contracts` imports nothing else. One source of truth across the language boundary, with no runtime dependency in either direction. See [CONTRACTS_AND_API.md §5](./CONTRACTS_AND_API.md#5-crossing-into-python) for what does **not** cross — branding, regex flags, and the meaning of `\d`.
 
 ---
 
@@ -1043,7 +1043,7 @@ graph LR
     L --> M[deploy production]
 ```
 
-Nothing deploys if any gate fails. The diagram is the target pipeline; `.github/workflows/ci.yml` runs the part of it that exists — `verify` (format, build, lint, typecheck, unit), `integration` (Testcontainers), `web` (`pnpm build`, then Playwright against a production build of `apps/web` in chromium) and `openapi` (emit + `git diff --exit-code`). E2E runs on the runner, not on an ephemeral environment: Playwright's `webServer` builds and starts the app itself, and there is nothing deployed for it to point at yet. Turborepo remote caching would make unchanged packages free and is deliberately **off**: see §5 for the measurement, and do not enable it — or add an `actions/cache` step for `.turbo` — before project `references` land.
+Nothing deploys if any gate fails. The diagram is the target pipeline; `.github/workflows/ci.yml` runs the part of it that exists — `verify` (format, build, lint, typecheck, unit), `integration` (Testcontainers), `web` (`pnpm build`, then Playwright against a production build of `apps/web` in chromium), `openapi` (emit + `git diff --exit-code`) and `contracts` (the same shape for the generated pydantic models). `apps/workers`' ruff, mypy and pytest ride inside `verify` through Turbo rather than in a job of their own — see [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#4-cicd). E2E runs on the runner, not on an ephemeral environment: Playwright's `webServer` builds and starts the app itself, and there is nothing deployed for it to point at yet. Turborepo remote caching would make unchanged packages free and is deliberately **off**: see §5 for the measurement, and do not enable it — or add an `actions/cache` step for `.turbo` — before project `references` land.
 
 **Git hooks are deliberately minimal.** `lint-staged` runs Prettier and ESLint on changed files only, plus `commitlint` on the message. Typecheck and tests do **not** run pre-commit — they run in CI, where they can be parallel and cached, and a slow pre-commit hook trains people to use `--no-verify`, which is worse than no hook.
 
@@ -1108,7 +1108,7 @@ pnpm dev                  # web, api, and both python workers via turbo
 
 Reached so far: everything above except `pnpm db:seed`. `pnpm dev` now starts
 `apps/api` and `apps/web` together; the Python workers, `temporal` and
-`temporal-ui` all join in Plan 0B-3.
+`temporal-ui` are in `docker-compose.yml` as of Plan 0B-3.
 
 Seeds are deterministic and fixed-UUID: two organizations, five users across every role, three printer profiles, four materials, one published pricing rule set, and a set of models in every processing state — including one stuck at `AWAITING_UNIT_CONFIRMATION`, because that path is easy to forget and hard to reach by hand.
 

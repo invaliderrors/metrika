@@ -3,30 +3,50 @@
 > Target: clone to a working end-to-end quote flow in five commands, verified by CI on
 > a clean checkout. **Not yet reachable** — there is no quote flow to run: `apps/api` is
 > a health-probe skeleton, `apps/web` is a one-page localised shell that calls no API,
-> and `apps/workers` does not exist. What is reachable today is a clean clone to a
+> and `apps/workers` has two worker processes that connect to Temporal and register one
+> stub activity each — no geometry and no slicing. What is reachable today is a clean clone to a
 > running API with a migrated database and a web shell that renders, and CI verifies
-> that across four jobs (`verify`, `integration`, `web`, `openapi`). See §2.
+> that across five jobs (`verify`, `integration`, `web`, `openapi`, `contracts`). See §2.
 
 ---
 
 ## 1. Prerequisites
 
-| Tool   | Version                | Install                                                                  |
-| ------ | ---------------------- | ------------------------------------------------------------------------ |
-| mise   | latest                 | `curl https://mise.run \| sh` — manages Node and Python from `mise.toml` |
-| Node   | from `.nvmrc`          | `mise install`                                                           |
-| Python | from `.python-version` | `mise install`                                                           |
-| pnpm   | from `packageManager`  | `corepack enable`                                                        |
-| uv     | latest                 | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                       |
-| Docker | 24+                    | Docker Desktop or OrbStack                                               |
+| Tool   | Version                | Install                                                                      |
+| ------ | ---------------------- | ---------------------------------------------------------------------------- |
+| mise   | latest                 | `curl https://mise.run \| sh` — manages Node, Python and uv from `mise.toml` |
+| Node   | from `.nvmrc`          | `mise install`                                                               |
+| Python | from `.python-version` | `mise install`                                                               |
+| pnpm   | from `packageManager`  | `corepack enable`                                                            |
+| uv     | from `mise.toml`       | `mise install`                                                               |
+| Docker | 24+                    | Docker Desktop or OrbStack                                                   |
 
 **Docker is not optional.** It runs the local stack (`pnpm infra:up`) _and_ every
 integration test: `pnpm test:integration` starts its own Postgres through
-Testcontainers, and `packages/testing`'s preflight fails with a readable
+Testcontainers — and, since Plan 0B-3, its own MinIO for `apps/workers` and its
+own Temporal server (plus a second Postgres for it to store history in) for
+`packages/testing` — and `packages/testing`'s preflight fails with a readable
 `DockerUnavailableError` when no daemon is reachable rather than hanging. A
-change to `packages/database` or `apps/api` cannot be verified without it.
+change to `packages/database`, `apps/api` or `apps/workers` cannot be verified
+without it.
+
+`pnpm verify` deliberately does **not** need Docker, on either side. The Python
+storage suite is marked `integration` and deselected by `addopts` in
+`apps/workers/pyproject.toml` for exactly that reason.
+
+**The Python workers read `METRIKA_WORKER_*`, and the `_WORKER_` is
+load-bearing.** `metrika_core.WorkerSettings` sets `extra="forbid"` over its
+whole namespace, so an unrecognised variable in it is a startup error — right
+for a typo, hostile over a prefix somebody else writes to. `METRIKA_` is shared:
+`packages/testing` publishes `METRIKA_TEST_DATABASE_URL`, and measured under the
+wider prefix, a shell that had run the Node integration harness could not
+construct worker settings at all. The six variables are documented in
+`.env.example`; none of them is a database URL, and none ever will be
+(ADR-0007).
 
 `mise` is recommended over nvm + pyenv because a polyglot repository with two version managers has two ways to be subtly wrong. `.nvmrc` and `.python-version` are committed anyway so nobody is forced to adopt it.
+
+**`uv` is no longer a `curl | sh` install**, and the change is not cosmetic: [ADR-0027](./adr/0027-python-toolchain.md)'s spike found `uv` on that machine reachable only through a _global_ `~/.config/mise/config.toml` carrying `uv = "latest"` — an unpinned, unreviewed, per-machine version that no checkout reproduces. `mise.toml` now pins it exactly (`uv = "0.12.3"`), which is what makes `uv.lock` mean the same thing on a second machine. Without `mise` on `PATH`, `pnpm lint`, `pnpm typecheck`, `pnpm test:unit`, `pnpm format` and `pnpm format:check` all fail in `apps/workers` with `uv: command not found`; a project-local install of the same version works too, but a global `latest` is the thing to avoid.
 
 ---
 
@@ -36,12 +56,13 @@ Working today, in this order — every line below runs on a fresh clone:
 
 ```bash
 git clone git@github.com:<org>/metrika.git && cd metrika
-mise install                    # Node + Python at the pinned versions
+mise install                    # Node + Python + uv at the pinned versions
 pnpm install --frozen-lockfile  # workspace dependencies
 cp .env.example .env            # every value works out of the box for local dev
                                 # `.env` is the ONLY local environment file — see §8
 
-pnpm infra:up                   # postgres, redis, minio, mailpit — waits for healthy
+pnpm infra:up                   # postgres, redis, minio, temporal, temporal-ui,
+                                # mailpit — waits for healthy
 pnpm db:deploy                  # apply committed migrations (prisma migrate deploy)
 pnpm dev                        # every runtime that exists: apps/api on API_PORT
                                 # (3001) and apps/web on 3000. One at a time:
@@ -63,15 +84,25 @@ env mode drops any variable a task does not declare — measured, a task sees bo
 `NEXT_PUBLIC_` keys and not `WEB_PORT`. Export it in your shell to move the port,
 or add it to `turbo.json`'s `dev` task.
 
-| Service       | URL                        | Notes                                                                    |
-| ------------- | -------------------------- | ------------------------------------------------------------------------ |
-| Web           | http://localhost:3000      | The localised shell — one page, no API calls yet                         |
-| API           | http://localhost:3001      | `/health/{live,ready,deep}` and `/api/v1/openapi.json` today             |
-| API docs      | http://localhost:3001/docs | Scalar — not mounted yet                                                 |
-| Temporal UI   | http://localhost:8233      | Plan 0B-3 — not in `docker-compose.yml` yet                              |
-| MinIO console | http://localhost:9001      | `metrika` / `metrika-local`                                              |
-| Mailpit       | http://localhost:8025      | Catches all outbound email                                               |
-| Postgres      | localhost:5432             | `metrika` / `metrika` / `metrika_dev`; the API connects as `metrika_app` |
+| Service         | URL                        | Notes                                                                    |
+| --------------- | -------------------------- | ------------------------------------------------------------------------ |
+| Web             | http://localhost:3000      | The localised shell — one page, no API calls yet                         |
+| API             | http://localhost:3001      | `/health/{live,ready,deep}` and `/api/v1/openapi.json` today             |
+| API docs        | http://localhost:3001/docs | Scalar — not mounted yet                                                 |
+| Temporal UI     | http://localhost:8233      | Workflow history; no workflows exist yet                                 |
+| Temporal (gRPC) | localhost:7233             | Namespace `default`; what a worker or client dials                       |
+| MinIO console   | http://localhost:9001      | `metrika` / `metrika-local`                                              |
+| Mailpit         | http://localhost:8025      | Catches all outbound email                                               |
+| Postgres        | localhost:5432             | `metrika` / `metrika` / `metrika_dev`; the API connects as `metrika_app` |
+
+The Temporal service is `temporalio/auto-setup`, which stores its history and
+visibility data in the **same Postgres** as the application, in two databases it
+creates itself on first boot: `temporal` and `temporal_visibility`. They are not
+Prisma-managed and no migration in this repository knows about them.
+`pnpm infra:reset` drops them along with everything else, and the next
+`infra:up` re-creates them from scratch — that is the supported way to get a
+clean workflow history. It is a local-development image only; production is
+Temporal Cloud ([ADR-0006](./adr/0006-temporal.md)).
 
 Every published port binds to `127.0.0.1`, not `0.0.0.0` — Docker's publish path
 inserts firewall rules that would otherwise expose Postgres and the MinIO console
@@ -147,10 +178,12 @@ pnpm dev                       # apps/api + apps/web
 pnpm verify                    # format:check + build + lint + typecheck + unit — the pre-push gate
 pnpm build                     # tsc -b per package + next build, topological through Turbo
 
-pnpm test:unit                 # fast
-pnpm test:integration          # Testcontainers; Docker must be running
+pnpm test:unit                 # fast, and needs no Docker on either side
+pnpm test:integration          # Testcontainers — Postgres, MinIO and Temporal; Docker must
+                               # be running
 
-pnpm infra:up                  # start postgres, redis, minio, mailpit and wait for healthy
+pnpm infra:up                  # start postgres, redis, minio, temporal, temporal-ui and
+                               # mailpit, and wait for healthy
 pnpm infra:down                # stop them, keeping the volumes
 pnpm infra:reset               # stop them AND drop the volumes — this is what re-runs
                                # packages/database/sql/00-app-role.sql on a fresh Postgres
@@ -226,7 +259,10 @@ which builds that package and nothing else. On a tree that has never been built,
 '@metrika/contracts'`, and Playwright reports only "Process from
 config.webServer was not able to start". Run `pnpm build` from the root first.
 
-`pnpm contracts:emit` and `pnpm db:seed` arrive in Plan 0B-3.
+`pnpm contracts:emit` regenerates the committed pydantic models from the Zod
+schemas — run it after touching `packages/contracts` and commit the result, or
+CI's `contracts` job fails on the diff. It needs `uv` on `PATH` and nothing else;
+it builds `@metrika/contracts` itself. `pnpm db:seed` arrives in Plan 0B-3.
 
 ---
 
@@ -235,11 +271,25 @@ config.webServer was not able to start". Run `pnpm build` from the root first.
 Everything in this section except **Database** describes a runtime that does not
 exist yet. It is kept as the intended shape, marked for what it is.
 
-**Workflows** _(Plan 0B-3)_ — the Temporal UI at :8233 shows event history, inputs, outputs and failures for every workflow. Replay a failed workflow locally against modified code to reproduce a non-determinism error, which is otherwise the hardest class of bug here.
+**Workflows** — the Temporal UI at :8233 shows event history, inputs, outputs and failures for every workflow. Replay a failed workflow locally against modified code to reproduce a non-determinism error, which is otherwise the hardest class of bug here. The server and the UI are in `docker-compose.yml` as of Plan 0B-3; there is no workflow to look at yet, so today it is an empty `default` namespace that proves the stack is wired.
+
+A container that stays `Up` while logging `Waiting for PostgreSQL` forever means `DB_PORT` was dropped from the `temporal` service — it defaults to **3306**, MySQL's port. `docker ps` shows a healthy-looking container and `docker compose up -d` returns 0, so the first symptom is a worker connection timeout with nothing obviously broken upstream.
+
+That service takes **six** environment variables, and they are recorded across two ADRs rather than one: [ADR-0027](./adr/0027-python-toolchain.md) has five and states that count as complete, and [ADR-0028](./adr/0028-temporal-bind-on-ip.md) corrects it with the sixth, `BIND_ON_IP`. Read both. The sixth is the one behind the other confusing failure here — a `temporal` container that is permanently `unhealthy` while its own logs show a server serving normally means `BIND_ON_IP` is missing, so the server bound one arbitrary interface and the loopback healthcheck can never reach it.
 
 **API** — `pnpm --filter @metrika/api dev` runs `tsc -b --watch` alongside `node --watch dist/main.js`, reading the root `.env`. A `dev:debug` script and a committed `.vscode/launch.json` attach configuration are intended and do not exist yet; until then, `node --inspect --env-file=.env dist/main.js` from `apps/api` is the equivalent.
 
-**Python workers** _(Plan 0B-3)_ — `debugpy` is enabled in dev mode; the corresponding attach configuration is committed.
+**Python workers** — `pnpm dev` does not start them yet. Run one by hand with the compose stack up:
+
+```bash
+cd apps/workers
+METRIKA_WORKER_TEMPORAL_TASK_QUEUE=geometry-small METRIKA_WORKER_S3_BUCKET=metrika-models \
+  uv run --locked --all-packages python -m metrika_geometry
+```
+
+Both processes refuse to start without those two variables rather than defaulting — a worker polling a queue nobody publishes to looks exactly like an idle system. `Ctrl-C` (or SIGTERM) shuts one down gracefully; ignoring SIGTERM would mean every deploy killing a worker mid-poll, so `metrika_core.temporal.run_worker` handles it.
+
+_(Plan 0B-3, intended and not yet done)_ — `debugpy` in dev mode, with the corresponding attach configuration committed.
 
 **Database** — `pnpm db:studio`, or connect directly. Note that RLS is active locally: a `psql` session **as `metrika_app`** sees nothing until `SET app.current_org_id`. This is intentional — local development should behave like production, and discovering RLS in staging is worse than discovering it on day one. `metrika`, the owner role the compose stack creates and that migrations run as, is a Postgres superuser and therefore bypasses RLS unconditionally — which is exactly why `DATABASE_URL` names `metrika_app` and only `DATABASE_ADMIN_URL` names `metrika`. Connect as `metrika` and you are not testing what production does. Both halves are asserted against a live connection rather than trusted: `packages/database/test/harness.integration.test.ts` checks that `metrika_app` is neither `SUPERUSER` nor `BYPASSRLS`, and `packages/database/test/rls.integration.test.ts` checks that `relforcerowsecurity` is actually set on the applied table.
 

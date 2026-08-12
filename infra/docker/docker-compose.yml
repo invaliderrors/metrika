@@ -1,9 +1,10 @@
 name: metrika
 
-# ROADMAP 0.10 also lists `temporal` and `temporal-ui` here. They are
-# deliberately deferred to Plan 0B-3, where they are first used and their
-# health checks can be verified against a real workflow rather than guessed —
-# not forgotten. `docs/LOCAL_DEVELOPMENT.md` is corrected to match in Task 13.
+# ROADMAP 0.10's six services all live here now: `temporal` and `temporal-ui`
+# were deferred until Plan 0B-3, where they are first used and their health
+# checks could be verified against a real client rather than guessed. They are
+# no longer deferred — see the `temporal` service below for what that
+# verification actually found.
 #
 # Every published port below binds to 127.0.0.1 only, not 0.0.0.0: Docker's
 # publish path inserts iptables/pf rules that bypass the macOS application
@@ -85,6 +86,168 @@ services:
       # patient than it looks. No start_period, for the same reason as
       # postgres: nothing here is slow enough yet to justify one.
       test: ['CMD', 'mc', 'ready', 'local']
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  temporal:
+    # KEEP IN SYNC with TEMPORAL_IMAGE in packages/testing/src/images.ts.
+    # packages/database/test/postgres-image.test.ts fails if these diverge.
+    #
+    # Pinned by ADR-0027, and NOT `:latest` — which here is not a stylistic
+    # point. MEASURED 2026-08-10: `temporalio/auto-setup:latest` resolves to
+    # 1.29.3, four patch releases BEHIND this tag. A compose file naming
+    # "latest" would pin OLDER than one naming a version, with the word
+    # "latest" on screen saying otherwise.
+    #
+    # `auto-setup` is a local-development image specifically: it provisions the
+    # `default` namespace and the search attributes on first boot. Production is
+    # Temporal Cloud (ADR-0006) and has no counterpart to this service.
+    image: temporalio/auto-setup:1.29.7
+    depends_on:
+      postgres:
+        # Not cosmetic: auto-setup runs the schema tool against Postgres before
+        # it starts the server, and `service_started` would race the database's
+        # own init.
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      # SIX variables. ADR-0027 says five and says it as a complete count;
+      # ADR-0028 corrects that with BIND_ON_IP below. Both are needed to read
+      # this block.
+      #
+      # DB_PORT is the one that is easy to omit.
+      # It defaults to 3306 — MySQL's port — and omitting it does not fail
+      # loudly: auto-setup.sh loops `until nc -z "${POSTGRES_SEEDS}" 3306`, so
+      # the container sits `Up` logging "Waiting for PostgreSQL" forever while
+      # `docker ps` shows a healthy-looking container and `docker compose up -d`
+      # returns 0. The first symptom is a worker connection timeout with nothing
+      # obviously broken upstream. See ADR-0027, "The Temporal image tag".
+      DB_PORT: '5432'
+      # The compose network alias of the postgres service above, not localhost:
+      # this resolves inside the temporal container.
+      POSTGRES_SEEDS: postgres
+      # The OWNER role, not metrika_app: auto-setup CREATEs the `temporal` and
+      # `temporal_visibility` databases in this instance and owns their schema.
+      # metrika_app is NOSUPERUSER NOBYPASSRLS and deliberately cannot.
+      POSTGRES_USER: metrika
+      POSTGRES_PWD: metrika
+      # The sixth, added by ADR-0028, and it is what makes the healthcheck
+      # below addressable at all.
+      #
+      # `/etc/temporal/entrypoint.sh:5` in this image:
+      #   : "${BIND_ON_IP:=$(getent hosts "$(hostname)" | awk '{print $1;}')}"
+      # — the container's FIRST address — which dockerize then threads into
+      # five `bindOnIP` fields in config_template.yaml (frontend, matching,
+      # history, worker, internal-frontend). So temporal-server binds exactly
+      # one interface, neither `0.0.0.0` nor loopback, and MEASURED with this
+      # left out, `netstat -ltn` inside the container shows a single
+      # `172.x.y.z:7233` while a `127.0.0.1` probe fails forever against a
+      # server that is serving normally.
+      #
+      # `:=` expands on unset OR NULL, so `BIND_ON_IP: ''` reproduces the
+      # default path exactly — that, not deleting the line, is the mutation to
+      # use when re-testing this.
+      #
+      # It bites harder in `packages/testing`'s harness than here, which is why
+      # both carry the variable rather than only the one that needed it:
+      # testcontainers attaches an ALIASED container to the default bridge as
+      # well as its own network, "first address" is then the bridge one, and
+      # the server ends up listening on an interface its own network alias does
+      # not resolve to. Measured there as 45s of `connection refused` against
+      # `temporal:7233` while the server was up on a different subnet.
+      #
+      # `entrypoint.sh` special-cases `0.0.0.0` and sets
+      # TEMPORAL_BROADCAST_ADDRESS from the same `getent`, so ring membership
+      # keeps a real address and the single-node cluster still forms. Nothing
+      # new is published to the host: `ports` below is still the only thing
+      # crossing the container boundary, and still only on loopback.
+      BIND_ON_IP: '0.0.0.0'
+    ports:
+      - '127.0.0.1:7233:7233'
+    healthcheck:
+      # `namespace describe default`, not `nc -z 127.0.0.1 7233`, for the same
+      # reason postgres above passes `-h 127.0.0.1`: the weaker check reports
+      # healthy before the service is usable. MEASURED inside this container on
+      # a cold start — inside is the only place that matters, because a docker
+      # healthcheck executes IN the container:
+      #
+      #   t=0.74s  nc -z 127.0.0.1 7233                  SUCCEEDS
+      #   t=1.79s  temporal operator namespace describe  SUCCEEDS
+      #
+      # auto-setup binds the port, THEN creates two databases, applies both
+      # schemas and registers `default` last. A client that connects in that
+      # ~1s window fails its first real call with
+      # `Namespace default is not found` — which is what this command returns
+      # across exactly the same window.
+      #
+      # Swapping this line for `nc -z` and re-running end to end, with the
+      # start_interval below in place: compose reported healthy at **1.20s**
+      # and a `namespace describe` run immediately afterwards **failed** with
+      # `Namespace default is not found`. With this command: healthy at
+      # **2.72s**, and the same call succeeded. That is the whole difference,
+      # and it is worth ~1.5 seconds.
+      #
+      # (Do NOT justify this with a host-side dial. `127.0.0.1:7233` on the
+      # HOST accepts a connection the instant `docker compose up -d` returns,
+      # with zero sockets listening inside the container, because docker-proxy
+      # binds the published port at creation. True, and irrelevant here — a
+      # healthcheck never runs on the host. It is a real argument for
+      # `packages/testing`'s harness, which dials from the host, and it is
+      # recorded there.)
+      test:
+        [
+          'CMD',
+          'temporal',
+          'operator',
+          'namespace',
+          'describe',
+          '--namespace',
+          'default',
+          '--address',
+          '127.0.0.1:7233',
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      # start_period + start_interval are what make the choice above
+      # OBSERVABLE, and they were added because without them the mutation that
+      # justifies it cannot fail. At `interval: 3s` alone — the shape every
+      # other service here uses — docker's first probe fires after the ~1s
+      # window has already closed, so `nc -z` and this command are
+      # indistinguishable and the weaker one looks fine. The 1.20s-vs-2.72s
+      # result quoted above is only visible because docker polls at 100ms
+      # during the start period.
+      #
+      # start_period only stops failures counting toward `retries`; it does not
+      # delay the first probe, so this is strictly faster to healthy as well.
+      # 90s covers a cold boot — postgres waited on, two databases created, two
+      # schemas applied — after which the 3s x 40 budget (~2 minutes) governs a
+      # server that has already been up once.
+      start_period: 90s
+      start_interval: 100ms
+
+  temporal-ui:
+    image: temporalio/ui:2.53.2
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      # The UI is a browser client of its own server, and the browser's origin
+      # is the PUBLISHED port (8233), not the container's (8080). Without this
+      # every API call from the page is blocked by CORS.
+      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+    ports:
+      # 8233 on the host, matching what `temporal server start-dev` publishes,
+      # so the URL in docs/LOCAL_DEVELOPMENT.md is the one people already know.
+      - '127.0.0.1:8233:8080'
+    healthcheck:
+      # The image is busybox-based and has wget but no curl. `-q -O -` because
+      # busybox wget writes to ./index.html otherwise, in a read-only-ish
+      # container, and a healthcheck that fails on disk rather than on the
+      # service is worse than none.
+      test: ['CMD', 'wget', '--quiet', '--output-document=-', 'http://127.0.0.1:8080/health']
       interval: 3s
       timeout: 5s
       retries: 30

@@ -63,7 +63,7 @@ Next.js · React Three Fiber · Tailwind · shadcn/ui · TanStack Query · Zusta
 ## Quick start
 
 Working today, on a fresh clone — `apps/api` is a health-probe skeleton,
-`apps/web` is a one-page localised shell, and `apps/workers` does not exist yet:
+`apps/web` is a one-page localised shell, and `apps/workers` is a runtime skeleton — two entry points with a stub activity each, no geometry and no slicing:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -78,7 +78,7 @@ pnpm --filter @metrika/web test:e2e   # Playwright; builds and starts apps/web i
 ```
 
 `pnpm db:seed` does not exist yet, and `pnpm dev` does not yet start the Python
-workers. CI runs four jobs on every pull request: `verify`, `integration`, `web`
+workers. CI runs five jobs on every pull request: `verify`, `integration`, `web`
 and `openapi`.
 
 See [docs/LOCAL_DEVELOPMENT.md](./docs/LOCAL_DEVELOPMENT.md).

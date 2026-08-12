@@ -1,0 +1,38 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test:unit": {
+      "dependsOn": ["^build", "build"],
+      // This package owns dependency-pins.test.ts, which walks every manifest
+      // in the workspace — including the Python ones. Turbo hashes only a
+      // package's own files by default, so without these entries the gate
+      // reports SUCCESS FROM CACHE while a pin it validates has been loosened.
+      //
+      // MEASURED: prime the cache green, loosen `hatchling==` to `hatchling>=`
+      // in apps/workers/packages/metrika_core/pyproject.toml, re-run — `cache
+      // hit, replaying logs a640fe6c65b6afcf`, the SAME hash, exit 0. The gate
+      // did not merely pass; it never ran.
+      //
+      // `$TURBO_ROOT$` is what lets a package's inputs reach outside its own
+      // directory. Every manifest kind the test reads needs an entry here, so
+      // adding a new one to the walk means adding it here too.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/pnpm-workspace.yaml",
+        "$TURBO_ROOT$/apps/*/package.json",
+        "$TURBO_ROOT$/packages/*/package.json",
+        // Repo-wide, matching the walk. pyprojectPaths() deliberately searches
+        // the whole repository — its own comment says a pyproject.toml
+        // "somewhere else entirely" is exactly what a members-driven walk would
+        // miss — so an apps/workers-shaped glob would silently reinstate that
+        // blind spot. MEASURED: with the narrow globs, adding
+        // scripts/pyproject.toml carrying `requests>=2.0.0` left the gate green
+        // from cache.
+        "$TURBO_ROOT$/**/pyproject.toml",
+        "$TURBO_ROOT$/apps/workers/uv.lock"
+      ]
+    }
+  }
+}

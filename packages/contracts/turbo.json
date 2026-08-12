@@ -9,7 +9,24 @@
     // here rather than on the shared task in the root turbo.json — where it
     // made turbo warn about five packages that were behaving correctly.
     "test:unit": {
-      "outputs": ["coverage/**"]
+      "outputs": ["coverage/**"],
+      // test/json-schema.test.ts reads the COMMITTED pydantic models in
+      // apps/workers and asserts they still match the schemas emitted here.
+      // Turbo hashes only a package's own files, so without this the gate
+      // reports success FROM CACHE while the file it validates has drifted —
+      // and drifting is the only thing that file can do wrong.
+      //
+      // MEASURED on this package: prime green, edit a pattern in the generated
+      // `__init__.py`, re-run — cache MISS and the suite fails. With the entry
+      // removed, the same edit is a cache hit at exit 0.
+      //
+      // `$TURBO_ROOT$` is what lets a package's inputs reach outside its own
+      // directory; `$TURBO_DEFAULT$` keeps the package's own files hashed, since
+      // naming any input replaces the default set rather than extending it.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/workers/packages/metrika_core/src/metrika_core/contracts/**"
+      ]
     }
   }
 }

@@ -27,6 +27,7 @@ playwright-report/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 
 # agent scratch — ledgers, briefs, review packages
 .superpowers/

@@ -1,0 +1,329 @@
+[project]
+name = "metrika-workers"
+version = "0.0.0"
+# Exact-major, not `>=3.12`. ADR-0027 measured every direct and transitive
+# dependency against this interpreter; `numpy@2.5.2` (via `trimesh`) already
+# forecloses 3.11 downward, and `trimesh@5.0.0` would install on 3.14 with no
+# warning at all despite classifying only up to 3.13. The patch is pinned in
+# `.python-version`, which is the file both `uv` and `pyenv` read.
+requires-python = "==3.12.*"
+dependencies = []
+
+[tool.uv.workspace]
+# `geometry` and `slicer` (the two worker processes) and `packages/*` (their
+# shared libraries) are added by later tasks in Plan 0B-3. A member pattern
+# matching nothing is not an error, so the list is written once, here, rather
+# than grown by whichever task happens to add a directory first.
+members = ["packages/*", "geometry", "slicer"]
+
+[tool.ruff]
+target-version = "py312"
+# 100 to match Prettier's `printWidth` — one wrap width for the repository
+# rather than one per language.
+#
+# READ BEFORE CHANGING ANY KEY IN ANY `[tool.ruff*]` TABLE IN THIS FILE.
+# This configuration is an INPUT TO GENERATED CODE. `contracts:emit` runs
+# `datamodel-codegen --formatters ruff-format ruff-check`, so the committed
+# pydantic models in `packages/metrika_core/src/metrika_core/contracts/` are a
+# function of this file, of the pinned `ruff`, and of
+# `--target-python-version` — not of the JSON Schema alone. CI diffs them
+# against the committed copy, so an edit here turns that gate red in files this
+# commit never touched, on a pull request about something else. Regenerate and
+# commit the models in the SAME commit as any change (ADR-0027 obligation 6). A
+# diff gate that goes red for reasons unrelated to its subject is a gate that
+# gets disabled.
+#
+# MEASURED against the committed 216-line model, so the sizes are known rather
+# than feared. The largest mover is NOT in this table:
+#
+#   [tool.ruff.format] quote-style = "single"  →  46 lines rewritten
+#   [tool.ruff] line-length = 60               →  25 lines rewritten, +32 lines
+#   [tool.ruff] line-length = 88               →   7 lines rewritten, +10 lines
+#   [tool.ruff.lint.isort] known-first-party   →  byte-identical TODAY, and
+#       load-bearing the moment a generated model carries an absolute
+#       intra-package import. None does; the day one does, this key decides
+#       which block it sorts into and a blank line appears.
+#
+# THE FIRST LINE IS THE POINT. There is deliberately no `[tool.ruff.format]`
+# table, and someone adding one writes it at the BOTTOM of this file — nowhere
+# near this comment, and it is the single biggest byte-mover of the four. There
+# is a matching warning where it would go, after
+# `[tool.ruff.lint.per-file-ignores]`.
+line-length = 100
+
+[tool.ruff.lint]
+# Deliberately broad. The Node side runs typescript-eslint's strict and
+# stylistic sets plus type-aware rules; an equivalently strict Python side is
+# what ADR-0007 promised when it accepted a second toolchain.
+#
+# The last three are each a specific Node-side rule this repository already
+# enforces, and each was MEASURED passing before it was added:
+#
+#   PGH  suppressions must name a code. PGH003 is the load-bearing one — a bare
+#        `# type: ignore` on line 1 makes mypy skip the ENTIRE FILE and still
+#        exit 0, measured, including with `ignore-without-code` enabled. mypy
+#        cannot see its own blind spot; ruff can. PGH004 is the `# noqa`
+#        equivalent. Together with CI's justification grep this is the Python
+#        half of the `@ts-ignore` ban.
+#   DTZ  `datetime.datetime.now()` without a timezone. ADR-0027 names DTZ005 as
+#        something this project wants; it passed without this.
+#   T20  `print()`, against `no-console: 'error'` on the Node side. A worker
+#        logs through structlog or not at all.
+#
+# Adding rules here is not free — see the codegen warning above `line-length`.
+# Doing it NOW is deliberate: `--formatters ruff-check` runs these over the
+# generated models, and Task 4 has not committed one yet, so this is the last
+# moment a `select` change costs nothing.
+select = [
+  "E",
+  "F",
+  "I",
+  "N",
+  "UP",
+  "B",
+  "A",
+  "C4",
+  "SIM",
+  "ARG",
+  "PTH",
+  "RUF",
+  "ASYNC",
+  "S",
+  "PGH",
+  "DTZ",
+  "T20",
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+# The workspace's own distributions, so their imports sort into the first-party
+# block rather than beside `boto3`. ruff infers first-party from `src`, which
+# defaults to the directory holding this file — and every member lives under
+# `packages/<name>/src/`, so nothing is inferred and EVERY internal import would
+# otherwise be filed as third-party. Measured: without this, `I001` demanded
+# `from metrika_core.logging import …` be grouped with `import structlog`.
+#
+# A member added later and not listed here fails `I001` loudly rather than being
+# silently misfiled, which is why this is an explicit list and not a glob.
+#
+# All three members, added as each arrived. MEASURED for the two worker packages
+# when Task 6 added them: without the entry, `from metrika_geometry.activities
+# import ACTIVITIES` in that package's own `__main__.py` is filed beside
+# `import structlog` and `I001` demands it — loudly, which is the good version
+# of this failure and the reason the list is explicit.
+known-first-party = ["metrika_core", "metrika_geometry", "metrika_slicer"]
+
+[tool.ruff.lint.per-file-ignores]
+# assert is the point of a test file; S101 bans it everywhere else.
+#
+# S607 (partial executable path) is relaxed for tests ONLY. `S` exists here to
+# keep a worker from shelling out to whatever `PATH` happens to resolve; a test
+# that asserts `uv run ruff check` is clean has to invoke the developer's `uv`
+# through `PATH`, because reproducing what a developer runs IS the assertion.
+# Hard-coding an absolute interpreter path would make the test pass on one
+# machine. Every other `S` rule, S603 included, still applies to test files.
+#
+# `**/tests/**`, NOT `tests/**`. MEASURED when the first member package arrived:
+# ruff resolves a per-file-ignores pattern containing a slash against the path
+# relative to THIS file's directory, so `tests/**` covered
+# `apps/workers/tests/` and silently covered nothing else — every `assert` in
+# `packages/metrika_core/tests/` was an S101 error. A pattern that matches
+# fewer files than it reads as is the failure mode this repository keeps
+# meeting; here it failed loudly, which is the good version of it.
+"**/tests/**" = ["S101", "S607"]
+# The GENERATED contract models, and N815 only.
+#
+# `amountMinor` is the WIRE name. `packages/contracts` defines it in camelCase
+# because that is what crosses the network, and the generated model is that wire
+# format expressed in Python — so N815 ("mixedCase in class scope") is firing on
+# the one thing in this file that must not be renamed. The alternative,
+# `datamodel-codegen --snake-case-field`, renames the attribute and adds
+# `Field(alias="amountMinor")`, which makes `model_dump()` emit `amount_minor`
+# unless every caller remembers `by_alias=True` — a worker's response silently
+# failing Zod's parse on the other side, in exchange for a naming convention.
+#
+# SCOPED TO THE GENERATED DIRECTORY, and asserted to stay that way:
+# `packages/metrika_core/tests/test_generated_contracts.py` fails if this entry
+# names anything else or waives any rule but N815. A hand-written module has no
+# excuse for a camelCase attribute; a file nobody may edit by hand has nothing
+# else it could do.
+"packages/metrika_core/src/metrika_core/contracts/**" = ["N815"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELIBERATELY NO `[tool.ruff.format]` TABLE, and this is where you were about
+# to add one.
+#
+# `contracts:emit` runs `datamodel-codegen --formatters ruff-format ruff-check`,
+# so ruff's FORMATTER settings are an input to a file this repository commits
+# and CI byte-diffs. MEASURED on the 216-line generated model: adding
+# `quote-style = "single"` rewrites **46 of its lines**. That is the largest
+# single byte-mover in this file — more than double what `line-length = 88`
+# does — and it is the one furthest from the warning that explains it, which is
+# why this block exists here as well as at the top.
+#
+# Adding a `[tool.ruff.format]` table is fine. Adding one WITHOUT re-running
+# `pnpm contracts:emit` in the same commit turns CI's `contracts` job red on the
+# next unrelated pull request. ADR-0027 obligation 6.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+warn_unreachable = true
+# Not optional, and not a convenience. MEASURED on mypy 2.3.0 and
+# pydantic-settings 2.15.0: without it, mypy reads pydantic's
+# `dataclass_transform` and synthesises `__init__` with every field REQUIRED, so
+# `WorkerSettings()` — the only way a settings class is ever constructed, since
+# the values come from the environment — is `Missing named argument
+# "s3_bucket"`. The plugin special-cases `BaseSettings` and makes those
+# arguments optional, which is the whole reason it special-cases it.
+#
+# The alternative was a `# type: ignore[call-arg]` at every construction site,
+# i.e. suppressing the type checker at exactly the point where a settings class
+# is used. `pydantic` is a dependency of every member that has one, so the
+# plugin is always importable here.
+plugins = ["pydantic.mypy"]
+# The Python half of "no `any`, no exceptions". `strict` alone still permits a
+# hand-written `Any` annotation, which is the same escape hatch `@ts-ignore` is
+# on the other side and is banned for the same reason.
+#
+# KNOWN, and it lands on Task 4 rather than here: this is stricter than the
+# plain `--strict` ADR-0027 measured `datamodel-codegen` against. A schema with
+# `additionalProperties` generates `dict[str, Any]`, which this flag rejects on
+# a model the spike never exercised. That is a real decision for Task 4 —
+# narrow the schema, or relax this to `disallow_any_expr = false` reasoning, or
+# per-module-override the generated package — but not a reason to discover it
+# there without warning.
+#
+# AND IT IS WORSE THAN THAT, measured by Task 3 on mypy 2.3.0: this flag reports
+# `Explicit "Any" is not allowed [explicit-any]` on the CLASS LINE of EVERY
+# pydantic model, including `class S(BaseModel): pass` with no annotation of its
+# own anywhere. The `Any` is in the `__init__` mypy synthesises from pydantic's
+# `dataclass_transform`, not in the checked file, and `plugins =
+# ["pydantic.mypy"]` above does not remove it. `metrika_core.settings` carries
+# one justified `# type: ignore[explicit-any]` for it, which `warn_unused_ignores`
+# will report the day mypy stops attributing a synthesised member to our source.
+#
+# That does NOT scale to Task 4, and Task 4 should not discover it either: a
+# GENERATED model cannot carry a hand-written suppression, so the choice there
+# is a `[[tool.mypy.overrides]]` on the generated package or dropping this flag.
+# Task 4 took the override; it is immediately below.
+disallow_any_explicit = true
+# A suppression must name what it suppresses. `# type: ignore` bare is the
+# `@ts-ignore` of this side; with a code it is `@ts-expect-error`, which at
+# least stops applying when the underlying error goes away.
+#
+# This does NOT cover a file-level `# type: ignore` (line 1 skips the whole file
+# and mypy exits 0 regardless — measured). ruff's PGH003 is what catches that,
+# which is why both gates carry a piece of this rule.
+enable_error_code = ["ignore-without-code"]
+
+# THE ONLY MODULE EXEMPT FROM `disallow_any_explicit`, and the list is asserted.
+#
+# `metrika_core.contracts` is generated by `pnpm contracts:emit` and byte-diffed
+# in CI, so nothing may be added to it by hand — which rules out the justified
+# `# type: ignore[explicit-any]` that `metrika_core.settings` carries for the
+# same cause. MEASURED on mypy 2.3.0: 17 `explicit-any` errors on that one file,
+# every one of them on a `class X(RootModel[…])` or `class X(BaseModel)` line,
+# from the `__init__` mypy synthesises out of pydantic's `dataclass_transform`.
+# The `Any` is not in the generated source at all — `grep -c 'Any' ` on it is 0.
+#
+# ISOLATED WITH `--config-file` so the project config could not leak in:
+#
+#     [mypy] strict = true                                → exit 0
+#     [mypy] strict = true, disallow_any_explicit = true  → exit 1  explicit-any
+#
+# So `--strict`, which is what CLAUDE.md and docs/TYPESCRIPT_AND_TOOLING.md
+# actually commit to, is untouched by this override; the flag being relaxed is an
+# extra on top of it. `plugins = ["pydantic.mypy"]` does NOT fix it, and that is
+# a tried remedy rather than an untried one: `[tool.mypy]` above already sets the
+# plugin, for the `call-arg` reason given there. MEASURED with it active — delete
+# the justified suppression on `WorkerSettings`'s class line and this project's
+# own `mypy .` exits 1 with `Explicit "Any" is not allowed [explicit-any]`
+# pointing at that line. (An earlier draft of this comment credited the idea to
+# ADR-0027. That ADR does not mention the plugin anywhere; the attribution was
+# invented and is now removed.)
+#
+# NOT `metrika_core.*`, and not a second entry. `metrika_core`, `geometry` and
+# `slicer` are where humans write code and an explicit `Any` there is a real
+# smell worth failing on. An exemption list is precisely the thing that widens
+# under time pressure, so
+# `packages/metrika_core/tests/test_generated_contracts.py` asserts this list is
+# exactly `["metrika_core.contracts"]` and nothing else — proven by adding
+# `metrika_core.*` to it and watching that test go red.
+[[tool.mypy.overrides]]
+module = ["metrika_core.contracts"]
+disallow_any_explicit = false
+
+[dependency-groups]
+# Exact `==` pins, every one from ADR-0027's measured table. `uv add` writes
+# `>=` ranges instead, so these were written by hand.
+#
+# What ENFORCES that, rather than asserting it: every script in `package.json`
+# runs `uv run --locked --all-packages`, and `tests/test_toolchain.py` runs
+# `uv lock --check`. MEASURED, and this is the whole reason both exist: after an
+# edit to this file, a bare `uv run` **re-locks and exits 0** — silently
+# re-resolving the table above — while `--locked` exits 2 and `uv lock --check`
+# exits 1. `--frozen` is the weaker flag: it declines to update the lockfile but
+# says nothing when the lockfile no longer matches this file. ADR-0027
+# obligation 1.
+#
+# `boto3-stubs[s3]` is NOT a convenience. `boto3` and `botocore` are the only
+# packages in this toolchain that ship no `py.typed` marker; without the stubs
+# `mypy --strict` reports `import-untyped` and the whole S3 surface degrades to
+# unchecked `Any` — in the one module the workers use to reach storage.
+# ADR-0027 obligation 3.
+# `testcontainers` is NOT in ADR-0027's table — that table covers what the six
+# tasks install to RUN the workers, and this runs a test. It is here rather than
+# mocked for the reason `packages/testing` exists on the Node side: a mocked S3
+# client proves `metrika_core.storage` calls a method, and the only thing that
+# module does is be a boundary. It ships `py.typed`, so `mypy --strict` checks
+# the test that uses it rather than degrading to `Any` (checked before adding),
+# and `requires_python >=3.10` covers 3.12. No extras: the `minio` extra pulls
+# the `minio` client package, and these tests reach MinIO through `boto3`
+# specifically, because `boto3` is what a worker will use.
+#
+# `datamodel-code-generator` is a BUILD-TIME tool and belongs nowhere near a
+# worker's runtime closure — it drags in `black`, `isort` and 17 other packages,
+# one of which is a second formatter that disagrees with `ruff`. It is here, at
+# the workspace root, for the same reason `ruff` and `mypy` are: `pnpm
+# contracts:emit` runs it, and nothing a worker image installs does.
+# `packages/metrika_core/tests/test_dependencies.py` asserts that separation
+# holds by walking `metrika-core`'s resolved closure and rejecting anything not
+# on its whitelist.
+dev = [
+  "ruff==0.16.2",
+  "mypy==2.3.0",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "boto3-stubs[s3]==1.43.67",
+  "testcontainers==4.15.0",
+  "datamodel-code-generator==0.72.2",
+]
+
+[tool.pytest.ini_options]
+# `pnpm verify` must stay runnable with no Docker daemon. That is a promise this
+# repository already makes out loud — `packages/testing/src/docker.ts` tells a
+# developer "Unit tests (`pnpm test:unit`) do not need Docker and are
+# unaffected" — and `metrika_core`'s storage suite starts a real MinIO
+# container, so it is marked and deselected here rather than left to fail
+# confusingly on a laptop with Docker closed.
+#
+# `-m` is `store`, so the `-m integration` in this package's `test:integration`
+# script overrides this rather than combining with it. The two selections are
+# complementary by construction: everything is either integration or not.
+markers = [
+  "integration: needs a Docker daemon; run via `pnpm --filter @metrika/workers run test:integration`",
+]
+addopts = "-m 'not integration'"
+# ADR-0027 obligation 9. Task 5 writes the first `async def` worker test and
+# Task 6 the first workflow one; this table is where the setting has to live, so
+# it is set here rather than left to whichever task trips over it.
+#
+# `pytest@9.1.1` FAILS an unmarked async test rather than skipping it with a
+# warning, which closes the vacuous-pass hazard `asyncio_mode` used to carry —
+# but the fix for that failure must be this line, not a developer quietly
+# deleting the test. `tests/test_toolchain.py` therefore asserts both halves the
+# obligation names: that an unmarked coroutine test RUNS, and that a failing one
+# is reported as a failure rather than passing or being skipped.
+asyncio_mode = "auto"

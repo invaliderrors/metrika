@@ -7,7 +7,12 @@ export default defineConfig({
     // per RUN, before it forks any worker — regardless of `pool`, `isolate`
     // or `fileParallelism`. This is VERIFIED, not a prediction: see Task 8
     // Step 3's measurement in this plan.
-    globalSetup: ['./test/global-setup.ts'],
+    // Two files, because two harnesses. Vitest runs each entry once per run,
+    // in order, before forking any worker. Only THIS package lists the
+    // Temporal one: packages/database and apps/api need a database and not a
+    // workflow server, and a globalSetup they do not use is a container they
+    // would still pay for.
+    globalSetup: ['./test/global-setup.ts', './test/global-setup-temporal.ts'],
     // Files still run one at a time (fileParallelism:false forces
     // maxWorkers to 1), so the small container's connection budget never
     // sees concurrent load. NOTE: this does NOT reuse a single forked
