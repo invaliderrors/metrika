@@ -18,9 +18,20 @@ from __future__ import annotations
 
 import os
 
+import _temporal_server
 import pytest
 
-from _temporal_server import settings, temporal_address  # noqa: F401  # isort: skip
+# THE RE-EXPORT, spelled as assignments rather than as a `from … import` line
+# carrying a suppression. pytest collects fixtures from this module's namespace,
+# so binding the names here is what shares them.
+#
+# Written this way there is no unused-import warning to suppress, which is worth
+# two lines: a suppression on this line would need an inline justification (and
+# CI greps for that, not for the linters' opinion of it), and it would have to
+# carry an isort directive as well, because `_temporal_server` is a sibling
+# module that ruff files as third-party. Assignments need neither.
+settings = _temporal_server.settings
+temporal_address = _temporal_server.temporal_address
 
 # `METRIKA_WORKER_`, deliberately narrower than the `METRIKA_` this file used to
 # clear. Two reasons, and the second is the interesting one.
