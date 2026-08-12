@@ -30,9 +30,13 @@ import { z } from 'zod';
  *     names, so `password` and `*.password` are two different rules and neither
  *     implies the other.
  *   - **structlog** (`apps/workers`) matches the log event's keys directly, and
- *     matches a name's WORD SUFFIX as well as the whole name, so `s3_url` and
- *     `downloadUrl` are both caught by `url`. It can afford to, because a
- *     structlog event dict is flat.
+ *     matches a name's WORD SUFFIX as well as the whole name, so `s3_url`,
+ *     `downloadUrl`, `presigned_urls`, `signedURL2` and `signedurl` are all
+ *     caught by entries here. It can afford to, because a structlog event dict
+ *     is flat. Pino cannot: `redact.paths` is a path list, so **every spelling
+ *     a Node caller might write needs its own entry here or its own path
+ *     there** — that asymmetry is the reason this list is names and not paths,
+ *     and the reason the two sinks are not asserted equal.
  *   - **Sentry** (`apps/web`) walks the event and applies the same names.
  *
  * So the sinks agree on the NAMES and cannot agree on the matching, and this
@@ -53,8 +57,12 @@ import { z } from 'zod';
  *     the object until it expires, so a signed URL in a log is a leaked model.
  *     Hence `url` in the bare form as well as the four specific spellings: the
  *     specific ones are what Pino can match, and the bare one is what lets the
- *     Python matcher catch `s3_url`, `object_url` and every other name a caller
- *     invents at 2am. It has a cost on the Node side — see the note below.
+ *     Python matcher catch `s3_url`, `object_url`, `downloadURL` and their
+ *     plurals from one entry. It has a cost on the Node side — see the note
+ *     below. What it does NOT reach on either side is an invented concatenation
+ *     that is not itself a name here (`mysignedurl`); `metrika_core.logging`'s
+ *     `is_redacted_key` names that limit and says why closing it would take
+ *     `curl` with it.
  *   - **File names and project names are customer intellectual property.**
  *     `Torre_Bacatá_Fase3_Final.stl` in a log tells an observer what an
  *     architect is working on (`docs/SECURITY.md` §10). The model ID is the
