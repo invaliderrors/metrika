@@ -1,4 +1,5 @@
 import { RedactedFieldName, redactionCorpus } from '@metrika/contracts';
+import type { Logger } from 'pino';
 import { describe, expect, it } from 'vitest';
 import {
   REDACTION_CENSOR,
@@ -24,11 +25,25 @@ const CORPUS = redactionCorpus();
  *     `signedUrl` does not imply `signed_url` and no derivation of seventeen
  *     names could produce the 956 spellings the corpus declares.
  *
- * So the path assertions below all go through a child binding, and the walk
- * assertions all go through the merged object. That is not a stylistic split:
- * it is what makes each mechanism's removal DETECTABLE. Asserted through a
- * merged object, every path in `REDACTION_PATHS` could be deleted with the
- * suite still green, because the walk would catch the same key.
+ * **A leak lived in the gap between those two rows, and the shape of this file
+ * is what hid it.** The first version asserted child bindings in the canonical
+ * spelling and non-canonical spellings in a merged object — the SUM of the two
+ * dimensions — so `logger.child({ signed_url })`, their PRODUCT, was reached by
+ * neither mechanism and went out verbatim with every fixture green. MEASURED.
+ * `createLogger` now puts a child's bindings through the walk as well, and the
+ * corpus below is graded through all four shapes a key can arrive by rather
+ * than one.
+ *
+ * **What that means for the derived paths, stated rather than implied:** once
+ * the walk reaches child bindings too, `REDACTION_PATHS`'s fifty-one derived
+ * entries no longer have any shape to themselves — the walk catches the same
+ * keys, in more spellings. Their behavioural contribution is `err.message` and
+ * `err.stack`, which are non-enumerable and which no walk can see, plus a
+ * backstop in the canonical spelling if the walk is ever removed or bypassed.
+ * So the derivation is asserted STRUCTURALLY below (the paths are the shared
+ * enum, at three depths) and the leak assertions are behavioural. Removing a
+ * derived path turns this file red at the structural assertion and not at a
+ * leak, and that is a property of defence in depth rather than a weak fixture.
  */
 describe('REDACTION_PATHS', () => {
   it('is derived from RedactedFieldName rather than authored', () => {
@@ -66,11 +81,13 @@ describe('REDACTION_PATHS', () => {
 });
 
 /**
- * Every rejection below goes through a CHILD BINDING, which is the shape only
- * `redact.paths` reaches. Delete the corresponding path and the assertion goes
- * red; that is the mutation test Step 5 of this task's brief asks for.
+ * Every rejection below goes through a CHILD BINDING, at each of the three
+ * depths a derived path distinguishes. Both mechanisms cover this shape now, so
+ * these are the CATEGORY assertions the task brief names — one per class of
+ * field, each carrying the reason that class is on the list — rather than the
+ * mutation witnesses for the paths, which are structural and are above.
  */
-describe('the derived paths, at every depth pino distinguishes', () => {
+describe('the categories, through a child binding at every depth', () => {
   function childLine(bindings: Record<string, unknown>): Record<string, unknown> {
     const captured = captureLogger();
     captured.logger.child(bindings).info('a line');
@@ -186,6 +203,64 @@ describe('the derived paths, at every depth pino distinguishes', () => {
     expect(line['cacheKey']).toBe('sha256:deadbeef');
     expect(line['modelId']).toBe('mv_1');
   });
+
+  /**
+   * The shape that leaked, kept as its own named case because a corpus loop
+   * failing tells you 956 things and this tells you one.
+   *
+   * `formatters.log` is never called for a child binding and `REDACTION_PATHS`
+   * matches literal names, so before `redactChildBindings` these three went out
+   * verbatim while every other fixture in this file was green.
+   */
+  it.each(['signed_url', 'SIGNED_URL', 'presigned_urls'])(
+    'censors %s in a child binding, which neither mechanism reached on its own',
+    (spelling) => {
+      const captured = captureLogger();
+
+      captured.logger.child({ [spelling]: 'SECRET-VALUE' }).info('a line');
+
+      expect(captured.raw()).not.toContain('SECRET-VALUE');
+    },
+  );
+
+  it('still lets a child binding carry ordinary data through unchanged', () => {
+    const captured = captureLogger();
+
+    captured.logger
+      .child({ context: 'DomainExceptionFilter', attempt: 3, upload: { modelId: 'mv_1' } })
+      .info('a line');
+    const line = captured.only();
+
+    expect(line['context']).toBe('DomainExceptionFilter');
+    expect(line['attempt']).toBe(3);
+    expect(line['upload']).toStrictEqual({ modelId: 'mv_1' });
+  });
+
+  /**
+   * The assertion whose absence let a regression through: the first version of
+   * the child wrap delegated to a logger bound at wrap time, and pino builds a
+   * child with `Object.create(this)` — so the inherited wrapper sent
+   * `child(a).child(b)` back to the ROOT and `a` vanished. Redaction stayed
+   * perfect and a correlation field disappeared from every line beneath it.
+   */
+  it('keeps a parent binding when a child is chained', () => {
+    const captured = captureLogger();
+
+    captured.logger.child({ organizationId: 'org_1' }).child({ modelId: 'mv_1' }).info('a line');
+    const line = captured.only();
+
+    expect(line['organizationId']).toBe('org_1');
+    expect(line['modelId']).toBe('mv_1');
+  });
+
+  it('does not mutate the bindings the caller passed to child()', () => {
+    const captured = captureLogger();
+    const bindings = { signed_url: 'https://s3.example/a?X-Amz-Signature=DEADBEEF' };
+
+    captured.logger.child(bindings).info('a line');
+
+    expect(bindings.signed_url).toContain('DEADBEEF');
+  });
 });
 
 /**
@@ -204,24 +279,76 @@ describe('the walk, graded against the declared corpus', () => {
     expect(CORPUS.some((row) => !row.redacted)).toBe(true);
   });
 
-  function verdictFor(key: string): boolean {
+  /**
+   * THE PRODUCT, NOT THE SUM — and the reason this helper takes a shape.
+   *
+   * The first version of this suite graded the corpus through a merged object
+   * only, and asserted child bindings only in the canonical camelCase. Each
+   * fixture passed and their COMBINATION leaked: `formatters.log` is never
+   * called for a child binding, `REDACTION_PATHS` matches literal names, and
+   * `logger.child({ signed_url })` was therefore censored by nothing at all.
+   * MEASURED going out verbatim, with the whole suite green.
+   *
+   * So every corpus row is now run through all four shapes a key can reach this
+   * sink by. `deep` is below any derived path; `child` and `grandchild` are
+   * below any walk.
+   */
+  const SHAPES: Readonly<Record<string, (logger: Logger, key: string) => void>> = {
+    merged: (logger, key) => {
+      logger.info({ [key]: 'SECRET-VALUE' }, 'merged');
+    },
+    deep: (logger, key) => {
+      logger.info({ a: { b: { c: { [key]: 'SECRET-VALUE' } } } }, 'deep');
+    },
+    child: (logger, key) => {
+      logger.child({ [key]: 'SECRET-VALUE' }).info('child');
+    },
+    grandchild: (logger, key) => {
+      logger
+        .child({ a: 1 })
+        .child({ nested: { [key]: 'SECRET-VALUE' } })
+        .info('grandchild');
+    },
+  };
+
+  const SHAPE_NAMES = Object.keys(SHAPES);
+
+  /**
+   * `level` is not a redaction verdict on the flat-child shape and must not be
+   * graded as one: pino's `child(bindings)` READS `bindings.level` as the
+   * child's log level rather than emitting it, so the value never reaches the
+   * line and "absent" cannot be told apart from "censored". It is a
+   * `MUST_SURVIVE` row and it is graded through the other three shapes, which
+   * is why this exclusion is one key rather than a category.
+   */
+  const RESERVED_BY_PINO_CHILD = new Set(['level']);
+
+  function rowsFor(shape: string): typeof CORPUS {
+    return shape === 'child'
+      ? CORPUS.filter((row) => !RESERVED_BY_PINO_CHILD.has(row.key))
+      : CORPUS;
+  }
+
+  function verdictFor(shape: string, key: string): boolean {
     const captured = captureLogger();
-    captured.logger.info({ a: { b: { c: { [key]: 'SECRET-VALUE' } } } }, 'deep');
+    // Non-null: `shape` comes from `Object.keys(SHAPES)`, and
+    // `noUncheckedIndexedAccess` cannot see that.
+    (SHAPES[shape] as (logger: Logger, key: string) => void)(captured.logger, key);
     return !captured.raw().includes('SECRET-VALUE');
   }
 
-  it('censors every key the corpus says must be redacted', () => {
-    const missed = CORPUS.filter((row) => row.redacted && !verdictFor(row.key)).map(
-      (row) => row.key,
-    );
+  it.each(SHAPE_NAMES)('censors every key the corpus redacts, as a %s binding', (shape) => {
+    const missed = rowsFor(shape)
+      .filter((row) => row.redacted && !verdictFor(shape, row.key))
+      .map((row) => row.key);
 
     expect(missed, 'these keys reached the sink and were written down').toStrictEqual([]);
   });
 
-  it('leaves every key the corpus says must survive', () => {
-    const overreached = CORPUS.filter((row) => !row.redacted && verdictFor(row.key)).map(
-      (row) => row.key,
-    );
+  it.each(SHAPE_NAMES)('leaves every key the corpus keeps, as a %s binding', (shape) => {
+    const overreached = rowsFor(shape)
+      .filter((row) => !row.redacted && verdictFor(shape, row.key))
+      .map((row) => row.key);
 
     expect(overreached, 'a control that censors these costs real debuggability').toStrictEqual([]);
   });

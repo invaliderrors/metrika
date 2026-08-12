@@ -1,4 +1,12 @@
-import { pino, stdTimeFunctions, type DestinationStream, type Logger, type LogFn } from 'pino';
+import {
+  pino,
+  stdTimeFunctions,
+  type Bindings,
+  type ChildLoggerOptions,
+  type DestinationStream,
+  type Logger,
+  type LogFn,
+} from 'pino';
 import type { Env } from '../../config/env.js';
 import { REDACTION_CENSOR, REDACTION_PATHS, redactLogObject } from './redaction.js';
 
@@ -165,6 +173,56 @@ function rewrapBareError(this: Logger, args: Parameters<LogFn>, method: LogFn): 
 }
 
 /**
+ * Puts a child's BINDINGS through the same walk a merged log object gets, then
+ * does the same to every logger descended from it.
+ *
+ * **This closes a hole the first version of this module had, and the hole is
+ * the product of two things each of which was covered on its own.** MEASURED:
+ * `formatters.log` is never called for child bindings, and `REDACTION_PATHS`
+ * matches literal names — so `logger.child({ signedUrl })` was censored by the
+ * paths and `logger.child({ signed_url })` was censored by NOTHING and went out
+ * verbatim, as did `{ SIGNED_URL }` and every other spelling `isRedactedKey`
+ * exists to catch. The fixtures asserted child bindings in the canonical
+ * spelling and non-canonical spellings in a merged object; neither could see
+ * their combination. That is this repository's recorded defect class — cover
+ * the product, not the sum — and it took a third reading of the same code to
+ * find.
+ *
+ * It is an own property shadowing pino's prototype method, and it **delegates
+ * on `this` rather than on a bound parent** — which is the whole of the second
+ * bug this function had. pino's `child()` builds the new logger with
+ * `Object.create(this)`, so a child INHERITS this own property; a wrapper that
+ * closed over `logger.child.bind(logger)` therefore sent
+ * `logger.child(a).child(b)` back to the ROOT, and MEASURED, the grandchild
+ * silently lost `a` — a correlation field vanishing from every line under it.
+ * Delegating on `this` fixes it and makes the recursion unnecessary: the
+ * inherited wrapper already applies at every depth. `test/redaction.test.ts`
+ * asserts the chain keeps its parent's bindings, which is the assertion whose
+ * absence let it through.
+ *
+ * Nothing inside pino calls `child`, so the only caller is application code.
+ */
+function redactChildBindings(logger: Logger): Logger {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- reading `child` UNBOUND is the point, and binding it is the measured bug this function's doc records: it is re-invoked below with `.call(this, …)` so that a grandchild delegates to ITS parent rather than to the root, which is what stops the chain losing the parent's bindings.
+  const inherited = logger.child;
+  // Generic in the same parameter pino's own `child` is, so the assignment is
+  // type-safe for a caller that declares custom levels. The cast is on the
+  // RETURN only: `.call` erases the instantiation, and nothing in this
+  // application declares a custom pino level, so the value is `never` at every
+  // call site this repository contains.
+  function child<ChildCustomLevels extends string = never>(
+    this: Logger,
+    bindings: Bindings,
+    options?: ChildLoggerOptions<ChildCustomLevels>,
+  ): Logger<ChildCustomLevels> {
+    const created: unknown = inherited.call(this, redactLogObject(bindings), options);
+    return created as Logger<ChildCustomLevels>;
+  }
+  logger.child = child;
+  return logger;
+}
+
+/**
  * `Pick<Env, 'LOG_LEVEL'>` rather than `Env`, so the signature states what this
  * reads. `EnvService.values` satisfies it, and a test does not have to invent a
  * DATABASE_URL to build a logger.
@@ -188,5 +246,7 @@ export function createLogger(env: Pick<Env, 'LOG_LEVEL'>, destination?: Destinat
     redact: { paths: [...REDACTION_PATHS], censor: REDACTION_CENSOR },
     hooks: { logMethod: rewrapBareError },
   };
-  return destination === undefined ? pino(options) : pino(options, destination);
+  return redactChildBindings(
+    destination === undefined ? pino(options) : pino(options, destination),
+  );
 }
