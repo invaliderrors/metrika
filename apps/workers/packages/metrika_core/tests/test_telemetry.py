@@ -366,11 +366,19 @@ def test_the_tracer_provider_names_the_service_on_its_resource() -> None:
 
 
 def _span_processor_count(provider: TracerProvider) -> int:
-    """How many processors a provider carries, read without private-API guessing.
+    """How many processors a provider carries. **This reads a PRIVATE attribute.**
 
-    `TracerProvider` keeps them in a multi-processor; the list below is the only
-    place this suite reaches into the SDK, and it is asserted non-empty by the
-    positive test above so a rename cannot make both tests vacuous.
+    Said plainly because an earlier version of this docstring claimed the
+    opposite while doing exactly this. `opentelemetry-sdk@1.44.0` exposes no
+    public way to ask a `TracerProvider` what it is exporting to, and the
+    question is the whole of Plan 0C's "no sink before Task 2" constraint, so it
+    is asked here and nowhere else in the suite.
+
+    What makes it survivable rather than fragile: the zero-case and the one-case
+    are asserted by two tests over the same accessor, so a renamed attribute
+    raises `AttributeError` in both instead of quietly reporting nothing. A
+    single test asserting `== 0` would go green on a rename, which is the shape
+    that matters.
     """
     return len(provider._active_span_processor._span_processors)
 
