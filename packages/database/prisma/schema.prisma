@@ -4,12 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // The OWNER url, deliberately. This is the only url the Prisma CLI uses:
-  // migrate, generate and studio all need DDL rights. The running API never
-  // reads this — it passes DATABASE_URL (the metrika_app role) to
-  // createPrismaClient() programmatically. See ADR-0005 and the Global
-  // Constraints of this plan.
-  url      = env("DATABASE_ADMIN_URL")
 }
 
 /// Round-trip target for GET /health/deep. It exists so the deep probe can

@@ -239,7 +239,11 @@ describe('the application role cannot read _prisma_migrations', () => {
       withDatabase(async (db) => db.$queryRaw`SELECT 1 FROM "_prisma_migrations"`),
     ).rejects.toMatchObject({
       code: 'P2010',
-      meta: { code: '42501', message: 'ERROR: permission denied for table _prisma_migrations' },
+      meta: {
+        driverAdapterError: {
+          cause: { code: '42501', message: 'permission denied for table _prisma_migrations' },
+        },
+      },
     });
   });
 });

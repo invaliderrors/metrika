@@ -13,6 +13,7 @@ import { PrismaClient } from '@prisma/client';
 // TYPE-only import of a namespace, not the DI footgun: nothing in this file is
 // injected by NestJS.
 import type { Prisma } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { softDeleteExtension } from './extensions/soft-delete.js';
 
 export interface DatabaseConfig {
@@ -25,8 +26,12 @@ export interface DatabaseConfig {
 }
 
 export function createPrismaClient(config: DatabaseConfig): PrismaClient {
+  // A driver adapter is mandatory on Prisma 7. Two things that used to live in
+  // the connection URL now live here and are silently ignored there: `?schema=`
+  // (spell it `new PrismaPg(url, { schema })`) and `?connection_limit=` (pass
+  // pg.Pool options, or a pg.Pool). See ADR-0037.
   const base = new PrismaClient({
-    datasources: { db: { url: config.databaseUrl } },
+    adapter: new PrismaPg({ connectionString: config.databaseUrl }),
   });
 
   // `$extends` returns a structurally narrower client (it drops `$on` and
