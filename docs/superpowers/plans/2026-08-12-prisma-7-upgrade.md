@@ -471,13 +471,18 @@ Rewrite reason (1) to say that `--env-file-if-exists` is now the _only_ thing pu
 
 While there: `prisma studio`'s default port moved from **5555 to 51212**. Correct it wherever it appears.
 
-- [ ] **Step 2b: Decide what happens to the four `?schema=public` URLs**
+- [x] **Step 2b: the inert `?schema=public` URLs — ALREADY DONE in Task 4, do not redo**
 
-They are at `.env.example:148`, `docs/LOCAL_DEVELOPMENT.md:345`, `.github/workflows/ci.yml:62`, and both URLs `packages/testing/src/database.ts` builds. Every one is now inert.
+This step was dispatched to Task 4 by mistake and executed there in commit `a5589bb`. It is recorded here rather than deleted, because two of its facts were wrong in this plan and the corrections matter to Step 4's ADR.
 
-Nothing breaks today, because `public` is `pg`'s default `search_path`. But a parameter that looks load-bearing and is not is worse than an absent one — the next person to need a non-public schema will add it there and it will silently do nothing.
+**This plan said four URLs. There are six** in the three in-scope files — `.env.example:147` and `:148`, `docs/LOCAL_DEVELOPMENT.md:344` and `:345`, `.github/workflows/ci.yml:62` and `:439`. The three unnamed siblings were found by the implementer, not by this plan. All six are removed.
 
-Remove them, **except** the two in `packages/testing`, which this plan must not touch — record those in the ADR as a follow-up instead. Removing a URL parameter changes the connection string in `.env.example` and CI, so run the integration suite afterwards and confirm it is still green rather than assuming.
+**Left in place deliberately, and each needs a line in the ADR:**
+
+- `packages/testing/src/database.ts:58` — `urlFor` appends `?schema=public` to both URLs it builds. Excluded by the do-not-touch constraint on that package, so it is a genuine follow-up rather than an oversight.
+- `apps/api/test/env.test.ts:5` and `apps/api/test/health.test.ts:15` — unit-test fixture strings, not real connection strings. This plan never enumerated them. They are harmless, but a reader grepping for `?schema=` should find them explained rather than assume the sweep missed them.
+
+Nothing broke: `public` is `pg`'s default `search_path`, and the integration suites were re-run green after the change rather than assumed.
 
 - [ ] **Step 3: Correct `CLAUDE.md`**
 
