@@ -35,7 +35,23 @@
       // The integration suite does not need an entry of its own.
       // `test:integration` is `cache: false` in the root turbo.json, so its own
       // compose read (test_storage.py's MinIO image) cannot be served stale.
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/infra/docker/docker-compose.yml"]
+      //
+      // The SECOND entry is `packages/contracts/redaction-corpus.json`, read by
+      // `test_redaction_corpus.py`. That file is the agreement gate between this
+      // package's redaction matcher and the rule in `packages/contracts` that
+      // `apps/web` also derives from — so a stale cache here is a matcher that
+      // has drifted from the other two with nothing reporting it, which is the
+      // failure the corpus exists to prevent.
+      //
+      // MEASURED on turbo 2.10.8, same protocol as the compose entry above:
+      // prime the cache green, flip one `"redacted": true` to `false` in the
+      // corpus, re-run — cache MISS and the suite fails naming the key. With the
+      // entry removed the same edit is a cache HIT at exit 0.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/infra/docker/docker-compose.yml",
+        "$TURBO_ROOT$/packages/contracts/redaction-corpus.json"
+      ]
     }
   }
 }
