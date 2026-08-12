@@ -23,7 +23,7 @@ Each task is marked **REVIEW** or **SELF-VERIFIED**. Reviewed tasks get a fresh 
 
 ## Global Constraints
 
-- **Versions are decided by Task 1's spike.** Later tasks write `<pin>` and read ADR-0029's table. Note the Node OTel SDK is **0.x**, pre-1.0, which is exactly the kind of dependency this repo has been bitten by twice.
+- **Versions are decided by Task 1's spike.** Later tasks write `<pin>` and read ADR-0029's table — including the pin that **changed** in review: the Fastify instrumentation is `@fastify/otel@0.20.1`, not the deprecated `@opentelemetry/instrumentation-fastify`. The "Node OTel SDK is **0.x**" premise this plan was written on is half true and the half that is false matters: the **stable** train (`core`, `resources`, `sdk-trace-*`, `sdk-metrics`, `context-async-hooks`) is on **2.10.0**, and only `sdk-node`, the exporters and the instrumentations are `0.x`.
 - Exact pins both sides. The gate walks every `package.json` and `pyproject.toml` repo-wide, exempts `{ workspace = true }` declared in the same file, and covers `[build-system] requires`.
 - **`console.log` is banned** (`no-console: error`) and `print()` is banned (`T20`). Both are already live.
 - No `any`; `@ts-ignore` banned; `@ts-expect-error`/`eslint-disable` need `-- <justification>`, and CI's grep also fails if `--` appears anywhere in the **path**. Python suppressions need the second-comment form `# type: ignore[code]  # -- why`.
@@ -59,9 +59,9 @@ Measured then: `new InternalServerErrorException('DB_DSN=postgres://user:PASSWOR
 
 Two spikes in this project have each paid for themselves several times over. This one has a specific reason to exist beyond habit: **the Node OpenTelemetry SDK is 0.x**, and Sentry 8+ is itself built on OpenTelemetry, so the two either integrate or fight — and which one is not something to discover in Task 3.
 
-**Files:** Create `docs/adr/0029-observability-stack.md`; modify `docs/adr/README.md`.
+**Files:** Create `docs/adr/0029-observability-stack.md` and — after review found obligation 8 measured at the wrong call shape — `docs/adr/0030-nest-logger-argument-shape.md`; modify `docs/adr/README.md`.
 
-**Produces:** the exact pin for every package Tasks 2–6 install, plus the answers below.
+**Produces:** the exact pin for every package Tasks 2–6 install, plus the answers below. **Read 0029 and 0030 together**; 0029's header says where it is corrected.
 
 - [ ] **Step 1: Build the spike outside the workspace** — `SPIKE=$(mktemp -d)`. A workspace member that fails to install breaks `pnpm install` for everyone.
 
@@ -106,12 +106,19 @@ Log an `Error` whose message carries `DB_DSN=postgres://user:PASSWORD@host/db` a
 
 What is settled: Pino's `redact` reaches an `Error`'s **own enumerable properties** but not `message` or `stack`, so the blueprint's `*.password`-style list leaves a secret in the message text.
 
-What is **not** settled, and you must measure against the call that actually exists:
+Also settled, and both were wrong in earlier drafts of this plan — read ADR-0029's `CORRECTED (round 2)` markers and **[ADR-0030](../../adr/0030-nest-logger-argument-shape.md)** rather than the retracted wording:
 
-- ADR-0029 claims no path, wildcard or serialiser reaches `msg`. Its reviewer disproved that with `paths:['msg']` and `serializers.msg` on a plain-string message; I then re-measured with `logger.error(new Error(...))` and got the opposite for both — only `paths:['*']` redacted, and that censors **every** message, so it is not a usable control. The behaviour is call-shape dependent.
-- ADR-0029 also describes the call site as `logger.error(error.stack)`. It is not: `domain-exception.filter.ts` calls Nest's two-argument `Logger.error(message, cause)`, and **where that second argument lands is decided by the `LoggerService` adapter this task writes**. Raw Pino discards a trailing argument; `nestjs-pino` routes it to a field, which `redact` reaches by path.
+- **`redact` DOES reach `msg`** — `paths:['msg']`, `paths:['*']` and a `msg` serialiser all do, in every call shape. What makes it unusable is that redaction is **field-granular**: it replaces the whole value, so `paths:['msg']` censors every log message in the process and `paths:['*']` additionally censors `pid`, `hostname` and every payload field. Removing a _substring_ of free text needs a pattern-matching serialiser, i.e. a secret detector rather than an allowlist. The conclusion is therefore unchanged and its reason is not: **do not put untrusted text in `msg`**, put the cause in a named field.
+- **The call site is `domain-exception.filter.ts:88`**, `this.logger.error(\`Unhandled exception (requestId=…)\`, describeCause(exception))`, on a `new Logger(DomainExceptionFilter.name)`— a Nest`Logger`**with a context**, which is the detail that decides everything. Nest appends`this.context`to what it forwards, and`nestjs-pino` branches on argument count. Measured at that exact shape (ADR-0030):
 
-So decide the approach against your own adapter, measured. The likely answer is still that the call site logs a structured, redacted representation rather than a pre-formatted string — but "no configuration can close this" is not established, and the `msg` assertion above is what tells you which you have.
+  | call                     | adapter                       | where the cause lands                                |
+  | ------------------------ | ----------------------------- | ---------------------------------------------------- |
+  | `error(msg, cause)`      | `nestjs-pino`                 | `err.stack` — **already covered by the paths above** |
+  | `error(msg, cause, ctx)` | `nestjs-pino`                 | **nowhere — silently discarded**                     |
+  | `error(msg, cause)`      | hand-written raw-pino adapter | **nowhere — silently discarded**                     |
+  | `error({ err }, msg)`    | **either**                    | `err.message` + `err.stack`                          |
+
+**So: do not use the three-argument form, and do not assume a hand-written raw-pino `LoggerService` preserves the cause.** `logger.error({ err }, message)` is the shape that works under both adapters and is what Step 4 should write. Assert the cause **arrives** as well as that it is redacted — a redaction test passes trivially against a line that lost the cause.
 
 - [ ] **Step 3: Run both, watch them fail.**
 
@@ -139,10 +146,12 @@ This is the deliverable. `docs/OBSERVABILITY.md` §2 calls it the single highest
 
 - [ ] **Step 3: Implement the SDK bootstrap**, in the order ADR-0029's question 2 established for Sentry coexistence.
 
-**Two silent failures measured by the spike, both at exit 0:**
+**Two silent failures measured by the spike, both at exit 0 — and one loud one:**
 
 - **`SentryPropagator` alone breaks correlation.** One request becomes **three traces**, with baggage dropped on the activity leg. The fix is a composite propagator — one line that nothing else in the system would point you at, since every component reports success.
-- **Registering Sentry and OTel separately is silent and kills the loser's pipeline entirely.** They must share one `TracerProvider`. Double registration does not throw.
+- **Registering Sentry and OTel separately is silent and kills the loser's pipeline entirely.** They must share one `TracerProvider`. Double registration does not throw; it writes to `diag`, whose default logger discards. **Install a `diag` logger in the bootstrap** or this whole class of failure is invisible.
+- **Loud, and it will be the first thing you hit:** Sentry's default integrations and `@fastify/otel` both decorate a Fastify property called `opentelemetry`, so leaving the defaults on makes the app **fail to boot** with `FST_ERR_DEC_ALREADY_PRESENT`, exit 1. Use `defaultIntegrations: false` plus an explicit allowlist of the 14 error-side integrations out of 44 — the allowlist direction, not a denylist, so a Sentry release adding a span-producing integration is excluded by default. `Sentry.getDefaultIntegrations` is exported, so pin the set with a snapshot test.
+- `@fastify/otel` needs the **named** import (it is CJS `export =`; a default import is `TS2351` under nodenext) and **exactly one** of `registerOnInitialization: true` or a manual `.register(instrumentation.plugin())` — both together throw `FST_ERR_DEC_ALREADY_PRESENT`.
 
 Assert the composite propagator is in place, not just that the SDK started. A test that checks spans exist passes in all three broken states above.
 
@@ -180,7 +189,9 @@ Assert the composite propagator is in place, not just that the SDK started. A te
 
 The chain starts in the browser. `apps/web` currently sends nothing.
 
-**Files:** Modify `apps/web/src/app/layout.tsx` or a fetch wrapper; `apps/web/package.json`. Test: `apps/web/test/request-id.test.ts`.
+**Files:** Modify `apps/web/src/app/layout.tsx` or a fetch wrapper; `apps/web/package.json`; **`pnpm-workspace.yaml`**. Test: `apps/web/test/request-id.test.ts`.
+
+**This task owns ADR-0029 obligation 12, and it is not optional.** `@sentry/nextjs@10.70.0` reaches `@sentry/cli@2.58.6` through `@sentry/bundler-plugin-core`, which has a build script, so adding it makes a from-scratch `pnpm install` exit **1** with `ERR_PNPM_IGNORED_BUILDS` **for the whole repository**. Add `'@sentry/cli': false` to `allowBuilds` in the same commit — denial was measured safe (`pnpm install` 0, `next build` 0 with `withSentryConfig` applied; the binary is for release and source-map upload, which this plan does not do).
 
 - [ ] **Step 1:** Generate an `X-Request-Id` per navigation and send it on outbound API calls. Format must satisfy `normaliseRequestId`'s allowlist — `[A-Za-z0-9._-]{1,128}`, and **not** the `NO_REQUEST_ID` sentinel, which the API rejects case-insensitively.
 
@@ -214,9 +225,14 @@ The chain starts in the browser. `apps/web` currently sends nothing.
 
 ## Notes for the executing agent
 
+Two ADR-0029 obligations, and where they land:
+
+- **Obligation 12** (`'@sentry/cli': false` in `pnpm-workspace.yaml`) belongs to **Task 5**, named in its file list. It is the only new `allowBuilds` entry the whole stack needs; `protobufjs` and `@swc/core` are already there.
+- **Obligation 4** — the `makeWorkflowExporter` sink and its `instrumentationLibrary` → `instrumentationScope` shim — **has no owner in this plan, and that is deliberate rather than an oversight.** No task here installs `@temporalio/interceptors-opentelemetry`: Task 3 wires `apps/api`'s SDK and Task 4 wires Python, and there is no Node Temporal **worker** in Phase 0C. The obligation lands on the phase that adds one. Its trigger is not "when a worker appears" but "when a Node worker registers workflow interceptors" — until then the pin in ADR-0029's table is a decision made early, not a dependency to install. **Whoever picks it up: the sink without the shim loses exactly the spans it exists to save, and is indistinguishable from having no sink at all except in which error text the worker logs.**
+
 Four things this plan leaves to measurement rather than assertion:
 
-1. **The Node OTel SDK is 0.x.** If Task 1's spike finds it does not instrument Fastify under Nest, take the fallback rather than working around it — a manual instrumentation layer is a maintenance surface this project does not need in Phase 0.
+1. ~~**The Node OTel SDK is 0.x.**~~ **Settled by Task 1, in both directions.** It instruments Fastify under Nest — `@fastify/otel@0.20.1` produces 4 route-bearing spans against the deprecated `@opentelemetry/instrumentation-fastify@0.57.0`'s 3 — so the fallback is not needed. And the premise was half wrong: the stable OTel train is on 2.10.0, only the bootstrap, exporters and instrumentations are `0.x`. The standing instruction survives unchanged for anything that _does_ fail: take the documented fallback rather than hand-writing an instrumentation layer.
 2. **The DSN carry-forward is a live leak.** No task may ship an exporter or a Sentry DSN before Task 2 closes it. Wiring a sink first converts a local-only exposure into an exported one.
 3. **The redaction list will exist in three places.** That is the shape that drifts. Derive or assert equality; do not maintain three copies by hand.
 4. **Every guard here is a positive assertion by default** — "this field was redacted", "this ID was present". The 0B-3 boundary shipped five defects because nothing asserted the _absence_ of what should not cross. Ask of each fixture: what would it take for this to pass while the thing it guards is broken?
