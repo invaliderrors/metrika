@@ -61,12 +61,12 @@ const NEST_ROUTE = '/health/live';
 /**
  * A third trace, arriving with the sampled flag CLEARED.
  *
- * `SentrySampler` is not parent-based for a caller that sends W3C trace context
- * without Sentry's own `sentry-trace` / DSC: it makes its own head-based decision
- * for any span whose parent is remote. So `-00` is joined and then re-sampled,
- * and the spans are exported anyway. That is a real property with a real cost at
- * `TRACES_SAMPLE_RATE < 1` — see the test, which exists so the behaviour cannot
- * change without somebody noticing.
+ * A cleared W3C flag reads as `undefined` rather than `false` — `false` is
+ * reserved for Sentry's own `sampled_not_recording` tracestate — so it falls
+ * through to `TRACES_SAMPLE_RATE`: joined, correctly parented, then sampled
+ * locally. The SET flag is the other half of the table and is inherited outright;
+ * both halves are pinned, the second in its own child at rate 0, because a
+ * single-rate suite cannot tell "the rate decides" from "the caller decides".
  */
 const UNSAMPLED_TRACE_ID = 'c1c2c3c4d1d2d3d4e1e2e3e4f1f2f3f4';
 const UNSAMPLED_SPAN_ID = 'a2a3a4a5b2b3b4b5';
@@ -136,6 +136,14 @@ interface ReceivedSpan {
   readonly spanId: string;
   readonly parentSpanId: string | undefined;
   readonly attributeKeys: readonly string[];
+  /**
+   * Attribute VALUES, not only their keys. Kept because a case named "carries the
+   * route template rather than the URL" cannot be written without them: with keys
+   * alone the strongest available assertion is that `http.route` exists, which is
+   * true of a span carrying `/health/abc123` as well. In OTLP/JSON each value is
+   * a one-key wrapper (`{ stringValue: … }`), which is what is stored here.
+   */
+  readonly attributes: ReadonlyMap<string, unknown>;
 }
 
 interface Receiver {
@@ -169,6 +177,9 @@ async function startOtlpReceiver(): Promise<Receiver> {
               spanId: span.spanId,
               parentSpanId: span.parentSpanId,
               attributeKeys: (span.attributes ?? []).map((attribute) => attribute.key),
+              attributes: new Map(
+                (span.attributes ?? []).map((attribute) => [attribute.key, attribute.value]),
+              ),
             });
           }
         }
@@ -320,9 +331,44 @@ const ReadyLine = z.object({
   provider: z.string(),
   fields: z.array(z.string()),
   integrations: z.array(z.string()),
-  dsnConfigured: z.boolean(),
+  /**
+   * The PARSED DSN, from `client.getDsn()`. It replaced a field read off
+   * `getOptions().dsn`, which was `''` rather than `undefined` for the exact
+   * state it was supposed to detect — see the fixture, which carries the three
+   * measured cases.
+   */
+  dsnParsed: z.boolean(),
 });
 type ReadyLine = z.infer<typeof ReadyLine>;
+
+/** Everything a spawned child needs, so a second one can be started at a different rate. */
+interface ChildOptions {
+  readonly databaseUrl: string;
+  readonly receiverUrl: string;
+  readonly echoUrl: string;
+  readonly dsn: string;
+  readonly sampleRate: string;
+}
+
+function spawnChild(port: number, options: ChildOptions): ChildProcessWithoutNullStreams {
+  return spawn(process.execPath, [FIXTURE, options.echoUrl], {
+    cwd: PACKAGE_ROOT,
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      API_PORT: String(port),
+      LOG_LEVEL: 'info',
+      DATABASE_URL: options.databaseUrl,
+      HEALTH_DEEP_TOKEN: TEST_HEALTH_DEEP_TOKEN,
+      // A REAL DSN, pointed at a local sink. See `startSentrySink`: with an
+      // empty one the client constructs no integrations at all and every
+      // assertion below about Sentry grades a subject that is switched off.
+      SENTRY_DSN: options.dsn,
+      OTLP_TRACES_ENDPOINT: options.receiverUrl,
+      TRACES_SAMPLE_RATE: options.sampleRate,
+    },
+  });
+}
 
 let child: ChildProcessWithoutNullStreams | undefined;
 let receiver: Receiver;
@@ -371,29 +417,22 @@ function requestSpans(): readonly ReceivedSpan[] {
   return spansOn(PARENT_TRACE_ID);
 }
 
+let databaseUrl: string;
+
 beforeAll(async () => {
   const database = await startTestDatabase();
+  databaseUrl = database.applicationUrl;
   receiver = await startOtlpReceiver();
   echo = await startEcho();
   sentry = await startSentrySink();
   const port = await freePort();
 
-  child = spawn(process.execPath, [FIXTURE, echo.url], {
-    cwd: PACKAGE_ROOT,
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      API_PORT: String(port),
-      LOG_LEVEL: 'info',
-      DATABASE_URL: database.applicationUrl,
-      HEALTH_DEEP_TOKEN: TEST_HEALTH_DEEP_TOKEN,
-      // A REAL DSN, pointed at a local sink. See `startSentrySink`: with an
-      // empty one the client constructs no integrations at all and every
-      // assertion below about Sentry grades a subject that is switched off.
-      SENTRY_DSN: sentry.dsn,
-      OTLP_TRACES_ENDPOINT: receiver.url,
-      TRACES_SAMPLE_RATE: '1',
-    },
+  child = spawnChild(port, {
+    databaseUrl,
+    receiverUrl: receiver.url,
+    echoUrl: echo.url,
+    dsn: sentry.dsn,
+    sampleRate: '1',
   });
   child.stdout.on('data', (chunk: Buffer) => {
     stdout += chunk.toString('utf8');
@@ -481,11 +520,17 @@ describe('one request, one trace, one request id', () => {
    * `FST_ERR_DEC_ALREADY_PRESENT` inside avvio, and the process exits 1 before it
    * listens. Measured with the allowlist removed and a DSN set; measured NOT to
    * happen with the allowlist removed and no DSN, because a client without a DSN
-   * constructs no integrations at all. ADR-0033 records the pair.
+   * constructs no integrations at all. ADR-0034 records the pair.
    */
   it('boots at all, with Sentry actually constructed', () => {
     expect(ready.probe).toBe('ready');
-    expect(ready.dsnConfigured).toBe(true);
+    // BOTH, and the second is the one that works. `dsnParsed` reads
+    // `client.getDsn()`, which is undefined for an empty AND for a malformed DSN
+    // — where `getOptions().dsn` echoes the string back and reads as configured.
+    // The integration count is the direct statement of the property this whole
+    // suite depends on, so it is asserted rather than inferred from the DSN.
+    expect(ready.dsnParsed).toBe(true);
+    expect(ready.integrations.length).toBeGreaterThan(0);
     expect(stderr).not.toContain('FST_ERR_DEC_ALREADY_PRESENT');
   });
 
@@ -585,33 +630,47 @@ describe('a real Nest route, on its own trace', () => {
    * `docs/OBSERVABILITY.md` §8 asks for at bounded cardinality.
    */
   it('carries the route template rather than the URL', () => {
-    const routes = spansOn(NEST_TRACE_ID).flatMap((span) =>
-      span.attributeKeys.includes('http.route') ? [span.name] : [],
-    );
-    expect(routes.length).toBeGreaterThan(0);
+    const routed = spansOn(NEST_TRACE_ID).filter((span) => span.attributes.has('http.route'));
+    expect(routed.length).toBeGreaterThan(0);
+
+    // The VALUE, which is the only thing that distinguishes a template from a
+    // URL. Asserting merely that `http.route` is present passes for a span
+    // carrying `/health/abc123`, and an unbounded route attribute is what makes
+    // a latency histogram unusable rather than wrong.
+    for (const span of routed) {
+      expect(span.attributes.get('http.route')).toEqual({ stringValue: NEST_ROUTE });
+    }
   });
 });
 
 describe('sampling, for a caller that sends only W3C trace context', () => {
   /**
-   * MEASURED AND DELIBERATE, and it is here because it is surprising.
-   * `SentrySampler` is not parent-based for a caller with no `sentry-trace` /
-   * DSC of its own: for any span whose parent is REMOTE it makes its own
-   * head-based decision from `tracesSampleRate`. So a `traceparent` arriving
-   * with the sampled flag CLEARED (`-00`) is joined — same trace id, correct
-   * parent — and then re-sampled to `-01` and exported.
+   * MEASURED IN BOTH DIRECTIONS, at both rates, because the interesting half is
+   * the one an earlier version of this suite never sent.
    *
-   * The decision is to keep it: ADR-0029 obligation 1 puts `SentrySampler` on the
-   * shared provider, and swapping in a `ParentBasedSampler` would take Sentry's
-   * DSC handling with it. The COST, stated so it is not discovered in a
-   * dashboard: at `TRACES_SAMPLE_RATE < 1` this cuts both ways — a caller's
-   * sampled trace can be dropped here, leaving whatever it calls next as
-   * orphaned children.
+   * | `traceparent` in | `TRACES_SAMPLE_RATE=1` | `TRACES_SAMPLE_RATE=0` |
+   * | --- | --- | --- |
+   * | `-01` (sampled)   | exported | **exported** |
+   * | `-00` (unsampled) | exported | dropped      |
    *
-   * This test asserts the current behaviour, so changing it is a red test rather
-   * than a silent change of what a browser's sampling decision means.
+   * `getSamplingDecision` returns `true` for a set flag and `undefined` for a
+   * cleared one — `false` only for Sentry's own `sampled_not_recording`
+   * tracestate — and `sampleSpan` inherits `parentSampled` whenever it is
+   * defined. So **a caller's SET flag is always honoured and its CLEARED flag
+   * never is**: the cleared case falls through to the local rate.
+   *
+   * The consequence, which is the opposite of what this suite first recorded:
+   * `TRACES_SAMPLE_RATE` is a FLOOR for callers that ask to be sampled, not a
+   * ceiling. It cannot hold sampling down, and any client that sends `-01` —
+   * including one this project does not control, since the header is
+   * caller-supplied — pins this API at 100%. What it cannot do is drop a
+   * caller's sampled trace, so there is no orphaned-child failure here.
+   *
+   * Kept as it is: ADR-0029 obligation 1 puts `SentrySampler` on the shared
+   * provider, and a `ParentBasedSampler` would take Sentry's DSC handling with
+   * it. Both directions are pinned so a change is a red test.
    */
-  it('re-samples an unsampled parent rather than honouring the flag', () => {
+  it('re-samples an unsampled parent rather than honouring the cleared flag', () => {
     expect(spansOn(UNSAMPLED_TRACE_ID).length).toBeGreaterThan(0);
   });
 
@@ -620,6 +679,87 @@ describe('sampling, for a caller that sends only W3C trace context', () => {
       span.scope.includes('instrumentation-http'),
     );
     expect(server?.parentSpanId).toBe(UNSAMPLED_SPAN_ID);
+  });
+});
+
+/**
+ * The rate-0 half of the table above, in its own child process because
+ * `TRACES_SAMPLE_RATE` is read once at boot.
+ *
+ * Without this, nothing in the suite could tell "the rate decides" from "the
+ * caller decides", and a whole paragraph of recorded consequence — in a doc, an
+ * env comment and an ADR — asserted the wrong one of the two.
+ */
+describe('sampling at TRACES_SAMPLE_RATE=0', () => {
+  const SAMPLED_TRACE_ID = 'd1d2d3d4e1e2e3e4f1f2f3f4a1a2a3a4';
+  const DROPPED_TRACE_ID = 'e1e2e3e4f1f2f3f4a1a2a3a4b1b2b3b4';
+
+  let zeroChild: ChildProcessWithoutNullStreams | undefined;
+  let zeroReceiver: Receiver;
+  let zeroOut = '';
+
+  beforeAll(async () => {
+    zeroReceiver = await startOtlpReceiver();
+    const port = await freePort();
+
+    zeroChild = spawnChild(port, {
+      databaseUrl,
+      receiverUrl: zeroReceiver.url,
+      echoUrl: echo.url,
+      dsn: sentry.dsn,
+      sampleRate: '0',
+    });
+    zeroChild.stdout.on('data', (chunk: Buffer) => {
+      zeroOut += chunk.toString('utf8');
+    });
+    zeroChild.stderr.on('data', (chunk: Buffer) => {
+      zeroOut += chunk.toString('utf8');
+    });
+
+    await until(
+      () => zeroOut.includes('"probe":"ready"'),
+      60_000,
+      () => `the rate-0 child to report ready. output:\n${zeroOut}`,
+    );
+
+    const base = `http://127.0.0.1:${String(port)}`;
+    for (const [traceId, flags] of [
+      [SAMPLED_TRACE_ID, '01'],
+      [DROPPED_TRACE_ID, '00'],
+    ] as const) {
+      const response = await fetch(`${base}${NEST_ROUTE}`, {
+        headers: { traceparent: `00-${traceId}-a1a2a3a4b1b2b3b4-${flags}` },
+      });
+      expect(response.status).toBe(200);
+    }
+
+    // Wait for the sampled trace, then give the batch processor the same window
+    // again — the dropped one is asserted as an ABSENCE, and an absence measured
+    // before the exporter has had a chance to speak is not a measurement.
+    await until(
+      () => zeroReceiver.spans().length > 0,
+      30_000,
+      () =>
+        `the rate-0 child to export the SAMPLED trace. Zero spans at all would mean the ` +
+        `caller's set flag is not honoured either, which is a different finding from the ` +
+        `one this block records.`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 8_000));
+  }, 180_000);
+
+  afterAll(async () => {
+    zeroChild?.kill('SIGKILL');
+    await zeroReceiver.close();
+  });
+
+  it('honours a caller`s SET sampled flag even at rate 0', () => {
+    const spans = zeroReceiver.spans().filter((span) => span.traceId === SAMPLED_TRACE_ID);
+    expect(spans.length).toBeGreaterThan(0);
+  });
+
+  it('drops a caller`s CLEARED flag at rate 0, so the rate does decide that half', () => {
+    const spans = zeroReceiver.spans().filter((span) => span.traceId === DROPPED_TRACE_ID);
+    expect(spans).toEqual([]);
   });
 });
 
@@ -731,15 +871,19 @@ describe('Sentry and OpenTelemetry on one provider', () => {
   });
 
   /**
-   * The two that must not be there, named individually. They are the ones with an
-   * OpenTelemetry counterpart installed by this bootstrap, and `Fastify` is the
-   * one whose collision exits the process — so a change that let any of the three
-   * back in should fail on a line that says which.
+   * The two that must not be there, named individually so a change that lets one
+   * back in fails on a line that says which. Both are in the seventeen the filter
+   * runs over, so both are falsifiable HERE — measured, adding `NodeFetch` to the
+   * allowlist reddens this and the set equality above.
+   *
+   * `Fastify` is deliberately NOT in this list. It is not among those seventeen —
+   * it appears only in the forty-four that tracing adds — so an assertion against
+   * it here could not fail whatever the allowlist said. It is graded in
+   * `test/telemetry.test.ts`, against the full set, where it can.
    */
   it('constructs no Sentry integration that patches a module', () => {
     expect(ready.integrations).not.toContain('Http');
     expect(ready.integrations).not.toContain('NodeFetch');
-    expect(ready.integrations).not.toContain('Fastify');
   });
 
   it('exports under an explicit resource naming this service', () => {
