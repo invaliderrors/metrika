@@ -133,7 +133,7 @@ Three independent layers, all required:
 | Access logging        | S3 server access logs to a separate account-level bucket                                                   |
 | Audit                 | Every signed-URL issuance for an original writes an `AuditLog` row with actor, resource and request ID     |
 
-A signed URL in a log is a credential in a log. `signedUrl`, `presignedUrl`, `uploadUrl`, `downloadUrl` and the bare `url` are all on the shared redaction list in `packages/contracts/src/redaction.ts`, which three sinks derive from: Pino in `apps/api`, structlog in `apps/workers` and `apps/web`'s Sentry `beforeSend`. It is **not** a hand-written path list — see [OBSERVABILITY.md](./OBSERVABILITY.md#redaction--an-allowlist-mindset) §3, which also names the fourth sink, `apps/api`'s Sentry client, that has no scrubber at all today.
+A signed URL in a log is a credential in a log. `signedUrl`, `presignedUrl`, `uploadUrl`, `downloadUrl` and the bare `url` are all on the shared redaction list in `packages/contracts/src/redaction.ts`, which **four** sinks derive from: Pino and a Sentry client in `apps/api`, structlog in `apps/workers`, and Sentry in `apps/web`. It is **not** a hand-written path list, and the two Sentry clients share one traversal (`packages/contracts/src/sentry-event.ts`) rather than a copy each — see [OBSERVABILITY.md](./OBSERVABILITY.md#redaction--an-allowlist-mindset) §3, which also records the one shape where the Sentry and Pino sinks in `apps/api` still answer differently: a thrown plain object.
 
 ---
 
