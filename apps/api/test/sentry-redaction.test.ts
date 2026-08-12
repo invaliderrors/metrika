@@ -145,6 +145,7 @@ describe('the redaction hook on this application’s Sentry client', () => {
 
 describe('what reaches the transport', () => {
   it.each([
+    ["the exception's own message", 'PASSWORD'],
     ['a presigned URL in extra', 'X-Amz-Signature'],
     ['an Authorization bearer in tags', 'eyJhbGciOiJIUzI1NiJ9'],
     ['an originalFilename in a context', 'Torre_Bacata'],
@@ -174,26 +175,22 @@ describe('what reaches the transport', () => {
    * reason.
    */
   /**
-   * ───────────────────────────────────────────────────────────────────────────
-   * THE FOURTH SHAPE IS STILL OPEN, AND THIS PINS IT RATHER THAN HIDING IT
-   * ───────────────────────────────────────────────────────────────────────────
+   * THE 0B-1 CARRY-FORWARD ITSELF. `exception.values[].value` is the exception
+   * message, and the shared list cannot reach it — `value` is far too generic a
+   * name to put on a list three sinks read — so it is censored POSITIONALLY,
+   * inside `…values[]` and only on an object shaped like an exception. The
+   * decisive argument is consistency inside one process: this application's Pino
+   * sink already censors `err.message` and keeps the frames, and sending the
+   * same string to Sentry would make that control pointless.
    *
-   * `exception.values[].value` IS the exception message, and `value` is not a
-   * redacted name — correctly, since it is far too generic to put on a shared
-   * list that three sinks read. So the walk, which redacts by key NAME, does not
-   * reach it, and the 0B-1 carry-forward — an `Error` whose message carries a
-   * DSN — is still live for this sink.
-   *
-   * Asserted in the direction it currently behaves, so that closing it is a
-   * deliberate edit with a red test in front of it rather than a silent change.
-   * The next commit closes it; this one is the lift, which is required to move
-   * `apps/web`'s behaviour by nothing at all.
+   * Asserted by POSITION as well as by absence, so a walk that dropped the
+   * exception entirely could not pass for the wrong reason.
    */
-  it('does NOT yet censor the exception message, which is the remaining shape', async () => {
+  it('censors the exception message in place, keeping the exception', async () => {
     const event = eventFrom(await send(leakyEvent()));
 
     expect(event.exception?.values?.[0]?.type).toBe('Error');
-    expect(event.exception?.values?.[0]?.value).toBe(DSN_IN_MESSAGE);
+    expect(event.exception?.values?.[0]?.value).toBe('[REDACTED]');
   });
 
   it('does not modify the event it was given', async () => {

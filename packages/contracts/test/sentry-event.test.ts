@@ -1116,6 +1116,107 @@ describe('object breadth', () => {
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
+ * THE EXCEPTION MESSAGE, WHICH THE SHARED LIST CANNOT REACH
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * `exception.values[].value` is the exception message, and `value` is far too
+ * generic a name to put on a list three sinks read. So the walk went straight
+ * past it, and the Plan 0B-1 carry-forward — an `Error` whose message carries a
+ * DSN — stayed live for this sink after every other shape was closed. Measured
+ * at `apps/api`'s own client with a capturing transport.
+ *
+ * Censored POSITIONALLY, and requiring a marker, exactly like the `filename`
+ * exemption pulls the other way. Both directions are asserted, because a rule
+ * that fired everywhere would destroy a customer payload and a rule that fired
+ * nowhere is the leak.
+ */
+describe('an exception message', () => {
+  function exceptionEvent(value: unknown, extra: Record<string, unknown> = {}): object {
+    return { exception: { values: [{ type: 'Error', ...extra, value }] } };
+  }
+
+  it('is censored, because nothing controls what a thrown message contains', () => {
+    const walked = cleaned(exceptionEvent('DB_DSN=postgres://user:PASSWORD@host/db'));
+    const values = (walked as { exception: { values: Record<string, unknown>[] } }).exception
+      .values;
+
+    expect(values[0]?.['value']).toBe(REDACTION_CENSOR);
+    expect(onTheWire(walked)).not.toContain('PASSWORD');
+  });
+
+  it('keeps everything that makes the report worth having', () => {
+    const walked = cleaned({
+      exception: {
+        values: [
+          {
+            type: 'InternalServerErrorException',
+            value: 'DB_DSN=postgres://user:PASSWORD@host/db',
+            mechanism: { type: 'onuncaughtexception', handled: false },
+            stacktrace: {
+              frames: [{ filename: 'app:///dist/main.js', lineno: 12, function: 'boot' }],
+            },
+          },
+        ],
+      },
+      transaction: 'POST /v1/quotes',
+    });
+    const wire = onTheWire(walked);
+
+    expect(wire).not.toContain('PASSWORD');
+    // The type, the mechanism, the frames and the transaction — which is the
+    // same set `apps/api`'s Pino sink keeps when it censors `err.message`.
+    expect(wire).toContain('InternalServerErrorException');
+    expect(wire).toContain('onuncaughtexception');
+    expect(wire).toContain('app:///dist/main.js');
+    expect(wire).toContain('POST /v1/quotes');
+  });
+
+  it('is censored under threads as well as exception', () => {
+    const walked = cleaned({
+      threads: { values: [{ type: 'Error', value: 'DB_DSN=…PASSWORD…' }] },
+    });
+
+    expect(onTheWire(walked)).not.toContain('PASSWORD');
+  });
+
+  /**
+   * The negative, and it is what the marker buys. `value` is an ordinary name in
+   * customer data; a rule that censored it everywhere under an `exception`-shaped
+   * path would destroy a payload for no reason.
+   */
+  it('is not censored when the object is not shaped like an exception', () => {
+    const walked = cleaned({ exception: { values: [{ label: 'ok', value: 'keep-me' }] } });
+
+    expect(onTheWire(walked)).toContain('keep-me');
+  });
+
+  it('is not censored outside the exception zone at all', () => {
+    const walked = cleaned({ extra: { values: [{ type: 'Error', value: 'keep-me' }] } });
+
+    expect(onTheWire(walked)).toContain('keep-me');
+  });
+
+  /**
+   * The zone machine has to let the FRAME chain survive the EXCEPTION chain —
+   * `stacktrace` is reached from inside an exception value — so a frame's
+   * `filename` must still be exempt at that depth. This is the crossing of the
+   * two positional rules, which pull in opposite directions.
+   */
+  it('leaves a frame path exempt inside the exception it belongs to', () => {
+    const walked = cleaned(
+      exceptionEvent('secret-message', {
+        stacktrace: { frames: [{ filename: 'app:///dist/main.js', lineno: 3 }] },
+      }),
+    );
+    const wire = onTheWire(walked);
+
+    expect(wire).not.toContain('secret-message');
+    expect(wire).toContain('app:///dist/main.js');
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
  * CELLS DELIBERATELY NOT COVERED, AND WHY
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -1149,6 +1250,11 @@ describe('object breadth', () => {
  *    name is handled by `define()`, which is a property of the OUTPUT and
  *    independent of both the depth counter and the memo; the direct cases below
  *    cover the mechanism.
+ *  - **The exception-message censor crossed with the depth cap or with
+ *    aliasing.** Both are `cleanValue`'s own mechanisms and neither can see the
+ *    zone; the crossing that CAN interact — the frame exemption inside an
+ *    exception value, where one positional rule sits inside the other — is
+ *    asserted directly.
  *  - **Array breadth crossed with anything.** `MAX_BREADTH` truncates before any
  *    element is walked, so the elements past it are never reached by depth,
  *    aliasing or hostility. The boundary itself is pinned on both sides.

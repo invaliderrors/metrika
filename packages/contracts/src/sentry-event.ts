@@ -187,10 +187,11 @@ export const BREADTH_MARKER = '[MaxProperties ~]';
 const MAX_BREADTH = 1000;
 
 /**
- * Where the walk is, relative to Sentry's own stack-frame structure. See
- * `FRAME_PATH_KEY`.
+ * Where the walk is, relative to Sentry's own event structure. Two positions
+ * matter and they pull in opposite directions — see `FRAME_PATH_KEY`, which is
+ * an EXEMPTION, and `EXCEPTION_MESSAGE_KEY`, which is an extra CENSOR.
  */
-type Zone = 'none' | 'stacktrace' | 'frames' | 'frame';
+type Zone = 'none' | 'stacktrace' | 'frames' | 'frame' | 'exception' | 'values' | 'value';
 
 /**
  * `filename` is on the shared list — file names are customer intellectual
@@ -222,11 +223,72 @@ function isStackFrame(keys: readonly string[]): boolean {
   return FRAME_MARKERS.some((marker) => keys.includes(marker));
 }
 
+/**
+ * `exception.values[].value` IS THE EXCEPTION MESSAGE, and it is the field the
+ * Plan 0B-1 carry-forward has always been about: an `Error`'s message is where
+ * a connection string, a token or a DSN ends up, and nothing in this system
+ * controls what a thrown message contains.
+ *
+ * The shared list cannot reach it. `value` is far too generic a name to put on
+ * a list three sinks read — it would censor half of every event — so the walk,
+ * which redacts by key NAME, went straight past it. MEASURED at `apps/api`'s own
+ * client with a capturing transport: `DB_DSN=postgres://user:PASSWORD@host/db`
+ * left the process while `extra`, `tags` and `contexts` were correctly censored.
+ *
+ * **The decisive argument is consistency inside one process, not caution.**
+ * `apps/api`'s Pino sink already censors `err.message` and keeps the frames
+ * (ADR-0029 obligation 7, and ADR-0030's frame-preserving serialiser). Sending
+ * the same string to Sentry makes that control pointless — the secret simply
+ * leaves by the other door. Two sinks in one process may not disagree about
+ * whether an exception message is safe to write down.
+ *
+ * **THE COST IS REAL AND IS NOT HIDDEN: every Sentry issue title becomes
+ * `SomeError: [REDACTED]`.** What survives is what the Pino side kept, and it is
+ * most of the diagnostic — `type`, `mechanism`, the whole stack trace including
+ * each frame's `filename` (which is why `FRAME_PATH_KEY` exists), `culprit`,
+ * `transaction`, and every field not on the shared list. Sentry groups by stack
+ * trace where one exists, so grouping degrades only for an exception with no
+ * frames at all.
+ *
+ * POSITIONAL, and requiring a marker, exactly like the frame exemption: the
+ * object must be inside `…{exception,threads}.values[]` AND carry a key a real
+ * exception value carries. Without the marker this would censor a customer
+ * payload that happens to nest `exception.values[].value`, which is over-
+ * redaction rather than a leak but is still data destroyed for no reason.
+ */
+const EXCEPTION_MESSAGE_KEY = 'value';
+
+const EXCEPTION_MARKERS = ['type', 'mechanism', 'stacktrace'] as const;
+
+function isExceptionValue(keys: readonly string[]): boolean {
+  return EXCEPTION_MARKERS.some((marker) => keys.includes(marker));
+}
+
 function childZone(zone: Zone, key: string): Zone {
   // A frame's own children are ordinary data again — `vars` most of all.
   if (zone === 'frame') return 'none';
+  // The `stacktrace` transition is UNGATED BY ZONE, and that is the load-bearing
+  // part — not the order of these lines, which a mutation proved is free: the
+  // key names are distinct, so no two of these can match the same key and
+  // reordering them changes nothing. An earlier version of this comment claimed
+  // the order mattered, and the fixture that would have caught the claim was
+  // green either way.
+  //
+  // What matters is that a `stacktrace` is reached from INSIDE an exception
+  // value (`exception.values[].stacktrace`), so gating this transition on
+  // `zone === 'none'` would put every frame outside the frame zone and take the
+  // `filename` exemption with it. `test/sentry-event.test.ts` asserts a frame
+  // path surviving inside the exception it belongs to, which is that crossing.
   if (key === 'stacktrace') return 'stacktrace';
   if (zone === 'stacktrace' && key === 'frames') return 'frames';
+  if (key === 'exception' || key === 'threads') return 'exception';
+  if (zone === 'exception' && key === 'values') return 'values';
+  return 'none';
+}
+
+function elementZone(zone: Zone): Zone {
+  if (zone === 'frames') return 'frame';
+  if (zone === 'values') return 'value';
   return 'none';
 }
 
@@ -363,12 +425,12 @@ function cleanValue(
     const length = read(value, 'length');
     const declared = typeof length.value === 'number' ? length.value : 0;
     const count = Math.min(declared, MAX_BREADTH);
-    const elementZone: Zone = zone === 'frames' ? 'frame' : 'none';
+    const inside = elementZone(zone);
 
     for (let index = 0; index < count; index += 1) {
       const element = read(value, index);
       output.push(
-        element.ok ? cleanValue(element.value, memo, depth + 1, elementZone) : REDACTION_CENSOR,
+        element.ok ? cleanValue(element.value, memo, depth + 1, inside) : REDACTION_CENSOR,
       );
     }
     if (declared > count) output.push(BREADTH_MARKER);
@@ -399,8 +461,13 @@ function cleanValue(
   memo.set(value, { output, depth });
 
   const frame = zone === 'frame' && isStackFrame(keys);
+  const exceptionValue = zone === 'value' && isExceptionValue(keys);
 
   for (const key of keys) {
+    if (exceptionValue && key === EXCEPTION_MESSAGE_KEY) {
+      define(output, key, REDACTION_CENSOR);
+      continue;
+    }
     if (isRedactedKey(key) && !(frame && key === FRAME_PATH_KEY)) {
       define(output, key, REDACTION_CENSOR);
       continue;
