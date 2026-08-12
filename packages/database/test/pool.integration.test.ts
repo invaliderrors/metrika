@@ -1,4 +1,3 @@
-import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startTestDatabase, stopDatabase } from './support.js';
 import { createPrismaClient, type MetrikaPrismaClient } from '../src/index.js';
@@ -32,81 +31,78 @@ afterAll(async () => {
  * the number 10 — `pg.Pool`'s default is not ours to pin, and Prisma 6's
  * default moved with the core count, so a hard number here would go red on a
  * CI runner with a different CPU count for no reason worth anyone's time.
+ *
+ * ── How the ceiling is observed, and why it changed ──────────────────────
+ *
+ * Each of the parallel queries reports ITS OWN backend, and the ceiling is the
+ * size of the distinct set. The measurement is therefore carried by the same
+ * queries that create the load, and there is nothing to sample.
+ *
+ * The previous design polled `pg_stat_activity` from a separate observer
+ * client every 10 ms and kept the highest sample. It was replaced because a
+ * starved observer UNDER-COUNTS, and the assertions here are equalities:
+ * MEASURED, with the poll loop forcibly delayed by 250/400/700 ms, 7 runs —
+ * the sampler reported `{base: 4, url: 3, opt: 3}`, i.e. it reported the URL
+ * parameter as HONOURED. That is not flakiness; it is a false positive in the
+ * exact shape of a genuine Prisma regression, and no one-sided bound fixes it.
+ * The design below measured 10/10/3 in all 22 runs of the same comparison,
+ * including 6 under 28 CPU burners at load 35 and 5 under the real root gate
+ * at load 40-50.
+ *
+ * What it gives up, stated because it is a different concept and not a
+ * strictly better one:
+ *
+ *   1. It counts the connections the pool OPENED over the run, not the
+ *      backends simultaneously ACTIVE. For `pg.Pool` the two coincide — it
+ *      never exceeds `max` and hands out an idle connection before opening a
+ *      new one — but a pool that recycled connections mid-run would inflate
+ *      the count. `pg.Pool`'s `maxLifetimeSeconds` defaults to disabled (0),
+ *      which is what keeps that hypothetical from being a real one; passing it
+ *      through `PrismaPg` would invalidate this fixture.
+ *   2. It loses the independent cross-check. `pg_stat_activity` was a second
+ *      source of truth about the connection: the pid now comes from the same
+ *      session whose existence it is evidence of.
  */
 describe('the Prisma 7 connection pool', () => {
   /** Comfortably above every ceiling under test, so each one is what binds. */
   const PARALLEL_QUERIES = 24;
   /** Low enough to be unmistakably below `pg.Pool`'s default of 10. */
   const CEILING = 3;
-  const POLL_INTERVAL_MS = 10;
 
-  interface BackendCount {
-    readonly backends: number;
+  interface BackendPid {
+    readonly pid: number;
   }
 
   /**
-   * How many backends are executing the probe query right now.
+   * How many distinct backends `PARALLEL_QUERIES` simultaneous queries were
+   * spread across. All of them are issued at once and each holds its
+   * connection for 300 ms, so the pool has to open every connection it is
+   * willing to open; the ceiling is the only thing that can stop it opening
+   * one per query, and so the size of the distinct set IS the ceiling.
    *
-   * `pg_stat_activity` exposes `state` and `query` for other sessions only to
-   * superusers, members of `pg_read_all_stats`, and the role that owns the
-   * session. The observer and the subjects are all `metrika_app`, so this is
-   * the third case and both columns are readable — which is also why this
-   * cannot be rewritten to observe from the owner's URL without thought.
-   *
-   * The observer's own backend is excluded twice over: by `pg_backend_pid()`,
-   * and by the `pg_stat_activity` text that only this query contains. The
-   * second guard is what keeps the count correct if the observer's own pool
-   * ever opens more than one connection.
+   * `SELECT pg_backend_pid() ... FROM pg_sleep(0.3)` rather than
+   * `SELECT pg_sleep(0.3)`: the latter returns a `void` column, and there is
+   * no reason to make the result decoder part of what this test depends on.
    */
-  async function countProbeBackends(observer: MetrikaPrismaClient): Promise<number> {
-    const rows = await observer.$queryRaw<BackendCount[]>`
-      SELECT count(*)::int AS backends
-      FROM pg_stat_activity
-      WHERE datname = current_database()
-        AND state = 'active'
-        AND pid <> pg_backend_pid()
-        AND query LIKE '%metrika_pool_probe_backend%'
-        AND query NOT LIKE '%pg_stat_activity%'
-    `;
-    return rows[0]?.backends ?? 0;
-  }
+  async function distinctBackends(subject: MetrikaPrismaClient): Promise<number> {
+    const seen = new Set<number>();
 
-  /**
-   * Fires `PARALLEL_QUERIES` sleeps at once and samples the backend count
-   * while they are in flight, returning the highest sample. The ceiling is the
-   * only thing that can stop all of them from running at the same time, so the
-   * peak IS the ceiling.
-   *
-   * `SELECT 1 ... FROM pg_sleep(0.3)` rather than `SELECT pg_sleep(0.3)`: the
-   * latter returns a `void` column, and there is no reason to make the result
-   * decoder part of what this test depends on.
-   *
-   * The column alias `metrika_pool_probe_backend` is the marker the observer
-   * greps for. It has to be written literally into the SQL — a tagged template
-   * interpolates VALUES, not identifiers — which is why the same string
-   * appears in both queries rather than in one shared constant.
-   */
-  async function peakConcurrentBackends(
-    subject: MetrikaPrismaClient,
-    observer: MetrikaPrismaClient,
-  ): Promise<number> {
-    const finished = Promise.all(
+    await Promise.all(
       Array.from({ length: PARALLEL_QUERIES }, async () => {
-        await subject.$queryRaw`SELECT 1 AS metrika_pool_probe_backend FROM pg_sleep(0.3)`;
+        const rows = await subject.$queryRaw<BackendPid[]>`
+          SELECT pg_backend_pid()::int AS pid FROM pg_sleep(0.3)
+        `;
+        const pid = rows[0]?.pid;
+        // A query that returned no row would silently shrink the set, which
+        // reads as a lower ceiling — the finding, arrived at by not measuring.
+        if (pid === undefined) {
+          throw new Error('the pool probe returned no backend pid');
+        }
+        seen.add(pid);
       }),
-    ).then(() => 'finished' as const);
+    );
 
-    // A promise race rather than a boolean the `.finally` flips: the flag
-    // version reads fine and is wrong under `no-unnecessary-condition`, which
-    // cannot see a closure assignment and so believes the loop never ends.
-    let peak = 0;
-    let phase: 'finished' | 'polling' = 'polling';
-    while (phase === 'polling') {
-      peak = Math.max(peak, await countProbeBackends(observer));
-      phase = await Promise.race([finished, sleep(POLL_INTERVAL_MS, 'polling' as const)]);
-    }
-
-    return peak;
+    return seen.size;
   }
 
   /**
@@ -136,11 +132,9 @@ describe('the Prisma 7 connection pool', () => {
       throw new Error(`the probe URL lost its connection_limit parameter: ${limitedUrl}`);
     }
 
-    const observer = createPrismaClient({ databaseUrl: plainUrl });
-
     const measure = async (subject: MetrikaPrismaClient): Promise<number> => {
       try {
-        return await peakConcurrentBackends(subject, observer);
+        return await distinctBackends(subject);
       } finally {
         // Ends the pool, so the next measurement starts from zero backends
         // rather than inheriting the previous one's.
@@ -148,22 +142,19 @@ describe('the Prisma 7 connection pool', () => {
       }
     };
 
-    try {
-      baseline = await measure(createPrismaClient({ databaseUrl: plainUrl }));
-      withUrlParameter = await measure(createPrismaClient({ databaseUrl: limitedUrl }));
-      withAdapterOption = await measure(
-        createPrismaClient({ databaseUrl: plainUrl, maxPoolConnections: CEILING }),
-      );
-    } finally {
-      await observer.$disconnect();
-    }
+    baseline = await measure(createPrismaClient({ databaseUrl: plainUrl }));
+    withUrlParameter = await measure(createPrismaClient({ databaseUrl: limitedUrl }));
+    withAdapterOption = await measure(
+      createPrismaClient({ databaseUrl: plainUrl, maxPoolConnections: CEILING }),
+    );
   });
 
   it('observes real concurrency, so the two findings below can fail', () => {
     // Without this, an apparatus that measured nothing at all would report
-    // 0 / 0 / 0 — and "0 is equal to 0" would read as a passing finding about
-    // Prisma while actually being a passing finding about a broken probe.
-    // Equality alone cannot tell those apart; this can.
+    // 1 / 1 / 1 — every query serialised onto one connection — and "1 is equal
+    // to 1" would read as a passing finding about Prisma while actually being
+    // a passing finding about a broken probe. Equality alone cannot tell those
+    // apart; this can.
     expect(baseline).toBeGreaterThan(CEILING);
   });
 

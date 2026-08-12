@@ -39,19 +39,30 @@ concurrency:
 # beside a variable none of them still sets would read as if they did.
 env:
   # ── DATABASE_ADMIN_URL ────────────────────────────────────────────────────
-  # packages/database's `build` runs `prisma generate`, and schema.prisma's
-  # datasource is `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is what
-  # `--env-file-if-exists` in the root db:* scripts is for — so if anything
-  # resolves that variable, the value has to come from here.
+  # LOAD-BEARING. Deleting this line breaks `verify`, `web`, `openapi` and
+  # `contracts` — all four, at the build step, before a single test runs.
   #
-  # MEASURED on Prisma 6.19.3, from a clean clone with the variable unset:
-  # `pnpm build` exits 0 and generates the client without complaint, so
-  # `generate` does NOT resolve the datasource url. This is therefore not
-  # load-bearing today. It is set anyway, because every other Prisma subcommand
-  # (`migrate`, `validate`, `studio`) does resolve it, the failure mode when one
-  # is added is an unhelpful `Environment variable not found:
-  # DATABASE_ADMIN_URL`, and a URL nothing connects to costs nothing. Do not
-  # read this as proof the build needs it.
+  # packages/database's `build` is `pnpm db:generate && tsc -b`, and on Prisma 7
+  # `generate` resolves this variable. Not through schema.prisma — its datasource
+  # block no longer carries a `url` at all, which Prisma 7 forbids — but through
+  # `packages/database/prisma.config.ts`, whose `datasource: { url:
+  # env('DATABASE_ADMIN_URL') }` is resolved when the config file LOADS, i.e. for
+  # every subcommand including `generate`. CI has no `.env` — that is what
+  # `--env-file-if-exists` in the db:* scripts is for — so the value has to come
+  # from here.
+  #
+  # MEASURED on 7.9.1, in this repository:
+  #
+  #   env -u DATABASE_ADMIN_URL node scripts/prisma.mjs generate   → EXIT 1
+  #     Error: PrismaConfigEnvError: Cannot resolve environment variable:
+  #     DATABASE_ADMIN_URL.
+  #   DATABASE_ADMIN_URL=… node scripts/prisma.mjs generate        → EXIT 0
+  #
+  # This comment previously said the opposite, citing a 6.19.3 measurement in
+  # which `generate` did not resolve the datasource url. That was true then. The
+  # driver-adapter upgrade made it false, and a comment that tells the next
+  # reader an unused variable can be deleted is worse than no comment. See
+  # ADR-0037.
   #
   # Nothing in the `integration` job connects to it either: the Testcontainers
   # harness runs `prisma migrate deploy` against the real, container-derived URL,

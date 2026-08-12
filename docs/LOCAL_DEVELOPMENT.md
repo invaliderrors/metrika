@@ -353,7 +353,8 @@ HEALTH_DEEP_TOKEN=local-health-deep-token
 
 # Two URLs, two roles, deliberately: the API connects as metrika_app, which is
 # NOSUPERUSER NOBYPASSRLS so RLS actually applies to it. Migrations connect as
-# the owner; schema.prisma names DATABASE_ADMIN_URL. No `?schema=public`: the
+# the owner; prisma.config.ts names DATABASE_ADMIN_URL — schema.prisma carries
+# no datasource url on Prisma 7. No `?schema=public`: the
 # Prisma 7 driver adapter never sees that parameter, so it is inert — select a
 # non-public schema with `new PrismaPg(url, { schema })` instead (ADR-0037).
 DATABASE_URL=postgresql://metrika_app:metrika_app@localhost:5432/metrika_dev

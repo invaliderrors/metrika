@@ -20,8 +20,13 @@ moved four things out of places this repository had written them down.
 Prisma 7 requires a driver adapter for PostgreSQL. `datasources: { db: { url } }`
 is gone from `PrismaClientOptions`, `url` is no longer accepted in a `datasource`
 block, and Migrate's configuration moved to `prisma.config.ts`. The upgrade
-landed across five commits on `chore/prisma-7`, beginning with `13bf289`
-(`prisma.config.ts`, still on 6.19.3) and `59680e3` (the version bump).
+landed on `chore/prisma-7` across the five tasks of
+[the upgrade plan](../superpowers/plans/2026-08-12-prisma-7-upgrade.md),
+beginning with `13bf289` (`prisma.config.ts`, still on 6.19.3) and `59680e3`
+(the version bump). It is deliberately not described here as a count of commits:
+corrections and review rounds mean the tasks and the commits are not in
+one-to-one correspondence, and an earlier draft of this sentence gave a number
+that was wrong twice over.
 
 The decision worth recording is not "upgrade to Prisma 7". It is that the
 adapter relocated configuration which this repository had spelled out in
@@ -63,21 +68,40 @@ honoured. Not reproducible from this tree.
 ### 2. `?connection_limit=` is inert, and the default ceiling fell
 
 **MEASURED**, `packages/database/test/pool.integration.test.ts`, on every
-integration run. Twenty-four parallel 300 ms queries with a separate observer
-client sampling `pg_stat_activity` every 10 ms and keeping the peak; the ceiling
-is the only thing that can stop all twenty-four from running at once, so the peak
-**is** the ceiling. Three measurements, and the file asserts their relationships
-rather than any absolute number:
+integration run. Twenty-four simultaneous 300 ms queries, each reporting its own
+`pg_backend_pid()`; the ceiling is the only thing that can stop the pool opening
+one connection per query, so the size of the distinct set **is** the ceiling.
+Three measurements, and the file asserts their relationships rather than any
+absolute number:
 
-| client                                  | peak backends      | assertion                       |
+| client                                  | distinct backends  | assertion                       |
 | --------------------------------------- | ------------------ | ------------------------------- |
 | plain URL                               | 10 on this machine | `> 3` — real concurrency exists |
 | URL + `?connection_limit=3`             | equal to baseline  | the parameter is **inert**      |
 | `maxPoolConnections: 3` via the adapter | exactly 3          | the ceiling **moved**, not gone |
 
 The first row is what makes the second worth anything: an apparatus measuring
-nothing reports 0/0/0, and `0 === 0` reads as a passing finding about Prisma
+nothing reports 1/1/1, and `1 === 1` reads as a passing finding about Prisma
 while actually being a passing finding about a broken probe.
+
+**The observable was chosen, not inherited, and the first choice was wrong.**
+Until the branch review this fixture polled `pg_stat_activity` from a separate
+observer client and kept the highest sample. A sampler can only ever
+**under-count**, and both findings above are equalities — so MEASURED, with the
+poll loop delayed by 250/400/700 ms over 7 runs, it reported `{base: 4, url: 3,
+opt: 3}`: **the URL parameter appearing to be honoured.** Not a flake, a false
+positive shaped exactly like the Prisma regression this fixture exists to detect,
+and no one-sided bound repairs it. Neither synthetic load at 35 nor the real root
+gate at load 40-50 reproduced it — which is why the mechanism had to be forced
+rather than waited for. The pid design measured 10/10/3 across all 22 runs of the
+paired comparison, and 3 further runs on this machine at load 84.
+
+What that costs, recorded in the fixture too: it counts connections the pool
+**opened**, not backends simultaneously **active** — identical for `pg.Pool`,
+which never exceeds `max` and reuses an idle connection before opening a new one,
+but not the same concept, and `pg.Pool`'s `maxLifetimeSeconds` (default:
+disabled) is what keeps recycling from inflating the count. It also gives up the
+independent `pg_stat_activity` cross-check.
 
 **MEASURED:** absent a ceiling, 7.9.1 uses `pg.Pool`'s own default `max`, which
 is 10 on this machine. The fixture deliberately does not assert `10` —
@@ -127,9 +151,10 @@ healthy. The line looks redundant next to `$connect()` and is not.
 
 ### 4. `P2002` lost `meta.target`, and `P2025`'s `meta` changed shape
 
-**MEASURED on this tree**, 7.9.1 against a live container, by a throwaway probe
-written for this ADR and deleted after it ran: a duplicate primary key on
-`HealthCheck`, and an `update` against an id that does not exist.
+**MEASURED on this tree**, 7.9.1 against a live container — first by a throwaway
+probe written for this ADR, and now re-measured on every integration run by
+`packages/database/test/error-shape.integration.test.ts`: a duplicate primary key
+on `HealthCheck`, and an `update` against an id that does not exist.
 
 ```
 code: 'P2002'
@@ -162,34 +187,64 @@ meta: { modelName: 'HealthCheck', operation: 'an update' }
 `driverAdapterError` is an `Error` whose `cause` is an own enumerable property —
 so a structured log line does not silently drop the constraint.
 
-**MEASURED, and it is a trap:** `cause` does not have one shape.
+**MEASURED, and it is the trap in this section:** `cause` does not have one
+shape, and **the Prisma error code is not what selects it**. The discriminator is
+`cause.kind`.
 
-| code                           | `meta.driverAdapterError.cause`                       |
-| ------------------------------ | ----------------------------------------------------- |
-| `P2010` — raw query failed     | `{ code, message }`                                   |
-| `P2002` — unique violation     | `{ originalCode, originalMessage, kind, constraint }` |
-| `P2021` — table does not exist | `{ originalCode, originalMessage, kind }`             |
+| Prisma code | SQLSTATE | `cause.kind`                | `cause` keys                                                                         |
+| ----------- | -------- | --------------------------- | ------------------------------------------------------------------------------------ |
+| `P2010`     | `42501`  | `postgres`                  | `originalCode, originalMessage, kind, code, severity, message, detail, column, hint` |
+| `P2010`     | `42P01`  | `TableDoesNotExist`         | `originalCode, originalMessage, kind, table`                                         |
+| `P2010`     | `23505`  | `UniqueConstraintViolation` | `originalCode, originalMessage, kind, constraint: { fields }`                        |
+| `P2002`     | `23505`  | `UniqueConstraintViolation` | `originalCode, originalMessage, kind, constraint: { fields }`                        |
 
-`P2010`'s shape is already pinned at
-`packages/database/test/rls.integration.test.ts:249`; the other two rows are from
-this upgrade's own runs. "Read `meta.driverAdapterError.cause`" is therefore not
-one instruction — read the shape belonging to the code being handled.
+All four measured on 7.9.1 against a live container during this upgrade. Read the
+table by rows and then by columns, because both directions carry a warning:
 
-**Limit of the P2002 measurement, stated rather than glossed:** one violation, on
-a **primary key**. Whether a named `@@unique` composite reports `constraint`
-identically is **UNVERIFIED** — no model in this schema has one yet.
+- **`P2010` alone has three shapes.** Keying on the Prisma code tells you almost
+  nothing about which fields are present. An earlier draft of this ADR gave
+  `P2010`'s `cause` as `{ code, message }` — that is a strict _subset_ of the
+  `42501` row only, and it is absent from the other two.
+- **`originalCode`, `originalMessage` and `kind` are on all four.** They are the
+  only fields that can be read without first establishing which case you are in.
+- **The same database event produces two different Prisma codes.** A unique
+  violation is `P2002` through a model delegate and `P2010` through
+  `$executeRaw` — one row apart in the table, identical in `kind`.
 
-**Nothing in this repository reads either error's `meta` today, and that is
-precisely why this section exists.** `CLAUDE.md` requires that every async
-operation be idempotent by a **database unique constraint, not an application
-check**, so `P2002` handling arrives with the first outbox row, job or upload
-dedupe in Phase 1. **MEASURED, from the shipped types:**
+**That last row is the one that lands on Phase 1.** `CLAUDE.md` requires every
+async operation to be idempotent by a database unique constraint; the moment any
+of that idempotency is claimed with raw SQL — a bulk insert, an outbox claim, an
+`ON CONFLICT` written by hand — a handler keyed on `code === 'P2002'` stops
+firing, with no error and no test to say so. **Key on `cause.kind`.**
+
+**Held by a fixture, not by this document:**
+`packages/database/test/error-shape.integration.test.ts` pins all of it — the
+absent `meta.target`, the constraint identity under `cause`, and the
+`P2002`/`P2010` pair for one and the same violation. Both of its consequential
+assertions were verified by mutation (`P2010` → `P2002`, and the composite's
+field list shortened) and go red.
+
+**The composite case is no longer unverified.** An earlier draft of this section
+marked it UNVERIFIED, because the only measurement behind it was a single-column
+primary key and that cannot distinguish "`fields` lists every column" from
+"`fields` happens to have one entry". MEASURED since, against a constraint named
+the way Prisma names `@@unique([a, b])`: `constraint: { fields: ['a', 'b'] }` —
+both columns, in declaration order, same shape. It is the third test in that
+fixture.
+
+**No production code reads either error's `meta` today, and that is precisely why
+this section exists.** **MEASURED, from the shipped types:**
 `PrismaClientKnownRequestError` declares `meta?: Record<string, unknown>`
-(`@prisma/client-runtime-utils@7.9.1`), so reading `meta.target` is not a type
-error — `tsc` cannot report that the field is gone, ESLint has nothing to say,
-and there is no fixture anywhere asserting `P2002`'s shape. **Nothing in this
-repository would catch getting it wrong.** Whoever writes that handler writes a
-fixture with it.
+(`@prisma/client-runtime-utils@7.9.1`), so reading `meta.target` is **not a type
+error** — `tsc` cannot report that the field is gone and ESLint has nothing to
+say. A handler that reads the pre-7 field compiles, lints, and returns
+`undefined` at runtime for every violation it was written to catch.
+
+That is what the fixture above now stands in the way of, and it is the only thing
+that does. Whoever writes the Phase 1 handler extends it rather than trusting
+this document: a claim without a fixture is an intention, and §4 was the section
+of this ADR with the largest consequence and, until the branch review, nothing
+holding it.
 
 ### 5. `prisma-client-js` was kept
 
@@ -326,7 +381,10 @@ should find them explained here rather than conclude the sweep was careless:
    `packages/database/test/adapter.integration.test.ts` and
    `packages/database/test/pool.integration.test.ts` go red if a future Prisma
    restores URL handling — which would be good news, and would mean every
-   `?schema=` in the tree means something again.
+   `?schema=` in the tree means something again. **A fixture guarding an
+   equality does not sample.** Both of these were rebuilt during this branch
+   because their first observable could not support the assertion resting on it:
+   one could not go red, the other could go red falsely.
 
 3. **Any fixture for adapter-level schema selection queries through a model
    delegate.** `$queryRaw` cannot observe the setting at all, so a raw-SQL
@@ -338,9 +396,14 @@ should find them explained here rather than conclude the sweep was careless:
    `apps/api/test/boot.integration.test.ts` is what stops it being deleted as
    redundant.
 
-5. **`P2002` handling, when it arrives, reads `meta.driverAdapterError.cause` and
-   ships with a fixture asserting that shape.** `meta.target` is gone and nothing
-   in this repository would tell you.
+5. **Unique-violation handling keys on `meta.driverAdapterError.cause.kind`, not
+   on the Prisma error code.** `meta.target` is gone, and the same violation is
+   `P2002` from a model delegate and `P2010` from `$executeRaw` — so a handler
+   keyed on the code silently ignores every violation raised by raw SQL, which
+   is where idempotency claims tend to end up.
+   `packages/database/test/error-shape.integration.test.ts` holds all of it;
+   whoever writes the Phase 1 handler extends that file rather than trusting this
+   one.
 
 6. **`prisma-client-js` stays.** Moving generators is a separate decision with
    the costs listed in §5, not a step in an upgrade.
@@ -368,14 +431,18 @@ the ~17 it had before, and nobody has chosen 10. It is written down here so the
 first connection-exhaustion incident starts from a known number rather than an
 archaeology exercise.
 
-**Gained:** three silent behaviour changes now have fixtures that run on every
-integration pass, and one of those fixtures was found to be incapable of failing
-before it was trusted. The measurement that caught it — that
-`@prisma/adapter-pg` qualifies SQL rather than setting `search_path` — is the
-kind of thing that is cheap to learn once and expensive to rediscover.
+**Gained:** four silent behaviour changes now have fixtures that run on every
+integration pass, and **two of those fixtures were found to be untrustworthy
+before they were trusted** — the schema tripwire could not go red at all, and the
+pool fixture could go red for the wrong reason, reporting a Prisma regression
+that had not happened. Both were caught by someone re-measuring rather than
+reading, and the two findings behind them — that `@prisma/adapter-pg` qualifies
+SQL rather than setting `search_path`, and that a sampler under an equality
+assertion is a false-positive generator — are cheap to learn once and expensive
+to rediscover.
 
-**Not verified, and listed rather than left implicit:** `pnpm db:reset` on
-7.9.1; `P2002`'s `constraint` shape for a named `@@unique` composite rather than
-a primary key; whether `prisma studio` starts (only its default port was read,
-from the CLI bundle). Every 6.19.3 number in this document is inherited from the
-upgrade spike and cannot be reproduced from this tree.
+**Not verified, and listed rather than left implicit:** `pnpm db:reset` on 7.9.1;
+whether `prisma studio` starts (only its default port was read, from the CLI
+bundle). Every 6.19.3 number in this document is inherited from the upgrade spike
+and cannot be reproduced from this tree. The composite `@@unique` case was on
+this list until the branch review and is now measured — see §4.
