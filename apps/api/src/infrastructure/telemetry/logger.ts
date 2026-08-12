@@ -151,6 +151,42 @@ function rewrapBareError(this: Logger, args: Parameters<LogFn>, method: LogFn): 
  * Nothing inside pino calls either method, so the only caller is application
  * code.
  */
+/**
+ * The three `child()` options that switch the control off for that child, and
+ * every logger descended from it.
+ *
+ * MEASURED, each disabling a different half: `{ formatters: { log } }` replaces
+ * the walk and a `signed_url` went out verbatim; `{ redact }` replaces the
+ * paths, which is what still reaches `err.message` and `err.stack`; and
+ * `{ serializers: { err } }` replaces the one serialiser obligation 7 requires.
+ *
+ * REJECTED rather than documented, and loudly. `child()` is called at wiring
+ * time rather than per request, so a throw here is a boot failure with a name
+ * on it — the same trade `parseEnv` makes, and the reason CLAUDE.md asks for a
+ * fixture asserting rejection rather than a comment asking for restraint. A
+ * control any caller can switch off with an options bag is not a control.
+ *
+ * Silently dropping the override was the alternative and is worse: the caller
+ * would get a logger that ignores what they asked for, with nothing to read.
+ * A child that genuinely needs another serialiser adds it to `createLogger`,
+ * where it is subject to the same review as the rest of the sink.
+ */
+const CONTROL_DISABLING_CHILD_OPTIONS = ['redact', 'serializers', 'formatters'] as const;
+
+function rejectControlDisablingOptions(options: object | undefined): void {
+  if (options === undefined) return;
+  const disabled = CONTROL_DISABLING_CHILD_OPTIONS.filter((option) =>
+    Object.hasOwn(options, option),
+  );
+  if (disabled.length > 0) {
+    throw new Error(
+      `logger.child() may not override ${disabled.join(', ')}: each one switches off part of the ` +
+        'redaction control for that child and everything descended from it. Configure the sink in ' +
+        'createLogger instead — see apps/api/src/infrastructure/telemetry/logger.ts.',
+    );
+  }
+}
+
 function redactBindings(logger: Logger): Logger {
   /* eslint-disable @typescript-eslint/unbound-method -- reading these UNBOUND is the point, and binding them is the measured bug this function's doc records: each is re-invoked below with `.call(this, …)` so that a descendant delegates to ITSELF rather than to the root, which is what stops a chain losing its parent's bindings. */
   const inheritedChild = logger.child;
@@ -167,6 +203,7 @@ function redactBindings(logger: Logger): Logger {
     bindings: Bindings,
     options?: ChildLoggerOptions<ChildCustomLevels>,
   ): Logger<ChildCustomLevels> {
+    rejectControlDisablingOptions(options);
     const created: unknown = inheritedChild.call(this, redactLogObject(bindings), options);
     return created as Logger<ChildCustomLevels>;
   }
