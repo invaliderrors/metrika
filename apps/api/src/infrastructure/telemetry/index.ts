@@ -28,6 +28,7 @@ export {
   loadedTooEarly,
   missingSentryOtelPieces,
   sentryIntegrations,
+  sentryOptions,
   startTelemetry,
   withRequestBaggage,
   type TelemetryEnv,

@@ -1,4 +1,4 @@
-import { RedactedFieldName, isRedactedKey } from '@metrika/contracts';
+import { REDACTION_CENSOR, RedactedFieldName, isRedactedKey } from '@metrika/contracts';
 
 /**
  * Pino's half of the redaction control.
@@ -32,7 +32,14 @@ import { RedactedFieldName, isRedactedKey } from '@metrika/contracts';
  * a non-enumerable property. So both, and the suite asserts each through the
  * shape only it reaches, so that removing either goes red.
  */
-export const REDACTION_CENSOR = '[REDACTED]';
+/**
+ * RE-EXPORTED, not declared. The token is the wire vocabulary an operator reads,
+ * and it now has one home beside the list, the matching rule and the Sentry
+ * traversal that all use it. Two constants with the same literal is the shape
+ * that drifts — the same argument that moved the rule, and then the walk, into
+ * `packages/contracts`.
+ */
+export { REDACTION_CENSOR };
 
 /**
  * A `*` in a Pino path matches exactly ONE level, so a name needs one path per

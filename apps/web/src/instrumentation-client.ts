@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/nextjs';
-import { redactSentryEvent } from '@/lib/telemetry/redaction';
+import { redactSentryEvent } from '@metrika/contracts';
 import { SENTRY_DSN, keepAllowedIntegrations } from '@/lib/telemetry/sentry';
 
 /**
@@ -21,7 +21,8 @@ Sentry.init({
 
   /**
    * The redaction control, and the reason this file exists at all in Phase 0C.
-   * See `@/lib/telemetry/redaction` — the list comes from
+   * See `@metrika/contracts` — the list, the matching rule and the
+   * traversal all live there now, and the walk is graded there too. The walk is
    * `packages/contracts`, and the walk is what reaches a fetch breadcrumb's
    * `data.url`, where a presigned S3 URL would otherwise leave the browser.
    */

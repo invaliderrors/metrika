@@ -1,16 +1,24 @@
-import { execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import { redactionCorpus } from '@metrika/contracts';
 import { describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
-import {
-  BREADTH_MARKER,
-  REDACTION_CENSOR,
-  redactSentryEvent,
-} from '../src/lib/telemetry/redaction.js';
-import { ALLOWED_INTEGRATION_NAMES, keepAllowedIntegrations } from '../src/lib/telemetry/sentry.js';
+import { redactionCorpus } from '../src/redaction.js';
+import { BREADTH_MARKER, REDACTION_CENSOR, redactSentryEvent } from '../src/sentry-event.js';
 
+/**
+ * THE SUITE MOVED WITH THE CODE.
+ *
+ * This walk was `apps/web`'s until `apps/api` was found shipping a Sentry client
+ * with no `beforeSend` at all. It is one implementation now, in the package that
+ * already owns the list and the matching rule, so it is graded once — here —
+ * rather than once per consumer. Both apps assert that their `Sentry.init`
+ * INSTALLS it (`apps/web/test/sentry-init.test.ts`,
+ * `apps/api/test/sentry-redaction.test.ts`) and `apps/api` additionally asserts
+ * the four leak shapes at a capturing transport, which is a property of the
+ * wiring rather than of the traversal.
+ *
+ * `packages/contracts` holds a 100% coverage threshold and this file is what
+ * keeps the walk over it. Nothing here needed relaxing to move: every branch is
+ * reachable from this package, because the walk takes its event as an argument
+ * and needs no Sentry type to do it.
+ */
 const CORPUS = redactionCorpus();
 
 /**
@@ -752,6 +760,61 @@ describe('the event handed in', () => {
   });
 
   /**
+   * The four cases the walk's own branches need and the move surfaced: they were
+   * measured during review but never asserted, so `packages/contracts`' 100%
+   * threshold is what found them. Each is a distinct guard, not a variation.
+   */
+  it('censors a value whose toJSON throws, rather than trusting the throw', () => {
+    const hostile = {
+      password: SECRET,
+      toJSON: (): never => {
+        throw new Error('toJSON exploded');
+      },
+    };
+    const walked = cleaned({ request: { data: hostile } });
+
+    // The whole value becomes the censor: `toJSON` decides what would have been
+    // sent, and it said nothing this walk can stand behind.
+    expect((walked.request as Record<string, unknown>)['data']).toBe(REDACTION_CENSOR);
+    expect(onTheWire(walked)).not.toContain(SECRET);
+  });
+
+  it('censors a value whose toJSON GETTER throws, which is a different guard', () => {
+    const hostile: Record<string, unknown> = { password: SECRET };
+    Object.defineProperty(hostile, 'toJSON', {
+      get: () => {
+        throw new Error('toJSON getter exploded');
+      },
+      enumerable: false,
+    });
+
+    // The read fails, so the walk never learns there is a serialiser and treats
+    // the value as an ordinary object — `password` is censored by name.
+    expect(onTheWire(cleaned({ request: { data: hostile } }))).not.toContain(SECRET);
+  });
+
+  it('treats an array whose length cannot be read as empty', () => {
+    const hostile = new Proxy([1, 2, 3], {
+      get: (target, key, receiver): unknown => {
+        if (key === 'length') throw new Error('length exploded');
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const walked = cleaned({ request: { data: hostile } });
+
+    // Fail closed: an unknown length copies nothing rather than guessing.
+    expect((walked.request as { data: unknown[] }).data).toStrictEqual([]);
+  });
+
+  it('drops an event that is not an object at all', () => {
+    // `beforeSend` is typed to receive an event, so this is unreachable from
+    // Sentry — and it is the one branch of the boundary that decides between a
+    // cleaned event and `null`, so it is asserted rather than assumed.
+    expect(redactSentryEvent('not an event')).toBeNull();
+    expect(redactSentryEvent(null)).toBeNull();
+  });
+
+  /**
    * The last resort, and the only case that drops the report: the event object
    * itself cannot be enumerated, so there is nothing to send and nothing to say
    * about it. A FROZEN root is no longer this case — nothing is written to it.
@@ -845,20 +908,20 @@ describe('a stack frame path', () => {
 describe('a throw inside the walk', () => {
   it('yields null rather than escaping into Sentry', async () => {
     vi.resetModules();
-    vi.doMock('@metrika/contracts', () => ({
+    vi.doMock('../src/redaction.js', () => ({
       isRedactedKey: () => {
         throw new Error('matcher exploded');
       },
       redactionCorpus: () => [],
     }));
 
-    const fragile = await import('../src/lib/telemetry/redaction.js');
+    const fragile = await import('../src/sentry-event.js');
     const event = { extra: { password: 'hunter2' } };
 
     expect(() => fragile.redactSentryEvent(event)).not.toThrow();
     expect(fragile.redactSentryEvent(event)).toBeNull();
 
-    vi.doUnmock('@metrika/contracts');
+    vi.doUnmock('../src/redaction.js');
     vi.resetModules();
   });
 
@@ -1104,249 +1167,3 @@ describe('object breadth', () => {
  *    thrower is contained at its node and asserted there; a second route to the
  *    same `catch` would assert the same line twice.
  */
-
-/**
- * ─────────────────────────────────────────────────────────────────────────────
- * THE INTEGRATION ALLOWLIST, GRADED AGAINST THE ARRAY `init` ACTUALLY PASSES
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * The first version of this fixture called the package's EXPORTED
- * `getDefaultIntegrations`, which is `@sentry/react`'s. `init` builds its own
- * array (`client/index.js:85`, `server/index.js:78`), and the difference is the
- * whole point: the real client array carries `BrowserTracing` and
- * `NextjsClientStackFrameNormalization`, and the exported one carries neither.
- * So "BrowserTracing is filtered out" was asserted against a list that never
- * contained it.
- *
- * Captured by calling the real `init` with an `integrations` CALLBACK, which is
- * exactly where Sentry hands the defaults to this application's filter. The
- * callback returns `[]`, so nothing is instantiated or installed.
- *
- * ONE CHILD PROCESS PER CAPTURE, and that is a measured requirement rather than
- * hygiene: `@sentry/nextjs`'s server `init` returns early when
- * `sdkAlreadyInitialized()`, so a second `init` in the same process is silently
- * skipped and the callback is never called. Measured — in-process, the second
- * and third captures came back empty.
- *
- * **THE EXACT COUNTS BELOW (11 / 13 / 17 / 18 / 44) ARE DELIBERATE, AND THEY
- * WILL REDDEN ON A BENIGN UPSTREAM PATCH.** That is the trade this file makes on
- * purpose, and it is the same one `redaction-corpus.json` makes: what a Sentry
- * release adds to the default set is precisely what an allowlist exists to keep
- * out, so "the set changed" has to reach a human rather than be absorbed. The
- * cost is a red test on a version bump that added something harmless; the
- * alternative is an upgrade that quietly starts producing spans from `apps/web`.
- * If that trade is ever judged wrong, replace the counts with named-membership
- * assertions — do not delete them.
- *
- * The CJS build, at an absolute path, because the ESM build imports
- * `next/constants` extensionlessly and Node's resolver rejects it
- * (`ERR_MODULE_NOT_FOUND`).
- *
- * `_sentryRewriteFramesDistDir` IS PASSED DELIBERATELY, and both settings are
- * exercised below. `withSentryConfig` injects it at BUILD time
- * (`server/index.js:88` gates on it), so the server default set is **17 without
- * it and 18 with it** — a fixture that asserted `DistDirRewriteFrames` survives
- * the filter while constructing the set outside a real build would be asserting
- * on an integration that is not there, and would pass for the wrong reason.
- */
-const require_ = createRequire(import.meta.url);
-const sentryCjs = path.join(
-  path.dirname(require_.resolve('@sentry/nextjs/package.json')),
-  'build/cjs',
-);
-
-interface SentryBuild {
-  getDefaultIntegrations: (options: Record<string, unknown>) => { name: string }[];
-}
-
-/**
- * The package's EXPORTED helper — what a snapshot test would naturally reach
- * for, and what this fixture exists to avoid. Kept only so the test below can
- * assert that it disagrees with what `init` uses.
- */
-function exportedDefaults(
-  build: 'index.server.js' | 'index.client.js',
-  options: Record<string, unknown>,
-): string[] {
-  const loaded = require_(path.join(sentryCjs, build)) as SentryBuild;
-  return loaded.getDefaultIntegrations(options).map((integration) => integration.name);
-}
-
-const CAPTURE = `
-  const mod = require(process.argv[1]);
-  let captured = [];
-  mod.init({
-    ...JSON.parse(process.argv[2]),
-    dsn: undefined,
-    integrations: (defaults) => { captured = defaults.map((i) => i.name); return []; },
-  });
-  process.stdout.write('__INTEGRATIONS__' + JSON.stringify(captured));
-`;
-
-function realDefaults(
-  build: 'index.server.js' | 'index.client.js',
-  options: Record<string, unknown>,
-  { injectDistDir = true }: { injectDistDir?: boolean } = {},
-): string[] {
-  // The child's environment is stated in full rather than inherited, and not
-  // only because `process.env` is off limits outside `src/config/env.ts`: the
-  // SDK reads `NEXT_PHASE`, `VERCEL_ENV`, `NODE_ENV` and `SENTRY_*` at init, so
-  // an inherited environment would let a developer's shell change which
-  // integrations this fixture grades.
-  // The key is always PRESENT and empty when it is not wanted, rather than the
-  // ternary producing two different object shapes: a union there widens `env`
-  // enough that TypeScript stops matching `execFileSync`'s `encoding: 'utf8'`
-  // overload and hands back `string | Buffer`. Empty is also exactly the SDK's
-  // own gate — `server/index.js:88` tests the value for truthiness.
-  const stdout = execFileSync(
-    process.execPath,
-    ['-e', CAPTURE, path.join(sentryCjs, build), JSON.stringify(options)],
-    {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // `NODE_ENV` is not optional here — Next augments `NodeJS.ProcessEnv` to
-      // require it — and it is not inert either: the client SDK adds a
-      // development-only symbolication processor when it reads `development`.
-      env: {
-        NODE_ENV: 'test',
-        _sentryRewriteFramesDistDir: injectDistDir ? '.next' : '',
-      },
-    },
-  );
-
-  // Delimited rather than parsed whole, so anything the SDK decides to print
-  // cannot turn a captured array into a parse error that reads like a defect.
-  const marker = stdout.lastIndexOf('__INTEGRATIONS__');
-  expect(marker, `no capture in child output: ${stdout}`).toBeGreaterThanOrEqual(0);
-  const payload: unknown = JSON.parse(stdout.slice(marker + '__INTEGRATIONS__'.length));
-
-  return z.array(z.string()).parse(payload);
-}
-
-describe('keepAllowedIntegrations', () => {
-  it('drops an integration that did not exist when this list was written', () => {
-    expect(keepAllowedIntegrations([{ name: 'SomeFutureTracingIntegration' }])).toStrictEqual([]);
-  });
-
-  /**
-   * THE REASON THIS FILE SPAWNS PROCESSES, stated as an assertion rather than a
-   * comment. `getDefaultIntegrations` is exported and is NOT the set `init`
-   * uses, in both directions — so a snapshot over the export pins neither what
-   * ships nor what an upgrade would change:
-   *
-   *   - client: the export omits `browserTracingIntegration` and
-   *     `NextjsClientStackFrameNormalization`, both of which
-   *     `client/index.js:85` pushes internally.
-   *   - server: `init` REMOVES `Http` and substitutes
-   *     `httpIntegration({ disableIncomingRequestSpans: true })`
-   *     (`server/index.js:78`), and adds `DistDirRewriteFrames` when the build
-   *     injected `_sentryRewriteFramesDistDir`.
-   *
-   * ADR-0029's snapshot suggestion is still right for `apps/api`'s
-   * `@sentry/node`; it does not survive `@sentry/nextjs`.
-   */
-  it('is graded against a set the exported helper does not report', () => {
-    const exportedClient = exportedDefaults('index.client.js', {});
-    const realClient = realDefaults('index.client.js', {});
-
-    expect(exportedClient.length).toBe(11);
-    expect(realClient.length).toBe(13);
-    expect(realClient.filter((name) => !exportedClient.includes(name)).sort()).toStrictEqual([
-      'BrowserTracing',
-      'NextjsClientStackFrameNormalization',
-    ]);
-
-    // The server difference is the build-time injection, and it is conditional:
-    // 17 without it, 18 with it. `withSentryConfig` is what supplies it.
-    expect(exportedDefaults('index.server.js', {}).length).toBe(17);
-    expect(realDefaults('index.server.js', {}, { injectDistDir: false }).length).toBe(17);
-    expect(realDefaults('index.server.js', {})).toContain('DistDirRewriteFrames');
-    expect(realDefaults('index.server.js', {}).length).toBe(18);
-  });
-
-  /**
-   * The exclusion, asserted against the array `Sentry.init` really builds. The
-   * previous form of this — `expect(ALLOWED_INTEGRATION_NAMES).not.toContain(…)`
-   * — is a string absence, and would pass just as happily if `BrowserTracing`
-   * had been renamed upstream and were arriving under another name entirely.
-   */
-  it('drops BrowserTracing from the real client defaults, and nothing else', () => {
-    const real = realDefaults('index.client.js', {});
-    const kept = keepAllowedIntegrations(real.map((name) => ({ name }))).map((i) => i.name);
-
-    expect(real).toContain('BrowserTracing');
-    expect(real).toContain('NextjsClientStackFrameNormalization');
-    expect(real.filter((name) => !kept.includes(name))).toStrictEqual(['BrowserTracing']);
-  });
-
-  /**
-   * `NextjsClientStackFrameNormalization` and `DistDirRewriteFrames` have no
-   * exported factory, so `defaultIntegrations: false` plus a list of
-   * constructions — the other way to write an allowlist, and the one ADR-0029
-   * obligation 2 asks for literally — cannot bring them back. Applying the
-   * allowlist as a FILTER is what keeps them, and this is the assertion that
-   * says so.
-   */
-  it('keeps the two SDK-internal integrations that have no exported factory', () => {
-    // Neither has one: only `rewriteFramesIntegration` is public, and
-    // `'distDirRewriteFramesIntegration' in Sentry` is false on both builds.
-    const client = require_(path.join(sentryCjs, 'index.client.js')) as Record<string, unknown>;
-    const server = require_(path.join(sentryCjs, 'index.server.js')) as Record<string, unknown>;
-
-    expect('nextjsClientStackFrameNormalizationIntegration' in client).toBe(false);
-    expect('distDirRewriteFramesIntegration' in server).toBe(false);
-
-    const keptClient = keepAllowedIntegrations(
-      realDefaults('index.client.js', {}).map((name) => ({ name })),
-    ).map((i) => i.name);
-    const keptServer = keepAllowedIntegrations(
-      // The build-time injection is required for this one to exist at all.
-      realDefaults('index.server.js', {}).map((name) => ({ name })),
-    ).map((i) => i.name);
-
-    expect(keptClient).toContain('NextjsClientStackFrameNormalization');
-    expect(keptServer).toContain('DistDirRewriteFrames');
-  });
-
-  it('keeps every error-side default the server SDK ships with tracing off', () => {
-    const real = realDefaults('index.server.js', {});
-    const kept = keepAllowedIntegrations(real.map((name) => ({ name }))).map((i) => i.name);
-
-    expect(kept).toStrictEqual(real);
-    expect(real.length).toBeGreaterThan(10);
-  });
-
-  it('drops every span-producing integration the server SDK offers under tracing', () => {
-    const real = realDefaults('index.server.js', { tracesSampleRate: 1 });
-    const kept = keepAllowedIntegrations(real.map((name) => ({ name }))).map((i) => i.name);
-
-    // ADR-0029's number, reproduced. `DistDirRewriteFrames` is the Next SDK's
-    // own addition on top of `@sentry/node`'s set, so it is subtracted rather
-    // than folded in — the 44 is a claim about the Node SDK.
-    expect(real.filter((name) => name !== 'DistDirRewriteFrames').length).toBe(44);
-
-    for (const spanProducing of ['Fastify', 'Express', 'Postgres', 'Prisma', 'Redis', 'Mongo']) {
-      expect(real).toContain(spanProducing);
-      expect(kept).not.toContain(spanProducing);
-    }
-
-    // Enabling tracing adds only span producers, so the kept set is unchanged
-    // from the bare one — which is what makes "no traces from apps/web" a
-    // property of the allowlist rather than of `tracesSampleRate` being unset.
-    expect(kept).toStrictEqual(realDefaults('index.server.js', {}));
-  });
-
-  /**
-   * No DEAD entries. A name in the allowlist that no runtime ships is either a
-   * typo or a leftover from a version bump, and it silently protects nothing —
-   * the same shape as a redaction path nothing matches.
-   */
-  it('names nothing that no runtime actually ships', () => {
-    const shipped = new Set([
-      ...realDefaults('index.client.js', {}),
-      ...realDefaults('index.server.js', { tracesSampleRate: 1 }),
-    ]);
-
-    expect(ALLOWED_INTEGRATION_NAMES.filter((name) => !shipped.has(name))).toStrictEqual([]);
-  });
-});

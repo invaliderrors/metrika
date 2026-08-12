@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/nextjs';
-import { redactSentryEvent } from '@/lib/telemetry/redaction';
+import { redactSentryEvent } from '@metrika/contracts';
 import { SENTRY_DSN, keepAllowedIntegrations } from '@/lib/telemetry/sentry';
 
 /**
