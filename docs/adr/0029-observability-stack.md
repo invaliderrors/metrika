@@ -355,6 +355,15 @@ required, not a suggestion.
    `Sentry.getDefaultIntegrations` is exported, so Task 3 can pin the set with a
    snapshot test that fails on drift.
 
+   [**Corrected by [ADR-0031](./0031-sentry-nextjs-integration-allowlist.md)** —
+   the literal `defaultIntegrations: false` is unusable on `@sentry/nextjs`: two
+   integrations that make stack traces resolvable have **no exported factory**,
+   so it drops them with no way to add them back. Use an `integrations` callback
+   that **filters** the SDK's own defaults by name — same allowlist direction,
+   no collateral. The snapshot-test suggestion in the last sentence is also wrong
+   there: the exported `getDefaultIntegrations` is not the set `init` uses. The
+   counts in this paragraph reproduce and are unaffected.]
+
 3. **The global propagator is a `CompositePropagator` containing
    `W3CTraceContextPropagator`, `W3CBaggagePropagator` and `SentryPropagator`,
    in that order**, and it is passed **through** the SDK's own registration, not
