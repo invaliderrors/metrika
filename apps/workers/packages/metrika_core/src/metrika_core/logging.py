@@ -59,22 +59,79 @@ REDACTED_FIELD_NAMES: frozenset[str] = frozenset(name.value for name in Redacted
 # The word rule keeps every case the string-suffix rule caught and adds the
 # camelCase spellings. `curl` is the case that shows it is a WORD suffix and not
 # a character one: one word, `curl`, which is not `url`.
-_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
+#
+# DIGITS ARE THEIR OWN WORD (`[0-9]+` rather than folding them into `[a-z0-9]+`),
+# so `url2` is `("url", "2")` and not one opaque token. Measured before the
+# change: `signedURL2` and `presigned_url_v2` both returned False.
+_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]*|[a-z]+|[0-9]+")
+
+# A trailing ordinal. `url2`, `signed_url_v2` and `attempt_3` all end in one, and
+# a number bolted onto a name does not change what the field holds.
+_ORDINAL = re.compile(r"^[0-9]+$")
 
 
 def _words(name: str) -> tuple[str, ...]:
     return tuple(part.lower() for part in _WORDS.findall(name))
 
 
+def _spellings(words: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    """The forms of one key that all mean the same field.
+
+    THREE MISSES THIS EXISTS FOR, every one measured returning False from the
+    first version of `is_redacted_key`, and every one a real spelling:
+
+        presigned_urls, signed_urls, file_names      a batch helper's plural
+        signedURL2, presigned_url_v2                 an ordinal or a version
+        signedurl, presignedurl                      no word boundary at all
+
+    A batch presign step logging `presigned_urls=[…]` leaked with every gate in
+    this repository green, which is the positive-assertion trap again: the
+    fixtures exercised the exact name and an `upstream`-prefixed one, so they
+    could not see a class of spelling nobody had thought to write down.
+
+    Each form below is EXACT rather than fuzzy, which is what keeps the cost
+    bounded:
+
+      * the ordinal trim pops trailing NUMERIC words, then a lone `v` if a
+        number was popped from behind it. `url_count` keeps its `count` and
+        stays readable; `s3_url` keeps its `url` because the digit is not
+        trailing.
+      * the plural form strips ONE trailing `s` from the last word, and is
+        offered ALONGSIDE the raw form rather than replacing it — no redacted
+        name ends in `s`, so nothing can be lost, and `url` still matches `url`.
+      * the concatenation is the redacted name with its own word boundary
+        removed, which is a fixed string per name and not a prefix heuristic.
+        This is why `signedurl` matches and `curl` does not: `curl` is not the
+        concatenation of anything on the list, whereas a rule like "ends with
+        the letters u-r-l" takes both.
+    """
+    trimmed = list(words)
+    popped_a_number = False
+    while trimmed and _ORDINAL.match(trimmed[-1]):
+        trimmed.pop()
+        popped_a_number = True
+    if popped_a_number and trimmed and trimmed[-1] == "v":
+        trimmed.pop()
+
+    forms = [tuple(trimmed)]
+    if trimmed and len(trimmed[-1]) > 1 and trimmed[-1].endswith("s"):
+        forms.append((*trimmed[:-1], trimmed[-1][:-1]))
+    return tuple(forms)
+
+
 # Every redacted name as a word tuple, so matching is a suffix comparison rather
-# than a string search. `("url",)` is the entry that reaches `s3_url` and
-# `downloadUrl`; `("file", "name")` is the one that reaches `original_file_name`.
+# than a string search — plus, for the multi-word names, the same words with the
+# boundary removed. `("url",)` is the entry that reaches `s3_url` and
+# `downloadUrl`; `("file", "name")` reaches `original_file_name`; `("signedurl",)`
+# reaches `signedurl` without letting `curl` in.
 #
 # `key` is deliberately not among them, and neither is anything ending in it:
 # `cache_key` is the identifier every pipeline log line carries, and redacting
 # it would cost real debuggability for a word whose values here are safe.
 _REDACTED_WORDS: frozenset[tuple[str, ...]] = frozenset(
-    _words(name) for name in REDACTED_FIELD_NAMES
+    candidate
+    for name in REDACTED_FIELD_NAMES
+    for candidate in (_words(name), ("".join(_words(name)),))
 )
 
 _REDACTED = "[redacted]"
@@ -85,10 +142,17 @@ def is_redacted_key(key: str) -> bool:
 
     Public because it is the matcher, and a second sink on this side — a Sentry
     `before_send`, when one arrives — must use this rather than write its own.
+
+    THE ONE SHAPE IT DOES NOT REACH, named so nobody assumes otherwise: an
+    invented concatenation with no word boundary that is not itself on the list —
+    `mysignedurl`, `thetoken`. Catching those needs a prefix heuristic, and the
+    same heuristic takes `curl`. `signedurl` is reached because it IS a listed
+    name with its boundary removed; `mysignedurl` is not, and `my_signed_url`,
+    `mySignedUrl` and `signedurls` all are.
     """
-    words = _words(key)
     return any(
         len(candidate) <= len(words) and words[-len(candidate) :] == candidate
+        for words in _spellings(_words(key))
         for candidate in _REDACTED_WORDS
     )
 
