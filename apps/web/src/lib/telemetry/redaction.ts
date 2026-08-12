@@ -113,6 +113,29 @@ export const REDACTION_CENSOR = '[REDACTED]';
 const MAX_DEPTH = 12;
 
 /**
+ * The breadth limit, and it exists because this walk copies DENSELY.
+ *
+ * `JSON.stringify` emits a `null` per hole, so a dense copy is what keeps the
+ * wire byte-identical for a sparse array — and it also means `a.length =
+ * 5_000_000` on an array with two elements materialises five million entries
+ * before anything is sent. Measured at 130 ms, inside `beforeSend`, on an error
+ * path.
+ *
+ * 1000 is not an invented number: it is `normalizeMaxBreadth`'s default, which
+ * Sentry already applies to `extra`, `contexts` and `breadcrumbs[].data` before
+ * this hook runs. Applying it here gives `request`, `tags` and
+ * `frames[].vars` — the three regions Sentry protects nowhere — the same
+ * guarantee as the ones it does.
+ *
+ * **This is the one place the copy deliberately diverges from
+ * `JSON.stringify`.** An array longer than the cap is truncated and gains a
+ * trailing `[REDACTED]`, so the truncation is visible on the wire rather than
+ * silent. Stated here because a reader comparing the two will otherwise take it
+ * for a defect.
+ */
+const MAX_BREADTH = 1000;
+
+/**
  * Where the walk is, relative to Sentry's own stack-frame structure. See
  * `FRAME_PATH_KEY`.
  */
@@ -194,6 +217,34 @@ function read(source: object, key: string | number): { ok: boolean; value: unkno
   }
 }
 
+/**
+ * `Object.defineProperty`, not `output[key] = value`, and the reason is that
+ * `__proto__` is a LYING SETTER — the same class as the `write()` this walk
+ * deleted, relocated into the output.
+ *
+ * `Object.prototype.__proto__` is an accessor, so a plain assignment for that
+ * one key name sets the prototype and stores nothing. Measured against an event
+ * carrying an own enumerable `__proto__` (which `JSON.parse` produces and which
+ * `normalizeEvent` does not touch in `request`):
+ *
+ *   original wire → `{"__proto__":{…},"keep":"yes"}`
+ *   assignment    → `{"keep":"yes"}` — the field silently destroyed
+ *
+ * It can also THROW: `Cyclic __proto__ value` on a graph whose own `__proto__`
+ * properties form a cycle. `defineProperty` on a fresh, extensible object with
+ * no existing property of that name cannot throw and cannot be intercepted, so
+ * both go away — without the output having to be null-prototype, which would
+ * change what every downstream reader sees.
+ */
+function define(output: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(output, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
 function cleanValue(
   value: unknown,
   memo: WeakMap<object, Cleaned>,
@@ -236,7 +287,22 @@ function cleanValue(
     return output;
   }
 
-  if (Array.isArray(value)) {
+  /**
+   * `Array.isArray` was the ONE unguarded call left in this function, and it
+   * throws: `IsArray` on a REVOKED `Proxy` raises `TypeError: Cannot perform
+   * 'IsArray' on a proxy that has been revoked`. Contained here rather than only
+   * at the boundary, so one revoked proxy costs its own node instead of the
+   * whole report.
+   */
+  let array: boolean;
+  try {
+    array = Array.isArray(value);
+  } catch {
+    memo.set(value, { output: REDACTION_CENSOR, depth });
+    return REDACTION_CENSOR;
+  }
+
+  if (array) {
     const output: unknown[] = [];
     // Memoised BEFORE the fill, which is what makes a back-edge safe: the
     // container a cycle captures is the one that ends up complete, because it is
@@ -244,7 +310,8 @@ function cleanValue(
     memo.set(value, { output, depth });
 
     const length = read(value, 'length');
-    const count = typeof length.value === 'number' ? length.value : 0;
+    const declared = typeof length.value === 'number' ? length.value : 0;
+    const count = Math.min(declared, MAX_BREADTH);
     const elementZone: Zone = zone === 'frames' ? 'frame' : 'none';
 
     for (let index = 0; index < count; index += 1) {
@@ -253,6 +320,7 @@ function cleanValue(
         element.ok ? cleanValue(element.value, memo, depth + 1, elementZone) : REDACTION_CENSOR,
       );
     }
+    if (declared > count) output.push(REDACTION_CENSOR);
     return output;
   }
 
@@ -283,13 +351,15 @@ function cleanValue(
 
   for (const key of keys) {
     if (isRedactedKey(key) && !(frame && key === FRAME_PATH_KEY)) {
-      output[key] = REDACTION_CENSOR;
+      define(output, key, REDACTION_CENSOR);
       continue;
     }
     const child = read(value, key);
-    output[key] = child.ok
-      ? cleanValue(child.value, memo, depth + 1, childZone(zone, key))
-      : REDACTION_CENSOR;
+    define(
+      output,
+      key,
+      child.ok ? cleanValue(child.value, memo, depth + 1, childZone(zone, key)) : REDACTION_CENSOR,
+    );
   }
 
   return output;
@@ -316,14 +386,46 @@ function cleanValue(
  * rather than assumed — it is the property that makes every hostile value shape
  * inert, so it is the one worth guarding directly.
  *
- * `null` — Sentry's "do not send" — is reached only when the event object itself
- * cannot be enumerated, which in practice means a `Proxy` with a throwing
- * `ownKeys` trap. There is nothing to send in that case and nothing to say about
- * it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE `try` IS THE CONTROL. A THROW HERE IS A FULL-SCOPE PLAINTEXT LEAK.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * This is not defensive habit and it is not about tidiness. When `beforeSend`
+ * throws, `@sentry/core` (`client.js:590-593`) captures the throw as an
+ * **internal** event carrying `data.__sentry__ = true`, and that flag
+ * SHORT-CIRCUITS `processBeforeSend` — so the replacement event goes out with
+ * the whole scope attached and no redaction at all. Measured on the wire:
+ *
+ * ```
+ * "extra":{"password":"hunter2"},"tags":{"authorization":"Bearer TOPSECRET"},
+ * "user":{"email":"victim@example.com"},
+ * "breadcrumbs":[{"data":{"url":"https://s3.example/u/a.stl?X-Amz-Signature=…"}}]
+ * ```
+ *
+ * The presigned URL this module exists to stop ships unredacted, AND the real
+ * event is dropped. One throw turns the control inside out.
+ *
+ * Every known thrower is contained at its own node — a revoked `Proxy` reaching
+ * `Array.isArray`, a throwing `ownKeys` trap, a throwing getter, a throwing
+ * `toJSON` — so this catch has no reachable trigger today. That is exactly why
+ * it is here and why `test/sentry-redaction.test.ts` reaches it by making the
+ * shared matcher throw: "this function never throws" is an argument, and this
+ * repository's rule is that the difference between an argument and a control is
+ * a fixture asserting rejection. The sibling sink in `apps/api` was found with
+ * the same class in the same week — a throwing `stack` getter escaped
+ * `logger.info` and emitted zero lines — so fail-closed belongs at the boundary
+ * of the walk rather than in reasoning about its inside.
+ *
+ * `null` is Sentry's "do not send". Losing one report is the correct trade
+ * against sending an unredacted one.
  */
 export function redactSentryEvent<TEvent>(event: TEvent): TEvent | null {
-  const output = cleanValue(event, new WeakMap<object, Cleaned>(), 0, 'none');
+  try {
+    const output = cleanValue(event, new WeakMap<object, Cleaned>(), 0, 'none');
 
-  if (typeof output !== 'object' || output === null) return null;
-  return output as TEvent;
+    if (typeof output !== 'object' || output === null) return null;
+    return output as TEvent;
+  } catch {
+    return null;
+  }
 }
