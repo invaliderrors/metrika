@@ -46,6 +46,15 @@ CORPUS = Path(__file__).resolve().parents[5] / "packages" / "contracts" / "redac
 
 
 def _corpus() -> list[dict[str, object]]:
+    """The rows, or none at all if the file is missing.
+
+    `CASES` is built at IMPORT time, so a `FileNotFoundError` here would be a
+    COLLECTION error — pytest would report a traceback from this module and
+    `test_the_corpus_exists_and_is_not_vacuous`, which exists to say what to run,
+    would never execute. Returning an empty list keeps that guidance reachable.
+    """
+    if not CORPUS.exists():
+        return []
     rows: object = json.loads(CORPUS.read_text(encoding="utf-8"))
     assert isinstance(rows, list)
     return [row for row in rows if isinstance(row, dict)]

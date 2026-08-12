@@ -22,20 +22,23 @@ from metrika_core.telemetry import bind_activity_context, bind_correlation
 # object until it expires; an original file name is customer data and is exactly
 # the field a support ticket screenshot leaks.
 #
-# **THE LIST IS NOT HERE.** It is `RedactedFieldName` in
-# `packages/contracts/src/redaction.ts`, and it arrives on this side as
-# GENERATED code that `pnpm contracts:emit` writes and CI byte-diffs. There are
-# three sinks for this list — Pino in `apps/api`, structlog here, and Sentry's
-# `beforeSend` in `apps/web` — and three hand-maintained copies of a security
-# control is how one of them silently stops matching: nothing fails, nothing
-# warns, and the sink that drifted keeps emitting a line that looks exactly like
-# the two that did not. Deriving instead of copying makes that a red build.
+# **NEITHER THE LIST NOR THE RULE IS HERE.** Both live in
+# `packages/contracts/src/redaction.ts`. The list arrives on this side as
+# GENERATED code that `pnpm contracts:emit` writes and CI byte-diffs; the rule
+# is ported below and graded against `redaction-corpus.json` by
+# `tests/test_redaction_corpus.py`.
 #
-# What crosses is the NAMES. The MATCHING is each sink's own, because each
-# runtime can do a different amount: Pino matches paths and needs one rule per
-# name per depth; this side matches the event dict's keys, which are flat, so it
-# can afford the word-suffix rule below. An equality assertion between the three
-# matchers would be asserting something false.
+# Three sinks read that list — Pino in `apps/api`, structlog here, and Sentry's
+# `beforeSend` in `apps/web`. Three hand-maintained copies of a security control
+# is how one of them silently stops matching: nothing fails, nothing warns, and
+# the sink that drifted keeps emitting a line that looks exactly like the two
+# that did not. That is not hypothetical for the RULE either — it was two copies
+# and 27 of 140 probe names were measured disagreeing between them.
+#
+# What differs per sink is TRAVERSAL, and only traversal: Pino walks paths and
+# needs one rule per name per depth, this side walks a flat event dict, Sentry
+# walks an arbitrary object graph. The decision each of them makes about a key it
+# has reached is one algorithm, and `isRedactedKey` in that module is it.
 REDACTED_FIELD_NAMES: frozenset[str] = frozenset(name.value for name in RedactedFieldName)
 
 # Splits an identifier into lowercase words, in either spelling. `signedUrl` and
@@ -132,6 +135,12 @@ def _spellings(words: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
         popped_a_number = True
     if popped_a_number and trimmed and trimmed[-1] == "v":
         trimmed.pop()
+    # THE SAME `v`, WHEN IT DID NOT GET ITS OWN TOKEN. `signed_url_v2` tokenises
+    # as `[…, "url", "v", "2"]` and the branch above is enough; `signedURLV2` and
+    # `signedurlv2` do not, because the `v` merges into the uppercase run and the
+    # lowercase run respectively.
+    if popped_a_number and trimmed and len(trimmed[-1]) > 1 and trimmed[-1].endswith("v"):
+        trimmed[-1] = trimmed[-1][:-1]
 
     forms = [tuple(trimmed)]
     if trimmed and len(trimmed[-1]) > 1 and trimmed[-1].endswith("s"):

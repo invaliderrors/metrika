@@ -1,20 +1,22 @@
 """`metrika_core.logging`, and the redaction control it is mostly there to run.
 
-The agreement half of this file is Plan 0C Task 4 Step 4: three sinks — Pino in
+The redaction half of this file is Plan 0C Task 4 Step 4: three sinks — Pino in
 `apps/api`, structlog here, Sentry's `beforeSend` in `apps/web` — must not drift
-apart. **They are DERIVED, not compared.** `RedactedFieldName` lives in
+apart. **The LIST is derived**: `RedactedFieldName` lives in
 `packages/contracts` and reaches this side as generated code through `pnpm
 contracts:emit`, which CI byte-diffs, so `REDACTED_FIELD_NAMES` below is that
-list rather than a copy of it and there is no equality to assert: a name removed
-on the TypeScript side either fails `packages/contracts/test/redaction.test.ts`
-immediately, or fails CI's `contracts` job as a stale generated file, or — if
-someone regenerates — fails `test_the_required_names_are_all_present` here.
+list rather than a copy of it. A name removed on the TypeScript side either
+fails `packages/contracts/test/redaction.test.ts` immediately, or fails CI's
+`contracts` job as a stale generated file, or — if someone regenerates — fails
+`test_the_required_names_are_all_present` here.
 
-Equality was the alternative and it is worse, for a reason worth stating: the
-three sinks CANNOT behave identically. Pino matches paths and needs one rule per
-name per depth; this side matches a flat event dict's keys and so can afford the
-word-suffix rule. An equality assertion between three matchers would be
-asserting something false. What is shared is the names.
+**The RULE is compared**, and that is a different mechanism in a different file.
+`tests/test_redaction_corpus.py` grades this module's matcher against
+`packages/contracts/redaction-corpus.json`, because the rule is one algorithm
+with three call sites and copies of it drift exactly as copies of the list
+would — measured, at 27 of 140 probe names. What this file adds is the
+BEHAVIOURAL half the corpus cannot reach: that a real emitted line says
+`[redacted]`, through the whole structlog pipeline.
 """
 
 from __future__ import annotations
