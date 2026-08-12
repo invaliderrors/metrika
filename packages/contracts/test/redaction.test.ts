@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { RedactedFieldName, isRedactedKey, redactionCorpus } from '../src/redaction.js';
+import {
+  RedactedFieldName,
+  conflictingDeclarations,
+  isRedactedKey,
+  redactionCorpus,
+} from '../src/redaction.js';
 
 /**
  * The TypeScript half of the redaction agreement. The Python half is
@@ -117,6 +122,33 @@ describe('isRedactedKey', () => {
     expect(corpus.filter((row) => !row.redacted).length).toBeGreaterThan(20);
   });
 
+  it('declares nothing both ways', () => {
+    // A `MUST_SURVIVE` entry that some spelling also produces used to be
+    // resolved silently in favour of redaction, so a deliberate negative
+    // declaration could be discarded with no error at all.
+    expect(conflictingDeclarations()).toEqual([]);
+  });
+
+  it('covers the PRODUCT of the spelling dimensions, not their sum', () => {
+    // The regression this exists for: `signedURLs2` is an acronym plural AND an
+    // ordinal, and a flat list of transforms contains the shapes somebody
+    // thought of rather than their combinations. A one-character edit to the
+    // Python matcher was measured leaving its whole suite green while exactly
+    // this key diverged.
+    const keys = new Set(corpus.map((row) => row.key));
+    for (const composed of [
+      'signedURLs2',
+      'downloadURLs2',
+      'upstreamSignedURLsV2',
+      'UPSTREAM_SIGNED_URLS_V2',
+      'upstream_signed_urls_v2',
+      'signedurlsv2',
+      'presignedURLs2',
+    ]) {
+      expect(keys, `${composed} is not in the corpus`).toContain(composed);
+    }
+  });
+
   it.each(
     ['signedURLs', 'downloadURLs', 'presignedURLs', 'URLs', 'signedURL', 'signedURL2'].map(
       (key) => [key] as const,
@@ -130,12 +162,16 @@ describe('isRedactedKey', () => {
     expect(isRedactedKey(key)).toBe(true);
   });
 
-  it.each([['HTTPStatus'], ['AWSRegion'], ['curl'], ['cacheKeys'], ['statuses']])(
-    'does not take %s, which the acronym branch could have',
-    (key) => {
-      expect(isRedactedKey(key)).toBe(false);
-    },
-  );
+  it("grades the acronym branch's near-misses through the CORPUS, not only here", () => {
+    // These used to live only in this file, so the Python port was ungraded on
+    // exactly the names the acronym branch could have swept in. They are
+    // `MUST_SURVIVE` entries now and both sides check them; this asserts they
+    // really did cross rather than being dropped from the table.
+    const survivors = new Set(corpus.filter((row) => !row.redacted).map((row) => row.key));
+    for (const key of ['HTTPStatus', 'AWSRegion', 'cacheKeys', 'statuses', 'rev2', 'dev2']) {
+      expect(survivors, `${key} is not declared a survivor`).toContain(key);
+    }
+  });
 
   it.each(corpus.map((row) => [row.key, row.redacted] as const))(
     'agrees with the corpus on %j',
