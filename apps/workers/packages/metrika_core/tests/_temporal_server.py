@@ -86,7 +86,17 @@ _BOOTSTRAP_DATABASE = "metrika_test"
 
 # Generous, because this container is not just a process start: it waits for
 # Postgres, creates two databases, applies both schemas, boots four services and
-# then registers the namespace and the search attributes.
+# then registers the namespace.
+#
+# NOT the search attributes, and the earlier version of this comment said it
+# did. ADR-0029 obligation 10 MEASURED `auto-setup` registering none of
+# `MetrikaRequestId`, `MetrikaOrganizationId`, `MetrikaModelVersionId`,
+# `MetrikaQuoteId` or `MetrikaTraceId`: they need
+# `temporal operator search-attribute create` and nothing here runs it. So this
+# fixture is a THIRD copy of the Temporal bring-up alongside
+# `infra/docker/docker-compose.yml` and `packages/testing/src/temporal.ts`, and
+# whoever discharges that obligation has to touch all three. Nothing mechanical
+# keeps them in agreement — the same hazard ADR-0028 records for `BIND_ON_IP`.
 _STARTUP_TIMEOUT_S = 180
 
 # The HOST-side gate below. Short, because by the time it runs the container has

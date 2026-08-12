@@ -33,6 +33,7 @@ from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import INVALID_SPAN_ID, INVALID_TRACE_ID
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from structlog.typing import EventDict, WrappedLogger
 from temporalio import activity
@@ -60,13 +61,17 @@ FIELD_ORGANIZATION_ID = "organizationId"
 FIELD_TRACE_ID = "traceId"
 FIELD_SPAN_ID = "spanId"
 
-# An invalid `SpanContext` is all zeroes and formats perfectly happily as
-# thirty-two of them. Emitting that would put a plausible-looking trace ID on
-# every line a worker writes outside an activity — startup, shutdown, a poll
-# failure — and every one would resolve to nothing in Grafana. The processors
-# below emit NOTHING instead, and `test_telemetry.py` asserts the absence.
-_INVALID_TRACE_ID = 0
-_INVALID_SPAN_ID = 0
+# `INVALID_TRACE_ID` and `INVALID_SPAN_ID` are imported from
+# `opentelemetry.trace` rather than restated as `0` here. They are the SDK's own
+# sentinels and comparing against a local copy would be a second statement of
+# somebody else's constant — the kind that stays right until it does not.
+#
+# What they are FOR: an invalid `SpanContext` is all zeroes and formats
+# perfectly happily as thirty-two of them. Emitting that would put a
+# plausible-looking trace ID on every line a worker writes outside an activity —
+# startup, shutdown, a poll failure — and every one would resolve to nothing in
+# Grafana. The processors below emit NOTHING instead, and `test_telemetry.py`
+# asserts the absence.
 
 
 def build_tracer_provider(settings: WorkerSettings, *, service_name: str) -> TracerProvider:
@@ -176,9 +181,9 @@ def bind_correlation(_logger: WrappedLogger, _method_name: str, event_dict: Even
     silently overwriting it would be the processor lying.
     """
     span_context = trace.get_current_span().get_span_context()
-    if span_context.trace_id != _INVALID_TRACE_ID:
+    if span_context.trace_id != INVALID_TRACE_ID:
         event_dict.setdefault(FIELD_TRACE_ID, format(span_context.trace_id, "032x"))
-    if span_context.span_id != _INVALID_SPAN_ID:
+    if span_context.span_id != INVALID_SPAN_ID:
         event_dict.setdefault(FIELD_SPAN_ID, format(span_context.span_id, "016x"))
 
     for baggage_key, field in (
