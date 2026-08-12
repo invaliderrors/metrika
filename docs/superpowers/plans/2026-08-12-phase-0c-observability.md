@@ -98,9 +98,13 @@ Two spikes in this project have each paid for themselves several times over. Thi
   - **A signed URL in a log is a leaked model.** Redact in Pino, in structlog and in Sentry's `beforeSend`.
   - **File names and project names are customer intellectual property.** `Torre_Bacatá_Fase3_Final.stl` tells an observer what an architect is working on. The model ID is the identifier that belongs in logs.
 
-- [ ] **Step 2: Write the test that closes the carry-forward.** Log an `Error` whose message carries `DB_DSN=postgres://user:PASSWORD@host/db` and assert the password appears in **neither** `err.message` nor `err.stack` in the emitted line.
+- [ ] **Step 2: Write the test that closes the carry-forward — and note the fix is NOT configuration**
 
-  Use ADR-0029's answer to question 5. If Pino's `redact` does not reach an `Error`'s own fields, a custom serialiser is the fix — and the test must fail before it and pass after.
+Log an `Error` whose message carries `DB_DSN=postgres://user:PASSWORD@host/db` and assert the password appears in **neither** `err.message`, `err.stack`, nor `msg` in the emitted line.
+
+**ADR-0029 measured this and the answer changes the approach.** Pino's `redact` reaches an `Error`'s own properties but **not** `message` or `stack` — and the current call is `logger.error(error.stack)`, which puts the secret in Pino's **`msg`** field, where no redact path, no wildcard and no custom serialiser reaches it.
+
+So there is no configuration that closes this. **The call site itself must change**: log a redacted, structured representation of the error rather than handing Pino a pre-formatted string. Any fix that only edits the redact list is not a fix, and the `msg` assertion above is what proves the difference.
 
 - [ ] **Step 3: Run both, watch them fail.**
 
@@ -127,6 +131,13 @@ This is the deliverable. `docs/OBSERVABILITY.md` §2 calls it the single highest
 - [ ] **Step 2: Run it, watch it fail.**
 
 - [ ] **Step 3: Implement the SDK bootstrap**, in the order ADR-0029's question 2 established for Sentry coexistence.
+
+**Two silent failures measured by the spike, both at exit 0:**
+
+- **`SentryPropagator` alone breaks correlation.** One request becomes **three traces**, with baggage dropped on the activity leg. The fix is a composite propagator — one line that nothing else in the system would point you at, since every component reports success.
+- **Registering Sentry and OTel separately is silent and kills the loser's pipeline entirely.** They must share one `TracerProvider`. Double registration does not throw.
+
+Assert the composite propagator is in place, not just that the SDK started. A test that checks spans exist passes in all three broken states above.
 
 - [ ] **Step 4: Bind the correlation fields into every log line**, using ADR-0029's answer to question 3 about `AsyncLocalStorage` surviving the OTel context manager.
 
