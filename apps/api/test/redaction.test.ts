@@ -25,23 +25,27 @@ const CORPUS = redactionCorpus();
  *     `signedUrl` does not imply `signed_url` and no derivation of seventeen
  *     names could produce the 956 spellings the corpus declares.
  *
- * **A leak lived in the gap between those two rows, and the shape of this file
- * is what hid it.** The first version asserted child bindings in the canonical
+ * **TWO leaks lived in the gap between those two rows, and the shape of this
+ * file is what hid both.** The first version asserted bindings in the canonical
  * spelling and non-canonical spellings in a merged object — the SUM of the two
  * dimensions — so `logger.child({ signed_url })`, their PRODUCT, was reached by
- * neither mechanism and went out verbatim with every fixture green. MEASURED.
- * `createLogger` now puts a child's bindings through the walk as well, and the
- * corpus below is graded through all four shapes a key can arrive by rather
- * than one.
+ * neither mechanism and went out verbatim with every fixture green. The fix
+ * then covered `child` and shipped, and `setBindings({ signed_url })` leaked in
+ * exactly the same way: enumerating the instance that had just been found
+ * rather than the dimension it belonged to. Both MEASURED through the real
+ * `createLogger`.
+ *
+ * `createLogger` now puts BOTH binding methods through the walk, and the corpus
+ * is graded through six cells rather than one — see the dimension table below.
  *
  * **What that means for the derived paths, stated rather than implied:** once
- * the walk reaches child bindings too, `REDACTION_PATHS`'s fifty-one derived
- * entries no longer have any shape to themselves — the walk catches the same
- * keys, in more spellings. Their behavioural contribution is `err.message` and
- * `err.stack`, which are non-enumerable and which no walk can see, plus a
+ * the walk reaches bindings too, `REDACTION_PATHS`'s derived entries no longer
+ * have any shape to themselves — the walk catches the same keys, in more
+ * spellings, at more depths. Their behavioural contribution is `err.message`
+ * and `err.stack`, which are non-enumerable and which no walk can see, plus a
  * backstop in the canonical spelling if the walk is ever removed or bypassed.
  * So the derivation is asserted STRUCTURALLY below (the paths are the shared
- * enum, at three depths) and the leak assertions are behavioural. Removing a
+ * enum, at two depths) and the leak assertions are behavioural. Removing a
  * derived path turns this file red at the structural assertion and not at a
  * leak, and that is a property of defence in depth rather than a weak fixture.
  */
@@ -56,16 +60,29 @@ describe('REDACTION_PATHS', () => {
     expect([...bare].sort()).toStrictEqual([...RedactedFieldName.options].sort());
   });
 
-  it('carries three depths per name, because a path is not a name', () => {
+  it('carries two depths per name, because a path is not a name', () => {
     // `password` and `*.password` are different rules and neither implies the
-    // other — and `*` is single-level, so neither reaches
-    // `req.headers.authorization`, which is where `pino-http` puts the one
-    // header this list exists for. MEASURED: with only the first two forms, a
-    // request line's `authorization` header goes out verbatim.
+    // other.
     for (const name of RedactedFieldName.options) {
       expect(REDACTION_PATHS).toContain(name);
       expect(REDACTION_PATHS).toContain(`*.${name}`);
-      expect(REDACTION_PATHS).toContain(`*.*.${name}`);
+    }
+  });
+
+  /**
+   * A third depth was here and was REMOVED, and this asserts the removal so it
+   * is not re-added on the reasoning that put it there.
+   *
+   * It was added because `pino-http` puts headers at
+   * `req.headers.authorization` — depth 3 — and two forms let that header out
+   * verbatim. That measurement is correct **of the paths in isolation**, which
+   * is not what ships: the walk reaches the same key, and the assertion two
+   * describes below proves it still does. Meanwhile `*.*.name` was measured
+   * making `@pinojs/redact` THROW on a `Buffer`, losing the line entirely.
+   */
+  it('carries no third depth, which was redundant and could lose a line', () => {
+    for (const name of RedactedFieldName.options) {
+      expect(REDACTION_PATHS).not.toContain(`*.*.${name}`);
     }
   });
 
@@ -76,7 +93,7 @@ describe('REDACTION_PATHS', () => {
     // stack no longer reaches the sink.
     expect(REDACTION_PATHS).toContain('err.message');
     expect(REDACTION_PATHS).toContain('err.stack');
-    expect(REDACTION_PATHS).toHaveLength(RedactedFieldName.options.length * 3 + 2);
+    expect(REDACTION_PATHS).toHaveLength(RedactedFieldName.options.length * 2 + 2);
   });
 });
 
@@ -223,6 +240,61 @@ describe('the categories, through a child binding at every depth', () => {
     },
   );
 
+  /**
+   * The SECOND cell of the same product, and the one the first fix missed by
+   * covering the mechanism it had been shown instead of the dimension.
+   * `setBindings` is pino's other way to create a binding, and it took the
+   * identical route out: `formatters.log` never sees it and the paths carry only
+   * the canonical spelling.
+   */
+  it.each(['signed_url', 'SIGNED_URL', 'presigned_urls'])(
+    'censors %s in a setBindings binding, for the same reason',
+    (spelling) => {
+      const captured = captureLogger();
+
+      captured.logger.setBindings({ [spelling]: 'SECRET-VALUE' });
+      captured.logger.info('a line');
+
+      expect(captured.raw()).not.toContain('SECRET-VALUE');
+    },
+  );
+
+  /**
+   * (binding mechanism × Error container) — the cell the top-level `err`
+   * exemption in `redactLogObject` could have reopened, since a binding also
+   * goes through that function and its `err` key is exempted there too.
+   * MEASURED safe: pino applies `serializers` to bindings as well, so the
+   * exempted Error still meets `serialiseError`. Asserted because "safe by a
+   * coincidence of two mechanisms" is exactly what stops being true quietly.
+   */
+  it.each(['child', 'setBindings'] as const)(
+    'reduces an Error bound at err through %s',
+    (mechanism) => {
+      const captured = captureLogger();
+      const error = Object.assign(new Error('boom'), { signed_url: 'SECRET-VALUE' });
+
+      if (mechanism === 'child') captured.logger.child({ err: error }).info('a line');
+      else {
+        captured.logger.setBindings({ err: error });
+        captured.logger.info('a line');
+      }
+
+      expect(captured.raw()).not.toContain('SECRET-VALUE');
+      expect(captured.raw()).toContain('frames');
+    },
+  );
+
+  it('keeps setBindings usable — ordinary data through, caller object untouched', () => {
+    const captured = captureLogger();
+    const bindings = { requestId: 'req_01H', signed_url: 'https://s3/a?X-Amz-Signature=DEADBEEF' };
+
+    captured.logger.setBindings(bindings);
+    captured.logger.info('a line');
+
+    expect(captured.only()['requestId']).toBe('req_01H');
+    expect(bindings.signed_url).toContain('DEADBEEF');
+  });
+
   it('still lets a child binding carry ordinary data through unchanged', () => {
     const captured = captureLogger();
 
@@ -280,18 +352,30 @@ describe('the walk, graded against the declared corpus', () => {
   });
 
   /**
-   * THE PRODUCT, NOT THE SUM — and the reason this helper takes a shape.
+   * THE PRODUCT, NOT THE SUM — and this table is the DIMENSION, enumerated,
+   * rather than the instances somebody was shown.
    *
-   * The first version of this suite graded the corpus through a merged object
-   * only, and asserted child bindings only in the canonical camelCase. Each
-   * fixture passed and their COMBINATION leaked: `formatters.log` is never
-   * called for a child binding, `REDACTION_PATHS` matches literal names, and
-   * `logger.child({ signed_url })` was therefore censored by nothing at all.
-   * MEASURED going out verbatim, with the whole suite green.
+   * Two leaks came out of this exact gap, one after the other, and the second is
+   * the one that matters: the fix for the first enumerated the mechanism it had
+   * just been handed (`child`) instead of enumerating the dimension (how a
+   * binding gets created), so `setBindings({ signed_url })` was still going out
+   * verbatim with the whole suite green.
    *
-   * So every corpus row is now run through all four shapes a key can reach this
-   * sink by. `deep` is below any derived path; `child` and `grandchild` are
-   * below any walk.
+   * The dimension is BINDING MECHANISM, and pino has exactly two methods that
+   * create one — `child` and `setBindings`. `base` is set by `createLogger`
+   * itself and a `mixin`'s output is merged before `formatters.log` runs, so both
+   * are walked by construction; neither is configurable through `createLogger`,
+   * which is what makes "two" a complete count rather than a count of what was
+   * thought of. Crossed with NESTING — top level, and below any derived path —
+   * that is the six cells below, and all 956 corpus rows go through every one.
+   *
+   * Cells deliberately NOT crossed into this table, so the gaps are declared
+   * rather than discovered: container type (object / array / Error / self
+   * serialising / getter / cycle) and call shape (which argument carries the
+   * error). Crossing either into 956 rows buys repetition rather than coverage —
+   * the walk reaches a key the same way whatever holds it — so container type is
+   * covered against a representative redacted key in `redactLogObject` below,
+   * and call shape in `logger.test.ts`.
    */
   const SHAPES: Readonly<Record<string, (logger: Logger, key: string) => void>> = {
     merged: (logger, key) => {
@@ -302,6 +386,14 @@ describe('the walk, graded against the declared corpus', () => {
     },
     child: (logger, key) => {
       logger.child({ [key]: 'SECRET-VALUE' }).info('child');
+    },
+    setBindings: (logger, key) => {
+      logger.setBindings({ [key]: 'SECRET-VALUE' });
+      logger.info('setBindings');
+    },
+    setBindingsDeep: (logger, key) => {
+      logger.setBindings({ a: { b: { c: { [key]: 'SECRET-VALUE' } } } });
+      logger.info('setBindings deep');
     },
     grandchild: (logger, key) => {
       logger
@@ -314,18 +406,19 @@ describe('the walk, graded against the declared corpus', () => {
   const SHAPE_NAMES = Object.keys(SHAPES);
 
   /**
-   * `level` is not a redaction verdict on the flat-child shape and must not be
-   * graded as one: pino's `child(bindings)` READS `bindings.level` as the
-   * child's log level rather than emitting it, so the value never reaches the
-   * line and "absent" cannot be told apart from "censored". It is a
-   * `MUST_SURVIVE` row and it is graded through the other three shapes, which
-   * is why this exclusion is one key rather than a category.
+   * `level` is not a redaction verdict on the FLAT binding shapes and must not
+   * be graded as one: pino READS `bindings.level` as the logger's level rather
+   * than emitting it, so the value never reaches the line and "absent" cannot be
+   * told apart from "censored". It is a `MUST_SURVIVE` row and it is graded
+   * through the other four shapes, which is why this exclusion is one key rather
+   * than a category.
    */
-  const RESERVED_BY_PINO_CHILD = new Set(['level']);
+  const RESERVED_BY_PINO_BINDINGS = new Set(['level']);
+  const FLAT_BINDING_SHAPES = new Set(['child', 'setBindings']);
 
   function rowsFor(shape: string): typeof CORPUS {
-    return shape === 'child'
-      ? CORPUS.filter((row) => !RESERVED_BY_PINO_CHILD.has(row.key))
+    return FLAT_BINDING_SHAPES.has(shape)
+      ? CORPUS.filter((row) => !RESERVED_BY_PINO_BINDINGS.has(row.key))
       : CORPUS;
   }
 
@@ -377,13 +470,84 @@ describe('redactLogObject', () => {
     expect(payload.nested.token).toBe('tok_1');
   });
 
-  it('passes an Error through untouched, so the err serialiser still sees one', () => {
+  it('passes the TOP-LEVEL err through untouched, so the err serialiser sees one', () => {
     // Rebuilding an Error into a plain object destroys it before pino's `err`
     // serialiser runs — MEASURED: `type` disappeared and every stack frame with
-    // it. Errors belong to the serialiser; the walk owns plain data.
+    // it. That ONE Error belongs to the serialiser.
     const error = new Error('boom');
 
     expect(redactLogObject({ err: error })['err']).toBe(error);
+  });
+
+  /**
+   * THE CONTAINER-TYPE DIMENSION, which the corpus table deliberately does not
+   * cross into 956 rows — so it is enumerated here instead, against one
+   * representative redacted key.
+   *
+   * The `err` exemption above is the only Error pino's serialiser reaches, and
+   * every OTHER Error was being passed through with its own enumerable
+   * properties intact. MEASURED leaking, all three: a differently-named key, an
+   * `err` nested below the top level (canonical spelling, depth 4 — so the paths
+   * did not reach it either), and inside an array, which is the AggregateError
+   * shape.
+   */
+  it.each([
+    ['a differently-named key', (e: Error) => ({ myError: e })],
+    ['an err nested below the top level', (e: Error) => ({ a: { b: { err: e } } })],
+    ['inside an array', (e: Error) => ({ errs: [e] })],
+    ['inside a self-serialising value', (e: Error) => ({ at: { toJSON: () => ({ e }) } })],
+  ])('reduces an Error found at %s', (_label, build) => {
+    const error = Object.assign(new Error('boom'), { signed_url: 'SECRET-VALUE' });
+
+    const walked = JSON.stringify(redactLogObject(build(error)));
+
+    expect(walked).not.toContain('SECRET-VALUE');
+    // Reduced rather than deleted: the frames are what an operator is left with.
+    expect(walked).toContain('frames');
+  });
+
+  it('walks a self-serialising value rather than trusting it', () => {
+    // `Date` and `Buffer` have no own enumerable keys, so a walk that rebuilt
+    // them from their keys would emit `{}` — but passing them through untouched
+    // was a NAMED HOLE (a toJSON returning something sensitive) and, measured,
+    // a Buffer reaching `@pinojs/redact` under a wildcard path degrades the
+    // field to an error string and under two throws the line away entirely.
+    const sneaky = { toJSON: (): unknown => ({ password: 'SECRET-VALUE', keep: 1 }) };
+
+    const walked = redactLogObject({ sneaky }) as { sneaky: Record<string, unknown> };
+
+    expect(walked.sneaky['password']).toBe(REDACTION_CENSOR);
+    expect(walked.sneaky['keep']).toBe(1);
+  });
+
+  it('survives a toJSON that throws, and a toJSON that returns its own receiver', () => {
+    const throwing = {
+      toJSON: (): unknown => {
+        throw new Error('nope');
+      },
+    };
+    const selfReferential: { toJSON: () => unknown } = { toJSON: (): unknown => selfReferential };
+
+    expect(redactLogObject({ throwing })['throwing']).toBe(REDACTION_CENSOR);
+    expect(() => redactLogObject({ selfReferential })).not.toThrow();
+  });
+
+  it('fails CLOSED on a getter that throws, rather than out of logger.info()', () => {
+    // MEASURED: `Object.entries` invokes getters, and a throwing one propagated
+    // straight out of `logger.info()`. Baseline pino survives one, so this walk
+    // must too — and a value that cannot be inspected cannot be cleared, so the
+    // censor is the answer rather than the original.
+    const payload = {
+      boom: {
+        get detail(): string {
+          throw new Error('getter');
+        },
+      },
+    };
+
+    const walked = redactLogObject(payload) as { boom: Record<string, unknown> };
+
+    expect(walked.boom['detail']).toBe(REDACTION_CENSOR);
   });
 
   it('terminates on a cycle and still censors', () => {
@@ -398,11 +562,27 @@ describe('redactLogObject', () => {
     expect(walked.cyclic['self']).toBe(walked.cyclic);
   });
 
-  it('leaves a value that serialises itself alone', () => {
-    // `Date` and `Buffer` both carry `toJSON`, and rebuilding them from their
-    // own enumerable keys produces `{}` — a silently emptied timestamp.
-    const at = new Date('2026-08-12T00:00:00.000Z');
+  /**
+   * The output side of the same decision: normalising through `toJSON` must not
+   * change what an operator reads. Asserted against the REAL logger rather than
+   * the walk, because the thing being protected is the emitted line — and
+   * because a `Buffer` here is what made `@pinojs/redact` throw.
+   */
+  it('emits a Date and a Buffer exactly as pino would, at every position', () => {
+    const captured = captureLogger();
 
-    expect(redactLogObject({ at })['at']).toBe(at);
+    captured.logger.info(
+      {
+        at: new Date('2026-08-12T00:00:00.000Z'),
+        body: Buffer.from('hi'),
+        a: { b: Buffer.from('hi') },
+      },
+      'm',
+    );
+    const line = captured.only();
+
+    expect(line['at']).toBe('2026-08-12T00:00:00.000Z');
+    expect(line['body']).toStrictEqual({ type: 'Buffer', data: [104, 105] });
+    expect(line['a']).toStrictEqual({ b: { type: 'Buffer', data: [104, 105] } });
   });
 });

@@ -92,28 +92,48 @@ against `pino@10.3.1`:
 | ---------------------------------------- | -------------- | ---------------- |
 | `logger.info({ signedUrl }, 'm')`        | yes            | yes              |
 | `logger.child({ signedUrl }).info('m')`  | **yes**        | **never called** |
+| `logger.setBindings({ signedUrl })`      | **yes**        | **never called** |
 | `err.message` / `err.stack`              | **yes**        | non-enumerable   |
 | `{ signed_url }`, `{ SIGNED_URL }`       | no             | **yes**          |
 | `{ presignedUrls }`, `{ signedURLs2 }`   | no             | **yes**          |
-| four levels down                         | no             | **yes**          |
+| three or more levels down                | no             | **yes**          |
 | `logger.child({ signed_url }).info('m')` | **no**         | **no**           |
+| `logger.setBindings({ signed_url })`     | **no**         | **no**           |
 
-**That last row is a leak, and it is the product of two gaps each of which was
-covered on its own** — the fixtures asserted child bindings in the canonical
-spelling and non-canonical spellings in a merged object, and neither could see
-their combination. `createLogger` therefore wraps `child()` so its bindings go
-through the walk before pino pre-serialises them, recursively, because
-`.child().child()` leaked too. The corpus is graded through all four shapes
-(merged, four-deep, child, grandchild) rather than one, for the same reason.
+**The last two rows were leaks, and they are the same defect twice.** Each is
+the product of two dimensions that were covered separately: the fixtures
+asserted bindings in the canonical spelling and non-canonical spellings in a
+merged object, and neither could see their combination. The first fix wrapped
+`child()` — and `setBindings` leaked identically, because the fix enumerated the
+mechanism it had been shown instead of the dimension it belonged to.
 
-`REDACTION_PATHS` is **derived from `RedactedFieldName` in code**, at **three**
-depths per name — `name`, `*.name`, `*.*.name`. Not two: a Pino `*` matches
-exactly one level, and `pino-http`'s default request serialiser puts headers at
-`req.headers.authorization`, so stopping at two forms lets the single most
-important key on the list out verbatim — which is why the superseded block above
-named that path explicitly. Written out rather than derived, the list would be
-fifty-one entries and would go stale the first time the shared list moved; the
-point of deriving it is that it cannot.
+`createLogger` now routes **both** binding methods through the walk. `child` and
+`setBindings` are the complete set: `base` is set by `createLogger` itself and a
+`mixin`'s output is merged before `formatters.log` runs, so both are walked by
+construction, and neither is configurable through `createLogger`. The corpus is
+graded through six cells — merged, four-deep, child, grandchild, setBindings,
+setBindings-deep — rather than one.
+
+`REDACTION_PATHS` is **derived from `RedactedFieldName` in code**, at **two**
+depths per name — `name` and `*.name`, which are different rules and neither
+implies the other. A third (`*.*.name`) was added and removed, and both halves
+are worth keeping:
+
+- It was added because `pino-http` puts headers at `req.headers.authorization`,
+  depth 3, and two forms let that header out verbatim. **That measured the paths
+  in isolation, which is not the configuration that ships** — the walk reaches
+  the same key at any depth. It is precisely the error ADR-0030 exists to correct
+  in ADR-0029, made again one document later.
+- It was not free: measured one path at a time against a `Buffer`, a bare path
+  is clean, one `*.name` wildcard degrades a top-level buffer to
+  `"[unable to serialize…]"`, and a `*.*.name` makes `@pinojs/redact` **throw**
+  with nothing emitted. "All 53 paths load" had measured compilation, not
+  traversal.
+
+Both costs are now unreachable — the walk normalises a self-serialising value
+through its own `toJSON` before the redactor sees it — so the third depth could
+be restored. It is not: it is behaviourally redundant, and its failure mode when
+some other exotic receiver reaches the redactor is losing the line.
 
 `formatters.log` is the second traversal, and it is where `isRedactedKey` is
 called. A Pino path is a literal string, so `signedUrl` does not imply
@@ -154,17 +174,44 @@ The error's own properties are dropped rather than left to a path: `*.password`
 reaches `err.password` today and stops the day the error is nested one level
 deeper, and no allowlist can reach a free-text `err.detail`.
 
-Two shapes the sink closes that a path list alone does not: `logger.error(err)`
-with no message, where pino takes `msg` from `err.message` — a `hooks.logMethod`
-rewrap puts the Error in `err` and a fixed string in `msg`; and a string in
-`err`, which serialises as a scalar that `err.message` cannot match and which
-ADR-0030 measured leaking under both candidate adapters.
+**pino derives `msg` from the error, and it does so in two branches.** A
+`hooks.logMethod` rewrap stops both, and the guard is `pino/lib/proto.js`'s own
+`write()` transcribed rather than approximated — a message is supplied whenever
+pino would otherwise have taken one from `errorKey`:
 
-What is **not** closed: free text a caller interpolates into `msg` themselves.
-Redaction is field-granular, so `paths: ['msg']` censors every log message in the
-process; removing a substring of free text needs a secret detector, which is a
-weaker control than the allowlist this section chose. The rule stands: do not put
-untrusted text in `msg`, put the cause in `err`.
+```js
+} else if (_obj instanceof Error) {
+  obj = { [errorKey]: _obj }
+  if (msg === undefined) msg = _obj.message
+} else {
+  obj = _obj
+  if (msg === undefined && _obj[messageKey] === undefined && _obj[errorKey]) {
+    msg = _obj[errorKey].message
+  }
+}
+```
+
+The first version of the hook implemented the first branch only. **The second is
+the shape ADR-0030 prescribes** — `logger.error({ err })` with the message
+argument left off — and it emitted a perfectly censored `err` beside a `msg`
+carrying the whole DSN. Note that pino requires only that `_obj[errorKey]` be
+truthy and then reads `.message` off it, so an `instanceof` guard could never
+have covered it: `{ err: { message } }`, which is what a deserialised worker
+error looks like, leaks too.
+
+The other shape a path list alone does not close is a **string** in `err`: it
+serialises as a scalar that `err.message` cannot match, which ADR-0030 measured
+leaking under both candidate adapters.
+
+What is **not** closed is the message field itself, and the class is wider than
+it first looks. There are three routes into it — the second argument, an
+interpolation, and a `msg` key in the merged object, which pino uses verbatim —
+and all three leak. Redaction is field-granular, so `paths: ['msg']` censors
+every log message in the process; removing a substring of free text needs a
+secret detector, a weaker control than the allowlist this section chose. The rule
+is therefore about the FIELD, not about one argument: nothing untrusted goes in
+`msg` — put the cause in `err`. A fixture asserts the `{ msg }` route so the gap
+is declared rather than discovered.
 
 Two categories deserve comment:
 

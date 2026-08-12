@@ -1,7 +1,7 @@
 import { Catch, HttpException, type ArgumentsHost, type ExceptionFilter } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import type { Logger } from 'pino';
-import { toLoggableError } from '../../infrastructure/telemetry/logger.js';
+import { toLoggableError } from '../../infrastructure/telemetry/redaction.js';
 import { isDomainError } from './domain-error.js';
 import {
   domainErrorResponse,

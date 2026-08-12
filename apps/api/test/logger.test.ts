@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { REDACTION_CENSOR } from '../src/infrastructure/telemetry/redaction.js';
-import { toLoggableError } from '../src/infrastructure/telemetry/logger.js';
+import { toLoggableError } from '../src/infrastructure/telemetry/redaction.js';
 import { captureLogger, errorField } from './log-capture.js';
 
 /**
@@ -81,30 +81,82 @@ describe('the carry-forward this task closes', () => {
   });
 
   /**
-   * The shape a reader reaches for first, and the one that leaks: pino takes
-   * `msg` from `err.message` when an Error is the only argument. MEASURED at
-   * error, warn and fatal — the hole is in `write`, not in one level's log
-   * function, so all three are asserted.
+   * THE CALL-SHAPE DIMENSION, enumerated from `pino/lib/proto.js`'s `write()`
+   * rather than from shapes anyone thought of.
+   *
+   * pino derives `msg` from the error in two branches — an Error as the whole
+   * merged object, and an Error (or anything truthy) at `errorKey` inside it
+   * with no `messageKey` present — and the first version of this suite covered
+   * one of them. **The uncovered branch is the shape ADR-0030 PRESCRIBES**,
+   * `logger.error({ err })`, with the message argument left off: it emitted a
+   * perfectly censored `err` object beside a `msg` carrying the full DSN.
+   *
+   * The dimension is (what carries the error) × (is a message supplied), and
+   * every cell of it is below. `[undefined]` is spread as an explicit argument
+   * because `f(x)` and `f(x, undefined)` reach different `arguments.length`,
+   * and only one of them was covered.
    */
-  it.each(['error', 'warn', 'fatal'] as const)(
-    'does not leak through msg when an Error is logged bare at %s level',
-    (level) => {
+  const ERROR_CARRIERS: Readonly<Record<string, unknown>> = {
+    'the whole merged object': new Error(DSN),
+    'the err key': { err: new Error(DSN) },
+    'the err key beside other fields': { err: new Error(DSN), requestId: 'req-1' },
+    'the err key holding a non-Error with a message': { err: { message: DSN } },
+  };
+
+  describe.each(['error', 'warn', 'fatal'] as const)('at %s level', (level) => {
+    it.each(Object.keys(ERROR_CARRIERS))('does not leak through msg, carried by %s', (carrier) => {
       const captured = captureLogger();
 
-      captured.logger[level](new Error(DSN));
+      captured.logger[level](ERROR_CARRIERS[carrier] as Error);
 
       expect(captured.raw()).not.toContain('PASSWORD');
       expect(captured.only()['msg']).not.toContain('postgres');
+    });
+
+    it.each(Object.keys(ERROR_CARRIERS))(
+      'does not leak with an explicit undefined message, carried by %s',
+      (carrier) => {
+        const captured = captureLogger();
+
+        captured.logger[level](ERROR_CARRIERS[carrier] as Error, undefined);
+
+        expect(captured.raw()).not.toContain('PASSWORD');
+      },
+    );
+  });
+
+  it('does not leak when the filter’s own contexted child logs it', () => {
+    const captured = captureLogger();
+
+    captured.logger.child({ context: 'DomainExceptionFilter' }).error({ err: new Error(DSN) });
+
+    expect(captured.raw()).not.toContain('PASSWORD');
+  });
+
+  it.each(Object.keys(ERROR_CARRIERS))(
+    'still lets a caller supply their own message, carried by %s',
+    (carrier) => {
+      const captured = captureLogger();
+
+      captured.logger.error(ERROR_CARRIERS[carrier] as Error, 'slicing failed');
+
+      expect(captured.only()['msg']).toBe('slicing failed');
+      expect(captured.raw()).not.toContain('PASSWORD');
     },
   );
 
-  it('still lets a caller supply their own message beside an Error', () => {
+  it('leaves a caller-supplied msg FIELD alone, which is the declared gap', () => {
+    // `msg` is free text by construction and there are three routes into it —
+    // the second argument, an interpolation, and this: a `msg` key in the merged
+    // object, which pino uses verbatim. None is closable by an allowlist;
+    // closing them needs a secret detector, which is the weaker control
+    // docs/OBSERVABILITY.md §3 rejected. Asserted so the gap is DECLARED rather
+    // than discovered — if this ever goes red, the rule changed.
     const captured = captureLogger();
 
-    captured.logger.error(new Error(DSN), 'slicing failed');
+    captured.logger.info({ msg: DSN });
 
-    expect(captured.only()['msg']).toBe('slicing failed');
-    expect(captured.raw()).not.toContain('PASSWORD');
+    expect(captured.only()['msg']).toBe(DSN);
   });
 });
 
