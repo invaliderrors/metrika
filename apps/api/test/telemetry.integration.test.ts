@@ -72,6 +72,23 @@ const UNSAMPLED_TRACE_ID = 'c1c2c3c4d1d2d3d4e1e2e3e4f1f2f3f4';
 const UNSAMPLED_SPAN_ID = 'a2a3a4a5b2b3b4b5';
 const UNSAMPLED_TRACEPARENT = `00-${UNSAMPLED_TRACE_ID}-${UNSAMPLED_SPAN_ID}-00`;
 
+/**
+ * A fourth trace, arriving on SENTRY'S OWN header with the decision refused.
+ *
+ * This is a different propagator with a different answer, and conflating the two
+ * is what made this suite's first sampling label wrong in the general case: with
+ * `sentry-trace` the CALLER decides in BOTH directions and the local rate is
+ * never consulted. `-0` here means zero spans at `TRACES_SAMPLE_RATE=1`, and it
+ * beats an inbound `traceparent` that says `-01`.
+ *
+ * It matters because `apps/web` ships `@sentry/nextjs`: the browser's own client
+ * sample rate reaches this API on this header, so a front-end configuration can
+ * switch server-side tracing off. Nothing in "a floor, not a ceiling" prepares a
+ * reader for that.
+ */
+const SENTRY_OFF_TRACE_ID = 'f1f2f3f4a1a2a3a4b1b2b3b4c1c2c3c4';
+const SENTRY_OFF_SPAN_ID = 'b2b3b4b5c2c3c4c5';
+
 /** Inside `normaliseRequestId`'s allowlist, and not its sentinel. */
 const REQUEST_ID = 'req-correlation-0001';
 const SENTINEL = 'unknown';
@@ -472,6 +489,21 @@ beforeAll(async () => {
       .status,
   ).toBe(200);
 
+  // And once on SENTRY's header, refusing the trace, WITH a `traceparent` that
+  // says the opposite. This child runs at rate 1, so anything the local rate
+  // decides is exported — which is what makes an empty result here mean "the
+  // caller decided" and nothing else.
+  expect(
+    (
+      await fetch(`${base}${NEST_ROUTE}`, {
+        headers: {
+          traceparent: `00-${SENTRY_OFF_TRACE_ID}-${SENTRY_OFF_SPAN_ID}-01`,
+          'sentry-trace': `${SENTRY_OFF_TRACE_ID}-${SENTRY_OFF_SPAN_ID}-0`,
+        },
+      })
+    ).status,
+  ).toBe(200);
+
   // `BatchSpanProcessor` exports on its own schedule, so the suite waits for the
   // spans rather than for a duration. Waiting for a DURATION is what turns "the
   // pipeline is broken" into "the machine was busy".
@@ -680,6 +712,26 @@ describe('sampling, for a caller that sends only W3C trace context', () => {
     );
     expect(server?.parentSpanId).toBe(UNSAMPLED_SPAN_ID);
   });
+
+  /**
+   * THE QUALIFICATION. Everything above is about a caller that sends only W3C
+   * trace context; on Sentry's own header the answer is the opposite, and this
+   * child runs at rate 1 so nothing else could explain an empty result.
+   *
+   * MECHANISM, read after the measurement rather than before:
+   * `SentryPropagator.extract` builds the remote span context through
+   * `makeTraceState`, which for `sampled === false` sets
+   * `sentry.sampled_not_recording` on **`@sentry/opentelemetry`'s own
+   * `TraceState` class** — one with no key validation.
+   * `getSamplingDecision` then returns `false`, and `sampleSpan` inherits it
+   * ahead of `tracesSampleRate`. The same member arriving on a `tracestate`
+   * HEADER cannot do this: `@opentelemetry/core`'s `TraceState` validates keys
+   * against `[a-z][_0-9a-z\-*\/]{0,255}`, the dot is illegal, and the member is
+   * dropped on parse — measured, `get()` undefined and absent from `serialize()`.
+   */
+  it('lets a sentry-trace caller refuse the trace outright, at rate 1', () => {
+    expect(spansOn(SENTRY_OFF_TRACE_ID)).toEqual([]);
+  });
 });
 
 /**
@@ -693,6 +745,9 @@ describe('sampling, for a caller that sends only W3C trace context', () => {
 describe('sampling at TRACES_SAMPLE_RATE=0', () => {
   const SAMPLED_TRACE_ID = 'd1d2d3d4e1e2e3e4f1f2f3f4a1a2a3a4';
   const DROPPED_TRACE_ID = 'e1e2e3e4f1f2f3f4a1a2a3a4b1b2b3b4';
+  /** Sentry's header, asking to be traced, against a `traceparent` that says no. */
+  const SENTRY_ON_TRACE_ID = 'a3a4a5a6b3b4b5b6c3c4c5c6d3d4d5d6';
+  const SENTRY_ON_SPAN_ID = 'c3c4c5c6d3d4d5d6';
 
   let zeroChild: ChildProcessWithoutNullStreams | undefined;
   let zeroReceiver: Receiver;
@@ -733,6 +788,20 @@ describe('sampling at TRACES_SAMPLE_RATE=0', () => {
       expect(response.status).toBe(200);
     }
 
+    // The other half of the qualification: Sentry's header asking to be traced,
+    // at rate 0, against a `traceparent` that says no. If anything here exports,
+    // the caller decided it — the local rate cannot have.
+    expect(
+      (
+        await fetch(`${base}${NEST_ROUTE}`, {
+          headers: {
+            traceparent: `00-${SENTRY_ON_TRACE_ID}-${SENTRY_ON_SPAN_ID}-00`,
+            'sentry-trace': `${SENTRY_ON_TRACE_ID}-${SENTRY_ON_SPAN_ID}-1`,
+          },
+        })
+      ).status,
+    ).toBe(200);
+
     // Wait for the sampled trace, then give the batch processor the same window
     // again — the dropped one is asserted as an ABSENCE, and an absence measured
     // before the exporter has had a chance to speak is not a measurement.
@@ -760,6 +829,18 @@ describe('sampling at TRACES_SAMPLE_RATE=0', () => {
   it('drops a caller`s CLEARED flag at rate 0, so the rate does decide that half', () => {
     const spans = zeroReceiver.spans().filter((span) => span.traceId === DROPPED_TRACE_ID);
     expect(spans).toEqual([]);
+  });
+
+  /**
+   * The `sentry-trace` half, in the rate where it contradicts the local decision
+   * hardest: the rate says drop everything, the caller says trace, and the caller
+   * wins. Together with the rate-1 case above this pins BOTH directions of the
+   * Sentry propagator, which is what the earlier unqualified "floor, not ceiling"
+   * label generalised past.
+   */
+  it('lets a sentry-trace caller force tracing ON at rate 0', () => {
+    const spans = zeroReceiver.spans().filter((span) => span.traceId === SENTRY_ON_TRACE_ID);
+    expect(spans.length).toBeGreaterThan(0);
   });
 });
 
