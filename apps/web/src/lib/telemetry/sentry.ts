@@ -21,14 +21,15 @@ import { clientEnv } from '../../config/env';
  * will not send events" path keys off a falsy `dsn`. Passing `''` reaches the
  * same place, but passing `undefined` is the value that path is written for.
  *
- * **This is unset today on purpose, and the reason is a rule of Plan 0C rather
- * than an oversight:** `apps/api`'s exception filter still writes an `Error`'s
- * stack — which begins with its message — to the log, so a DSN in a thrown
- * message is still written down. Plan 0C Task 2 closes that, and no task may
- * ship a *populated* sink before it does. Wiring the sink and leaving the DSN
- * empty is what lets this task ship the control (`beforeSend`) without shipping
- * the export. The same reasoning is on `METRIKA_WORKER_OTLP_ENDPOINT` in
- * `.env.example`, which is commented out for the same phase-ordering reason.
+ * It was ALSO unset for a phase-ordering reason, and that reason is now
+ * discharged: `apps/api`'s exception filter used to write an `Error`'s stack —
+ * which begins with its message — to the log, so a DSN in a thrown message was
+ * written down, and no task could ship a *populated* sink before that closed.
+ * Plan 0C Task 2 closed it, in
+ * `apps/api/src/infrastructure/telemetry/{redaction,logger}.ts`: the paths are
+ * derived from the same `RedactedFieldName` this file's `beforeSend` matches
+ * against, and the exception's message and stack no longer reach the sink at
+ * all. Populating the DSN is a deployment decision from here, not a phase gate.
  */
 export const SENTRY_DSN: string | undefined =
   clientEnv.NEXT_PUBLIC_SENTRY_DSN === '' ? undefined : clientEnv.NEXT_PUBLIC_SENTRY_DSN;
