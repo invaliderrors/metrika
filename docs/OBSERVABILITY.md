@@ -88,14 +88,23 @@ redact: {
 has **two traversals**, because neither reaches what the other does — MEASURED
 against `pino@10.3.1`:
 
-| shape                                   | `redact.paths` | `formatters.log` |
-| --------------------------------------- | -------------- | ---------------- |
-| `logger.info({ signedUrl }, 'm')`       | yes            | yes              |
-| `logger.child({ signedUrl }).info('m')` | **yes**        | **never called** |
-| `err.message` / `err.stack`             | **yes**        | non-enumerable   |
-| `{ signed_url }`, `{ SIGNED_URL }`      | no             | **yes**          |
-| `{ presignedUrls }`, `{ signedURLs2 }`  | no             | **yes**          |
-| four levels down                        | no             | **yes**          |
+| shape                                    | `redact.paths` | `formatters.log` |
+| ---------------------------------------- | -------------- | ---------------- |
+| `logger.info({ signedUrl }, 'm')`        | yes            | yes              |
+| `logger.child({ signedUrl }).info('m')`  | **yes**        | **never called** |
+| `err.message` / `err.stack`              | **yes**        | non-enumerable   |
+| `{ signed_url }`, `{ SIGNED_URL }`       | no             | **yes**          |
+| `{ presignedUrls }`, `{ signedURLs2 }`   | no             | **yes**          |
+| four levels down                         | no             | **yes**          |
+| `logger.child({ signed_url }).info('m')` | **no**         | **no**           |
+
+**That last row is a leak, and it is the product of two gaps each of which was
+covered on its own** — the fixtures asserted child bindings in the canonical
+spelling and non-canonical spellings in a merged object, and neither could see
+their combination. `createLogger` therefore wraps `child()` so its bindings go
+through the walk before pino pre-serialises them, recursively, because
+`.child().child()` leaked too. The corpus is graded through all four shapes
+(merged, four-deep, child, grandchild) rather than one, for the same reason.
 
 `REDACTION_PATHS` is **derived from `RedactedFieldName` in code**, at **three**
 depths per name — `name`, `*.name`, `*.*.name`. Not two: a Pino `*` matches
