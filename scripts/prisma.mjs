@@ -45,6 +45,17 @@
 //    So a future "simplification" that drops the cwd and keeps `--schema`
 //    would run Migrate with no datasource URL and no migrations path at all.
 //    See ADR-0037.
+//
+//    `--env-file-if-exists` is also what MASKED a real defect for the whole of
+//    this upgrade, so it is worth knowing which half of this does what. It
+//    loads the root `.env` INSIDE this child process — downstream of Turbo,
+//    which runs in strict env mode and strips any variable no task declares.
+//    So on a developer machine the variable arrives via `.env` whether or not
+//    `turbo.json` declares it, and on CI, which has no `.env`, it arrives only
+//    if `turbo.json` declares it. `pnpm verify` was green locally while four of
+//    five CI jobs failed. `turbo.json` now declares it on both `db:generate`
+//    and `build`, and `packages/database/test/turbo-env.test.ts` fails if a
+//    future `env()` call is added without doing the same.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

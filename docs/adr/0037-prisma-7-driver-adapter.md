@@ -34,6 +34,11 @@ connection URLs, and that **most of those relocations are silent**: no error, no
 warning, no red test, nothing from `tsc` or ESLint. A URL still parses. The
 process still starts. Only the behaviour differs.
 
+One relocation was the opposite of silent — it failed four of five CI jobs
+outright — and was still invisible to every gate anyone ran locally, for a
+different reason. That is §6a, and it was found by CI after this branch had been
+reviewed and declared ready to merge.
+
 ## What moved
 
 ### 1. `?schema=` in the connection URL is inert
@@ -286,6 +291,74 @@ database is contacted — a different subsystem from Prisma 6's
 7**. `CLAUDE.md` and `docs/LOCAL_DEVELOPMENT.md` both quoted the old string and
 are corrected in the same commit as this ADR.
 
+#### 6a. The consequence that broke CI: the variable became a build input
+
+**This is the sharpest thing in this document, and it was discovered by CI after
+the branch was declared ready to merge.** Four of five jobs failed —
+`verify`, `web`, `openapi`, `integration`, exactly the four §6's `ci.yml` note
+predicts — while `contracts`, which runs no build, passed.
+
+**MEASURED**, and the two lines have to be read together:
+
+```
+verify  Build  DATABASE_ADMIN_URL: ***127.0.0.1:5432/metrika_ci
+verify  Build  Error: PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_ADMIN_URL.
+```
+
+**The variable was set in the job environment and Prisma still could not resolve
+it.** Turbo runs in **strict env mode** (`--dry=json` reports
+`envMode: strict`), which filters each task's environment down to what that task
+declares, and nothing declared this one. **MEASURED**, before the fix:
+`@metrika/database#db:generate` reported
+`{"specified":{"env":[],"passThroughEnv":null},"configured":[],"inferred":[]}`.
+
+The variable had never needed declaring, because on Prisma 6 it was **resolved
+lazily by the query engine** and `generate` never touched it. Moving the
+datasource into `prisma.config.ts` made it **required at config load, by every
+subcommand** — which turned a runtime connection detail into a _build input_,
+and turbo had no way to know.
+
+**Why no gate on this branch caught it.** `db:generate` runs as
+`node --env-file-if-exists=.env scripts/prisma.mjs generate`, and that flag loads
+the root `.env` **inside the child**, downstream of turbo's filtering. A machine
+with a `.env` therefore cannot observe the bug at all, whatever it runs. CI has
+no `.env`. Every gate on this branch — `pnpm verify` included, repeatedly, at
+four different loads — ran on a machine with a `.env`.
+
+**MEASURED, the fix, under reproduced CI conditions** (root `.env` removed,
+variables supplied only through the environment):
+
+| turbo.json                                | `turbo run db:generate` | `pnpm build`          |
+| ----------------------------------------- | ----------------------- | --------------------- |
+| nothing declared                          | **exit 1**              | **exit 1**, 3/5 tasks |
+| declared on `db:generate` only            | exit 0                  | **exit 1** at `build` |
+| declared on `db:generate` **and** `build` | exit 0                  | **exit 0**, 6/6 tasks |
+
+The middle row is the part that is easy to get wrong and was not in the original
+diagnosis: `packages/database`'s build script is `pnpm db:generate && tsc -b`, so
+it runs generate **inline**, inside the `build` task's own filtered environment.
+`dependsOn: ["db:generate"]` schedules the sibling task; it does not lend `build`
+that task's environment.
+
+**`passThroughEnv`, not `env`, and the distinction is not stylistic.**
+`passThroughEnv` supplies a variable without entering the task's hash. Prisma
+needs this variable to _resolve_; the client it emits is byte-identical whatever
+the URL says, because it is a connection string and not a code-generator input.
+Under `env`, a developer pointing `DATABASE_ADMIN_URL` at a different local
+database would invalidate every build in the graph and rebuild artefacts that
+cannot differ. `globalEnv` would be worse again — it participates in **every**
+task's hash, including `lint` and `test:unit`, which never load Prisma's config.
+
+**The guard is static, deliberately.**
+`packages/database/test/turbo-env.test.ts` asserts that every `env('…')` in
+`prisma.config.ts` is declared — as `env` or `passThroughEnv` — for every task
+that runs a Prisma subcommand. A static check does not need a `.env` to be
+absent, does not need CI, and fails the moment someone adds an `env()` call
+without declaring it, which is when it is cheap. It carries its own positive
+control (the extraction must find `DATABASE_ADMIN_URL`, so a regex that stopped
+matching fails rather than passing vacuously) and was verified red by deleting
+the `build` declaration.
+
 **MEASURED, correcting a prediction made while planning this task:** the upgrade
 plan expected `pnpm db:generate` to print
 `Prisma config detected, skipping environment variable loading.` It does not. It
@@ -417,6 +490,18 @@ should find them explained here rather than conclude the sweep was careless:
    agent sets `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` and no agent runs
    `migrate reset`, `db push --force-reset` or `db push --accept-data-loss`.
 
+9. **Every variable `prisma.config.ts` resolves is declared in `turbo.json`, as
+   `passThroughEnv`, on every task that runs a Prisma subcommand — `db:generate`
+   and `build`.** `packages/database/test/turbo-env.test.ts` enforces it. The
+   config move turned a runtime connection detail into a build input, and strict
+   env mode means an undeclared input is a stripped one.
+
+10. **A gate that only ever runs on a machine with a root `.env` cannot see this
+    class of defect.** `--env-file-if-exists` loads `.env` downstream of turbo's
+    filtering, so it masks any missing declaration. That is why the guard above
+    is static rather than a "build with no `.env`" script: the check has to be
+    one that a developer machine can actually fail.
+
 ## Consequences
 
 **Accepted:** a connection URL is no longer a complete description of how this
@@ -440,6 +525,14 @@ reading, and the two findings behind them — that `@prisma/adapter-pg` qualifie
 SQL rather than setting `search_path`, and that a sampler under an equality
 assertion is a false-positive generator — are cheap to learn once and expensive
 to rediscover.
+
+**Learned the expensive way:** the config move made `DATABASE_ADMIN_URL` a build
+input, and no local gate on this branch could observe it — not because the gates
+were weak, but because `--env-file-if-exists` sits downstream of the mechanism
+that was broken. Four of five CI jobs failed after a full branch review had
+passed. The general lesson is worth more than the fix: **when a tool starts
+resolving configuration earlier in its lifecycle, it may have become an input to
+something that caches.** Ask what else now sees it.
 
 **Not verified, and listed rather than left implicit:** `pnpm db:reset` on 7.9.1;
 whether `prisma studio` starts (only its default port was read, from the CLI
