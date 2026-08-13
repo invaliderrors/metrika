@@ -39,19 +39,38 @@ concurrency:
 # beside a variable none of them still sets would read as if they did.
 env:
   # ── DATABASE_ADMIN_URL ────────────────────────────────────────────────────
-  # packages/database's `build` runs `prisma generate`, and schema.prisma's
-  # datasource is `env("DATABASE_ADMIN_URL")`. CI has no `.env` — that is what
-  # `--env-file-if-exists` in the root db:* scripts is for — so if anything
-  # resolves that variable, the value has to come from here.
+  # LOAD-BEARING. Deleting this line breaks `verify`, `web`, `openapi` and
+  # `integration` — all four, at the build step, before a single test runs.
   #
-  # MEASURED on Prisma 6.19.3, from a clean clone with the variable unset:
-  # `pnpm build` exits 0 and generates the client without complaint, so
-  # `generate` does NOT resolve the datasource url. This is therefore not
-  # load-bearing today. It is set anyway, because every other Prisma subcommand
-  # (`migrate`, `validate`, `studio`) does resolve it, the failure mode when one
-  # is added is an unhelpful `Environment variable not found:
-  # DATABASE_ADMIN_URL`, and a URL nothing connects to costs nothing. Do not
-  # read this as proof the build needs it.
+  # NOT `contracts`, which is the job you would expect to be on that list and is
+  # not: it runs no `pnpm build` at all, and `pnpm contracts:emit` shells out to
+  # `turbo run build --filter=@metrika/contracts`, which schedules
+  # `@metrika/contracts#build` and its two config-package dependencies and never
+  # reaches `@metrika/database#build`. MEASURED with `--dry=json`. The negative
+  # is recorded because an earlier draft of this comment listed `contracts` and
+  # omitted `integration` — exactly backwards.
+  #
+  # packages/database's `build` is `pnpm db:generate && tsc -b`, and on Prisma 7
+  # `generate` resolves this variable. Not through schema.prisma — its datasource
+  # block no longer carries a `url` at all, which Prisma 7 forbids — but through
+  # `packages/database/prisma.config.ts`, whose `datasource: { url:
+  # env('DATABASE_ADMIN_URL') }` is resolved when the config file LOADS, i.e. for
+  # every subcommand including `generate`. CI has no `.env` — that is what
+  # `--env-file-if-exists` in the db:* scripts is for — so the value has to come
+  # from here.
+  #
+  # MEASURED on 7.9.1, in this repository:
+  #
+  #   env -u DATABASE_ADMIN_URL node scripts/prisma.mjs generate   → EXIT 1
+  #     Error: PrismaConfigEnvError: Cannot resolve environment variable:
+  #     DATABASE_ADMIN_URL.
+  #   DATABASE_ADMIN_URL=… node scripts/prisma.mjs generate        → EXIT 0
+  #
+  # This comment previously said the opposite, citing a 6.19.3 measurement in
+  # which `generate` did not resolve the datasource url. That was true then. The
+  # driver-adapter upgrade made it false, and a comment that tells the next
+  # reader an unused variable can be deleted is worse than no comment. See
+  # ADR-0037.
   #
   # Nothing in the `integration` job connects to it either: the Testcontainers
   # harness runs `prisma migrate deploy` against the real, container-derived URL,
@@ -59,7 +78,12 @@ env:
   # `emit-openapi.ts` never calls `app.init()`, so no lifecycle hook fires and
   # `PrismaService.$connect()` is never reached; the variables its own step sets
   # have to be present and well-formed, not reachable.
-  DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci?schema=public
+  #
+  # No `?schema=public`. On Prisma 7 the `pg` driver adapter never sees that
+  # parameter — pinned by packages/database/test/adapter.integration.test.ts —
+  # so carrying it here would only teach the next reader that it does
+  # something. Same for the DATABASE_URL in the `openapi` job below. ADR-0037.
+  DATABASE_ADMIN_URL: postgresql://metrika:metrika@127.0.0.1:5432/metrika_ci
 
   # ── NEXT_PUBLIC_* ─────────────────────────────────────────────────────────
   # UNLIKE the variable above, these two ARE load-bearing.
@@ -436,7 +460,7 @@ jobs:
       # `openapi:emit` deliberately carries no `--env-file`.
       - name: Regenerate the OpenAPI document
         env:
-          DATABASE_URL: postgresql://metrika_app:metrika_app@127.0.0.1:5432/metrika_dev?schema=public
+          DATABASE_URL: postgresql://metrika_app:metrika_app@127.0.0.1:5432/metrika_dev
           HEALTH_DEEP_TOKEN: ci-health-deep-token-value
         run: pnpm --filter @metrika/api openapi:emit
 

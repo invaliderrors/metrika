@@ -192,7 +192,9 @@ pnpm db:generate               # regenerate the Prisma client
 pnpm db:migrate                # create + apply a migration (prisma migrate dev)
 pnpm db:deploy                 # apply committed migrations (prisma migrate deploy)
 pnpm db:reset                  # drop and re-migrate — destructive
-pnpm db:studio                 # Prisma Studio
+pnpm db:studio                 # Prisma Studio, on :51212 — Prisma 7's default port.
+                               # It was :5555 through Prisma 6; a bookmark from then
+                               # will now hit nothing.
 
 pnpm --filter @metrika/api openapi:emit  # regenerate apps/api/openapi/openapi.json
 pnpm lint:fix
@@ -201,8 +203,19 @@ pnpm lint:fix
 **Run every `db:*` command from the repository root.** They go through
 `scripts/prisma.mjs`, which loads the root `.env` and passes `--schema`
 explicitly. `cd packages/database && pnpm exec prisma migrate deploy` fails with
-`Environment variable not found: DATABASE_ADMIN_URL` — Prisma's dotenv search
-looks beside the schema and in the cwd, and never reaches the repository root.
+
+```
+Failed to load config file ".../packages/database" as a TypeScript/JavaScript module.
+Error: PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_ADMIN_URL.
+```
+
+**Prisma 7 does no dotenv loading at all** — not beside the schema, not in the
+cwd, not at the repository root. The root `.env` reaches Prisma only because the
+`db:*` scripts are `node --env-file-if-exists=.env scripts/prisma.mjs …`, and
+nothing else in the chain would put it there. The error above comes from
+`prisma.config.ts` resolving `env('DATABASE_ADMIN_URL')`, before any database is
+contacted — a different subsystem from Prisma 6's `Environment variable not
+found`, which is unreachable on 7. See [ADR-0037](./adr/0037-prisma-7-driver-adapter.md).
 
 **`pnpm build`, `pnpm dev`, `pnpm test:unit` and `pnpm test:integration` load the
 root `.env`**, through `scripts/turbo.mjs` (`node --env-file-if-exists=.env`).
@@ -301,19 +314,19 @@ _(Plan 0B-3, intended and not yet done)_ — `debugpy` in dev mode, with the cor
 
 ## 7. Common problems
 
-| Symptom                                                     | Cause                                                     | Fix                                                                                                                                           |
-| ----------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Cannot find module '@metrika/contracts'`                   | Packages not resolved, or not built                       | `pnpm install`, then `pnpm build` — the package resolves to `dist/`, not `src/`                                                               |
-| Prisma client type errors after a schema edit               | Client not regenerated                                    | `pnpm db:generate`                                                                                                                            |
-| `pnpm install` exits 1 with `ERR_PNPM_IGNORED_BUILDS`       | A new dependency has an install script                    | Add it to `allowBuilds` in `pnpm-workspace.yaml`                                                                                              |
-| `error: Environment variable not found: DATABASE_ADMIN_URL` | A Prisma command was run from inside `packages/database`  | Use the root `pnpm db:*` scripts — Prisma's dotenv search never reaches the repository root                                                   |
-| `Cyclic dependency detected` from Turbo                     | Something added `@metrika/database` to `packages/testing` | Remove it; the dependency runs one way only — `database` and `api` depend on `testing`, never the reverse                                     |
-| Integration tests hang                                      | Docker not running                                        | Start Docker                                                                                                                                  |
-| Temporal worker not picking up tasks                        | Namespace or task queue mismatch                          | Check `.env`; confirm the worker registered in the Temporal UI                                                                                |
-| Uploads fail with a signature error                         | MinIO path-style addressing                               | `S3_FORCE_PATH_STYLE=true` in `.env`                                                                                                          |
-| Empty query results in `psql`                               | RLS active                                                | `SET app.current_org_id = '<uuid>';`                                                                                                          |
-| `exactOptionalPropertyTypes` errors on a Prisma update      | Expected                                                  | Use the conditional-spread pattern in [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#the-exactoptionalpropertytypes--prisma-pattern) |
-| Slicing never completes locally                             | Real slicer selected without its container                | Unset `METRIKA_SLICER` or start the `slicer` compose profile                                                                                  |
+| Symptom                                                                         | Cause                                                     | Fix                                                                                                                                           |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Cannot find module '@metrika/contracts'`                                       | Packages not resolved, or not built                       | `pnpm install`, then `pnpm build` — the package resolves to `dist/`, not `src/`                                                               |
+| Prisma client type errors after a schema edit                                   | Client not regenerated                                    | `pnpm db:generate`                                                                                                                            |
+| `pnpm install` exits 1 with `ERR_PNPM_IGNORED_BUILDS`                           | A new dependency has an install script                    | Add it to `allowBuilds` in `pnpm-workspace.yaml`                                                                                              |
+| `PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_ADMIN_URL` | A Prisma command was run from inside `packages/database`  | Use the root `pnpm db:*` scripts — Prisma 7 loads no `.env` at all, so `--env-file-if-exists` in those scripts is the only thing that sets it |
+| `Cyclic dependency detected` from Turbo                                         | Something added `@metrika/database` to `packages/testing` | Remove it; the dependency runs one way only — `database` and `api` depend on `testing`, never the reverse                                     |
+| Integration tests hang                                                          | Docker not running                                        | Start Docker                                                                                                                                  |
+| Temporal worker not picking up tasks                                            | Namespace or task queue mismatch                          | Check `.env`; confirm the worker registered in the Temporal UI                                                                                |
+| Uploads fail with a signature error                                             | MinIO path-style addressing                               | `S3_FORCE_PATH_STYLE=true` in `.env`                                                                                                          |
+| Empty query results in `psql`                                                   | RLS active                                                | `SET app.current_org_id = '<uuid>';`                                                                                                          |
+| `exactOptionalPropertyTypes` errors on a Prisma update                          | Expected                                                  | Use the conditional-spread pattern in [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#the-exactoptionalpropertytypes--prisma-pattern) |
+| Slicing never completes locally                                                 | Real slicer selected without its container                | Unset `METRIKA_SLICER` or start the `slicer` compose profile                                                                                  |
 
 ---
 
@@ -340,9 +353,12 @@ HEALTH_DEEP_TOKEN=local-health-deep-token
 
 # Two URLs, two roles, deliberately: the API connects as metrika_app, which is
 # NOSUPERUSER NOBYPASSRLS so RLS actually applies to it. Migrations connect as
-# the owner; schema.prisma names DATABASE_ADMIN_URL.
-DATABASE_URL=postgresql://metrika_app:metrika_app@localhost:5432/metrika_dev?schema=public
-DATABASE_ADMIN_URL=postgresql://metrika:metrika@localhost:5432/metrika_dev?schema=public
+# the owner; prisma.config.ts names DATABASE_ADMIN_URL — schema.prisma carries
+# no datasource url on Prisma 7. No `?schema=public`: the
+# Prisma 7 driver adapter never sees that parameter, so it is inert — select a
+# non-public schema with `new PrismaPg(url, { schema })` instead (ADR-0037).
+DATABASE_URL=postgresql://metrika_app:metrika_app@localhost:5432/metrika_dev
+DATABASE_ADMIN_URL=postgresql://metrika:metrika@localhost:5432/metrika_dev
 
 # --- Web ---
 # WEB_PORT is expanded in the shell by apps/web's own scripts, so it moves the
