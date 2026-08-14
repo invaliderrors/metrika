@@ -154,6 +154,19 @@ These are the mistakes most likely to be made here. Each is enforced by lint, ty
   `cwd = packages/database`, which is where `prisma.config.ts` is discovered —
   `--schema` alone does not find it. See
   [ADR-0037](./docs/adr/0037-prisma-7-driver-adapter.md).
+- **Never spawn `pnpm` from Node — not in a script, not in a test.** On Windows
+  `pnpm` is `pnpm.CMD`, and since the fix for CVE-2024-27980 Node refuses to
+  launch a `.cmd` without `shell: true`: the call fails with
+  `spawn pnpm ENOENT`, and every call site here swallowed it (`result.status ??
+1`, or a `catch` that returns the compiler's output). The measured symptom was
+  `pnpm build`, `pnpm dev`, `pnpm test:unit`, `pnpm test:integration`, every
+  `pnpm db:*` and `pnpm contracts:emit` exiting 1 with **no output at all**, and
+  six test files failing with messages about missing diagnostics rather than a
+  missing compiler. Run the dependency's own JS entry under `process.execPath`
+  instead — `scripts/run-bin.mjs` for the root scripts, and the local
+  `package.json#bin` lookup the affected tests now carry. `shell: true` is not
+  the fix: these call sites pass absolute paths, and `cmd.exe` splits one that
+  contains a space.
 - Soft-deleted rows are revealed by `withDeleted(fn)` — a scoped function, so
   "forgot to turn filtering back on" is not a reachable state. Do not add a
   flag or a second client.

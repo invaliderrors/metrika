@@ -1,10 +1,30 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// See the note on the same line in `shadcn-palette.test.ts`: `.pathname` is a
+// Windows-only landmine here.
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const STATIC_DIR = join(ROOT, '.next', 'static');
+
+/**
+ * Next's own bin, run under this process's `node`, rather than `pnpm exec next`.
+ *
+ * `pnpm` on Windows is `pnpm.CMD`, which `execFileSync` cannot start without a
+ * shell: the spawn threw `ENOENT` and arrived at the `catch` below as
+ * `next build failed:` with no diagnostics at all — the one failure shape the
+ * `stdio: 'pipe'` comment there exists to prevent. Resolving the bin needs no
+ * shell and behaves identically on POSIX.
+ */
+const nextBin = (() => {
+  const require = createRequire(import.meta.url);
+  const manifest = require.resolve('next/package.json');
+  const bin = (JSON.parse(readFileSync(manifest, 'utf8')) as { bin: Record<string, string> }).bin;
+  return join(dirname(manifest), bin['next'] ?? '');
+})();
 
 /**
  * The balanced `{ … }` block that follows `marker`, or `null` if the marker is
@@ -66,7 +86,7 @@ describe('the Tailwind pipeline', () => {
     rmSync(STATIC_DIR, { recursive: true, force: true });
 
     try {
-      execFileSync('pnpm', ['exec', 'next', 'build'], { cwd: ROOT, stdio: 'pipe' });
+      execFileSync(process.execPath, [nextBin, 'build'], { cwd: ROOT, stdio: 'pipe' });
     } catch (error) {
       // `stdio: 'pipe'` keeps a passing run quiet, but it also swallows the
       // compiler's diagnostics on a failing one, which is when they are the

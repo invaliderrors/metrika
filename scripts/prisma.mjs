@@ -56,17 +56,26 @@
 //    five CI jobs failed. `turbo.json` now declares it on both `db:generate`
 //    and `build`, and `packages/database/test/turbo-env.test.ts` fails if a
 //    future `env()` call is added without doing the same.
-import { spawnSync } from 'node:child_process';
+//
+// 4. The child no longer goes through `pnpm exec` at all — `run-bin.mjs` has
+//    the reason, and it is a Windows one — so the pnpm half of point 3 now
+//    reads as history rather than as the mechanism. Nothing about the CWD
+//    changes: `prisma.config.ts` is still discovered relative to it, which is
+//    the load-bearing half, and `prisma` is still resolved from
+//    `packages/database` because that is the only package that depends on it.
+
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { runBin } from './run-bin.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const databasePackage = path.join(repoRoot, 'packages/database');
 const schema = path.join(databasePackage, 'prisma/schema.prisma');
 
-const result = spawnSync('pnpm', ['exec', 'prisma', ...process.argv.slice(2), '--schema', schema], {
+const result = runBin('prisma', [...process.argv.slice(2), '--schema', schema], {
+  from: databasePackage,
   cwd: databasePackage,
-  stdio: 'inherit',
 });
 
 process.exit(result.status ?? 1);

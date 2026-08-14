@@ -17,9 +17,65 @@ with a docstring per decision, and this file would then be that file.
 from __future__ import annotations
 
 import os
+import time
 
 import _temporal_server
 import pytest
+from testcontainers.core.docker_client import DockerClient
+
+# ─── Docker publishes a port asynchronously; testcontainers reads it at once ───
+#
+# `DockerContainer.start()` returns as soon as the daemon accepts the start, and
+# EVERY port lookup in the library funnels through `DockerClient.port`, which
+# raises `ConnectionError: Port mapping for container … is not available` the
+# instant a binding is not yet visible instead of waiting for it. Nothing on
+# that path retries: the wait STRATEGIES do, but `HttpWaitStrategy` builds its
+# URL from this call as the first thing it does, and the Reaper reads its own
+# port with no strategy at all.
+#
+# MEASURED on Docker Desktop for Windows with testcontainers 4.15.0, running
+# `pnpm test:integration`: the reaper's port 8080 was unavailable at the moment
+# of the read, run after run, while `docker inspect` on that same container a
+# second later reported `0.0.0.0:56624->8080/tcp` and its log said `Started!`.
+# The container is healthy; the read is early. It is not a load effect — the
+# same suite failed with turbo's tasks serialised (`--concurrency=1`).
+#
+# THE FIRST FAILURE THEN CASCADES, which is why the error never names the real
+# cause. The reaper's container name carries a MODULE-LEVEL session id, so every
+# later fixture retries the same name and gets `409 … container name
+# "/testcontainers-ryuk-…" is already in use`. Ten tests report a docker naming
+# conflict for one early read.
+#
+# Patched on the class rather than worked around per fixture because the reaper
+# is constructed inside the library, where no fixture can reach it — and because
+# a per-fixture version would have to be repeated for every container this
+# package ever starts. DELETE THIS once testcontainers retries the lookup
+# itself; nothing else here depends on it.
+_PORT_LOOKUP_TIMEOUT_S = 30.0
+_PORT_LOOKUP_POLL_S = 0.1
+_unpatched_port = DockerClient.port
+
+
+def _port_awaiting_publication(self: DockerClient, container_id: str, port: int) -> str:
+    """`DockerClient.port`, but waiting for the binding instead of failing on it.
+
+    Bounded rather than retried forever, for the reason
+    `_temporal_server._await_usable` gives: a harness that HANGS reads as
+    infrastructure trouble, one that fails reads as a bug. The original error is
+    re-raised on timeout, so a port that genuinely never appears still says so
+    in the library's own words.
+    """
+    deadline = time.monotonic() + _PORT_LOOKUP_TIMEOUT_S
+    while True:
+        try:
+            return _unpatched_port(self, container_id, port)
+        except ConnectionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(_PORT_LOOKUP_POLL_S)
+
+
+DockerClient.port = _port_awaiting_publication  # type: ignore[method-assign]  # -- see above
 
 # THE RE-EXPORT, spelled as assignments rather than as a `from … import` line
 # carrying a suppression. pytest collects fixtures from this module's namespace,

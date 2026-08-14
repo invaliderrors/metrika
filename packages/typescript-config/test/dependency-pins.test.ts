@@ -6,6 +6,20 @@ import { z } from 'zod';
 const repoRoot = path.resolve(import.meta.dirname, '../../..');
 
 /**
+ * A repository-relative path with forward slashes, on every platform.
+ *
+ * `path.relative` returns the host separator, so on Windows every assertion and
+ * every failure message below read `apps\web\package.json` while the expected
+ * values — which are also what a reviewer would type — read `apps/web/…`. The
+ * two non-vacuity tests are what caught it; the pin assertions would have gone
+ * green with an unreadable offender list. The paths here are compared and
+ * printed, never opened, so normalising them costs nothing.
+ */
+function relativeToRepo(file: string): string {
+  return path.relative(repoRoot, file).split(path.sep).join('/');
+}
+
+/**
  * Every dependency in every workspace manifest is pinned to an exact version.
  *
  * `CONTRIBUTING.md` says "Pin infrastructure and tool versions exactly", and
@@ -131,7 +145,7 @@ interface Specifier {
 function allSpecifiers(): Specifier[] {
   return manifestPaths().flatMap((file) => {
     const manifest = readManifest(file);
-    const relative = path.relative(repoRoot, file);
+    const relative = relativeToRepo(file);
     return CHECKED_FIELDS.flatMap((field) =>
       Object.entries(manifest[field] ?? {}).map(([name, range]) => ({
         manifest: relative,
@@ -145,7 +159,7 @@ function allSpecifiers(): Specifier[] {
 
 describe('workspace dependency pins', () => {
   it('finds every workspace manifest, so a broken walker cannot make this vacuous', () => {
-    const found = manifestPaths().map((file) => path.relative(repoRoot, file));
+    const found = manifestPaths().map((file) => relativeToRepo(file));
 
     expect(found).toContain('package.json');
     expect(found).toContain('apps/web/package.json');
@@ -360,7 +374,7 @@ interface PythonRequirement {
 
 function pythonRequirements(): PythonRequirement[] {
   return pyprojectPaths().flatMap((file) => {
-    const manifest = path.relative(repoRoot, file);
+    const manifest = relativeToRepo(file);
     return readAssignments(file)
       .filter(({ table, key }) => isPythonDependencyArray(table, key))
       .flatMap(({ table, key, strings }) =>
@@ -423,7 +437,7 @@ const PY_EXACT = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9,._-]+\])?==\d+(?:\.
 
 describe('python dependency pins', () => {
   it('finds the uv workspace root, so a broken walker cannot make this vacuous', () => {
-    const found = pyprojectPaths().map((file) => path.relative(repoRoot, file));
+    const found = pyprojectPaths().map((file) => relativeToRepo(file));
 
     expect(found).toContain('apps/workers/pyproject.toml');
   });
@@ -446,7 +460,7 @@ describe('python dependency pins', () => {
 
   it('pins every python dependency exactly — no >=, ~=, wildcard or bare name', () => {
     const sourcedFromWorkspace = new Map(
-      pyprojectPaths().map((file) => [path.relative(repoRoot, file), workspaceSourceNames(file)]),
+      pyprojectPaths().map((file) => [relativeToRepo(file), workspaceSourceNames(file)]),
     );
 
     const offenders = pythonRequirements()
@@ -499,7 +513,7 @@ describe('python dependency pins', () => {
         const name = projectName(file);
         return name === undefined || !members.has(normalize(name));
       })
-      .map((file) => path.relative(repoRoot, file));
+      .map((file) => relativeToRepo(file));
 
     expect(
       missing,

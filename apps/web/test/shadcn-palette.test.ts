@@ -1,8 +1,14 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const SRC = new URL('../src/', import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: on Windows the latter yields
+// `/C:/Users/…/src/`, whose leading slash makes `readdirSync` resolve it
+// against the current drive root — MEASURED, `ENOENT … scandir
+// 'C:\C:\Users\…\src\'`. On POSIX the two are identical, which is why nothing
+// catches this until the suite runs on Windows.
+const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 
 /**
  * `globals.css` declares one colour system, and it is not shadcn's.

@@ -1,10 +1,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import enUS from '../messages/en-US.json' with { type: 'json' };
 import esCO from '../messages/es-CO.json' with { type: 'json' };
 
-const SRC = new URL('../src/', import.meta.url).pathname;
+// See the note on the same line in `shadcn-palette.test.ts`: `.pathname` is a
+// Windows-only landmine here.
+const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 
 /**
  * `value as Record<string, unknown>` rather than bare `Object.entries(value)`:
