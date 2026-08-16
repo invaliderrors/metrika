@@ -1,9 +1,15 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ESLint } from 'eslint';
 import { z } from 'zod';
 
-const WEB_ROOT = new URL('..', import.meta.url);
+// A filesystem path, not a URL. `new ESLint({ cwd })` takes a path, and
+// `WEB_ROOT.pathname` on Windows is `/C:/Users/…/apps/web`, which ESLint
+// resolves against the drive root — MEASURED, every assertion here failed with
+// `Error: Could not find config file.` on a tree whose config file is present.
+const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /**
  * The fully resolved config this package's real, on-disk `eslint.config.js`
@@ -20,7 +26,7 @@ const WEB_ROOT = new URL('..', import.meta.url);
  * comparing `undefined` against the expected value.
  */
 async function resolvedConfig(file = 'src/app/page.tsx'): Promise<Record<string, unknown>> {
-  const eslint = new ESLint({ cwd: WEB_ROOT.pathname });
+  const eslint = new ESLint({ cwd: WEB_ROOT });
   const config: unknown = await eslint.calculateConfigForFile(file);
   if (typeof config !== 'object' || config === null) {
     throw new Error('calculateConfigForFile did not return a config object');
@@ -189,9 +195,7 @@ const Manifest = z.object({ dependencies: z.object({ react: z.string() }) });
 describe('apps/web react version pins', () => {
   it('resolves settings.react.version equal to the react dependency in package.json', async () => {
     const settings = ReactSettings.parse((await resolvedConfig())['settings']);
-    const rawManifest: unknown = JSON.parse(
-      readFileSync(new URL('package.json', WEB_ROOT), 'utf8'),
-    );
+    const rawManifest: unknown = JSON.parse(readFileSync(join(WEB_ROOT, 'package.json'), 'utf8'));
     const manifest = Manifest.parse(rawManifest);
 
     expect(settings.react.version).toBe(manifest.dependencies.react);

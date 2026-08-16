@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -7,6 +8,25 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 const run = promisify(execFile);
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const testDir = import.meta.dirname;
+
+/**
+ * `tsc` is launched as `node <resolved tsc.js>` rather than `pnpm exec tsc`.
+ *
+ * `pnpm` on Windows is `pnpm.CMD`, and `execFile` cannot start a `.cmd` without
+ * a shell — MEASURED on node 24.19.0, the call rejects with
+ * `Error: spawn pnpm ENOENT`. `compile()` below deliberately swallows a non-zero
+ * exit and returns whatever was printed, so on Windows that error arrived here
+ * as an EMPTY STRING and every positive assertion in this file failed with a
+ * message about a missing diagnostic rather than about a missing compiler.
+ * Resolving the bin out of `package.json` needs no shell, no PATH lookup and no
+ * `.cmd`, and is identical on POSIX.
+ */
+const tsc = (() => {
+  const require = createRequire(import.meta.url);
+  const manifest = require.resolve('typescript/package.json');
+  const bin = (JSON.parse(readFileSync(manifest, 'utf8')) as { bin: Record<string, string> }).bin;
+  return path.resolve(path.dirname(manifest), bin['tsc'] ?? '');
+})();
 
 /**
  * `compile()` swallows a non-zero exit and returns whatever tsc printed, which
@@ -19,9 +39,9 @@ const testDir = import.meta.dirname;
  * exact filename, or emptiness of the whole string.
  */
 async function compile(project: string, useBuildMode: boolean): Promise<string> {
-  const args = useBuildMode ? ['exec', 'tsc', '-b', project] : ['exec', 'tsc', '-p', project];
+  const args = useBuildMode ? [tsc, '-b', project] : [tsc, '-p', project];
   try {
-    const { stdout, stderr } = await run('pnpm', args, { cwd: packageRoot });
+    const { stdout, stderr } = await run(process.execPath, args, { cwd: packageRoot });
     return `${stdout}${stderr}`;
   } catch (error: unknown) {
     const e = error as { stdout?: string; stderr?: string };
@@ -89,7 +109,7 @@ describe('nest.json', () => {
   });
 
   it('resolves compilerOptions.types to ["node"], proving the extends chain runs through node.json', async () => {
-    const { stdout } = await run('pnpm', ['exec', 'tsc', '--showConfig', '-p', 'nest.json'], {
+    const { stdout } = await run(process.execPath, [tsc, '--showConfig', '-p', 'nest.json'], {
       cwd: packageRoot,
     });
     const resolved = JSON.parse(stdout) as { compilerOptions?: { types?: unknown } };

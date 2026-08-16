@@ -79,7 +79,10 @@ const config = [
   },
   {
     // The Playwright config, and ONLY it. `process.env.CI` is what decides
-    // `forbidOnly` and `reuseExistingServer`, and this file cannot get that
+    // `forbidOnly` and `reuseExistingServer`, and `WEB_PORT` is the port the
+    // server under test binds — a literal 3000 there means a second project's
+    // server on 3000 gets adopted and graded instead. This file cannot get
+    // either of them
     // through `src/config/env.ts`: that module parses `clientEnv` at import, so
     // reading one runner flag through it would make `playwright test` refuse to
     // START unless the two NEXT_PUBLIC_ keys were exported into the shell —

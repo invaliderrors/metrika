@@ -142,7 +142,22 @@
     "dev": {
       "cache": false,
       "persistent": true,
-      "env": ["NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_DEFAULT_LOCALE", "NEXT_PUBLIC_SENTRY_DSN"]
+      // `WEB_PORT` because apps/web's `dev` script expands it in the shell
+      // (`next dev --port ${WEB_PORT:-3000}`) and turbo's STRICT env mode
+      // filters a task's environment down to what it declares — MEASURED, a
+      // task with no declaration sees both `NEXT_PUBLIC_` keys, which turbo
+      // infers from the `nextjs` framework, and does NOT see `WEB_PORT`. So
+      // without this line the value in `.env` reaches the process that spawns
+      // turbo and dies there, and `pnpm dev` silently serves 3000 whatever the
+      // file says. apps/api needs no equivalent: its `dev` script is
+      // `node --env-file=../../.env`, which loads `API_PORT` inside the child,
+      // downstream of this filter.
+      "env": [
+        "NEXT_PUBLIC_API_BASE_URL",
+        "NEXT_PUBLIC_DEFAULT_LOCALE",
+        "NEXT_PUBLIC_SENTRY_DSN",
+        "WEB_PORT"
+      ]
     }
   }
 }

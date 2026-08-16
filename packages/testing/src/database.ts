@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -7,6 +9,32 @@ import { assertDockerAvailable } from './docker.js';
 import { POSTGRES_IMAGE } from './images.js';
 
 const run = promisify(execFile);
+
+/**
+ * The Prisma CLI's own entry point, resolved from the caller's
+ * `databasePackageRoot`, to be run as `node <entry>`.
+ *
+ * NOT `pnpm exec prisma`: `pnpm` on Windows is `pnpm.CMD`, and `execFile`
+ * cannot start a `.cmd` without a shell — the call rejects with
+ * `Error: spawn pnpm ENOENT`, so every integration suite in the repository
+ * fails at container start with an error naming the package manager rather than
+ * anything about the database.
+ *
+ * Resolving from `databasePackageRoot` rather than from this file keeps the
+ * one-way edge intact: `prisma` is `@metrika/database`'s devDependency, this
+ * package must not depend on it (Turbo's `^build` graph would be cyclic), and a
+ * runtime lookup rooted at a path the caller supplies is not a dependency.
+ */
+function prismaCli(databasePackageRoot: string): string {
+  const require = createRequire(path.join(databasePackageRoot, 'package.json'));
+  const manifest = require.resolve('prisma/package.json');
+  const bin = (JSON.parse(readFileSync(manifest, 'utf8')) as { bin: Record<string, string> }).bin;
+  const entry = bin['prisma'];
+  if (entry === undefined) {
+    throw new Error(`prisma, resolved from ${databasePackageRoot}, declares no "prisma" bin.`);
+  }
+  return path.resolve(path.dirname(manifest), entry);
+}
 
 export interface DatabaseHandle {
   /** metrika_app — NOSUPERUSER NOBYPASSRLS. What the API uses. */
@@ -233,7 +261,7 @@ async function startContainer(options: StartDatabaseOptions): Promise<DatabaseHa
   // scripts/prisma.mjs": the URL is a container port that does not exist until
   // now, so it is passed explicitly in the child environment rather than read
   // from a file.
-  await run('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
+  await run(process.execPath, [prismaCli(options.databasePackageRoot), 'migrate', 'deploy'], {
     cwd: options.databasePackageRoot,
     env: { ...process.env, DATABASE_ADMIN_URL: adminUrl },
   });

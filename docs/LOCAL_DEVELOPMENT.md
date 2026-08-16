@@ -78,11 +78,20 @@ pnpm test:integration           # Testcontainers; needs Docker, not `infra:up`
 (`prisma migrate dev`) is for authoring a new migration; `pnpm db:deploy` is
 what a fresh clone wants.
 
-`WEB_PORT` is in `.env` but does **not** reach `pnpm dev`: `apps/web`'s scripts
-expand it in the shell (`next dev --port ${WEB_PORT:-3000}`), and turbo's strict
-env mode drops any variable a task does not declare — measured, a task sees both
-`NEXT_PUBLIC_` keys and not `WEB_PORT`. Export it in your shell to move the port,
-or add it to `turbo.json`'s `dev` task.
+`WEB_PORT` reaches `pnpm dev`, and it takes two mechanisms to do it.
+`apps/web`'s `dev` script runs `scripts/next.mjs`, which reads it,
+turbo runs in strict env mode and drops any variable a task does not declare —
+measured, a task sees both `NEXT_PUBLIC_` keys and not `WEB_PORT` — so
+`turbo.json`'s `dev` task declares it, and `scripts/turbo.mjs` is what loads
+`.env` in the first place. Remove either and the value goes inert with no error.
+
+Two paths still bypass `.env` and need it **exported**:
+`pnpm --filter @metrika/web start`, which loads nothing, and
+`pnpm --filter @metrika/web test:e2e` — `playwright.config.ts` builds every URL
+from `WEB_PORT`, and neither pnpm nor Playwright reads `.env`.
+That one bites rather than merely fails: `reuseExistingServer` is on outside CI,
+so a default-port run on a machine where something else holds 3000 adopts that
+server and grades it.
 
 | Service         | URL                        | Notes                                                                    |
 | --------------- | -------------------------- | ------------------------------------------------------------------------ |
@@ -94,6 +103,30 @@ or add it to `turbo.json`'s `dev` task.
 | MinIO console   | http://localhost:9001      | `metrika` / `metrika-local`                                              |
 | Mailpit         | http://localhost:8025      | Catches all outbound email                                               |
 | Postgres        | localhost:5432             | `metrika` / `metrika` / `metrika_dev`; the API connects as `metrika_app` |
+
+Every port in that table is a **default**, not a fixture. A host port is shared
+with the whole machine, and a native Postgres service or a second project's
+compose stack owning one fails `pnpm infra:up` with `address already in use` and
+no indication of whose it is. So each published port in
+`infra/docker/docker-compose.yml` reads `${*_HOST_PORT:-<default>}` and `.env`
+carries the eight knobs at their defaults — `POSTGRES_HOST_PORT`,
+`REDIS_HOST_PORT`, `MINIO_HOST_PORT`, `MINIO_CONSOLE_HOST_PORT`,
+`TEMPORAL_HOST_PORT`, `TEMPORAL_UI_HOST_PORT`, `MAILPIT_SMTP_HOST_PORT`,
+`MAILPIT_UI_HOST_PORT`. Container ports never move, so nothing on the compose
+network is affected.
+
+**Nothing is derived.** Moving a port does not move the URL that names it:
+`DATABASE_URL`, `DATABASE_ADMIN_URL`, `REDIS_URL`, `S3_ENDPOINT` and `SMTP_URL`
+each carry their own copy, and `API_PORT`/`WEB_PORT` are separate again. Change
+both halves in the same edit.
+
+`.env` reaches compose only through `scripts/compose.mjs` (`node
+--env-file-if-exists=.env`), which the `infra:*` scripts run. Compose's own
+`--env-file` defaults to the **project directory** — `infra/docker/`, because
+`-f` names a file there — so the repository root's `.env` is invisible to it
+otherwise. Passing `-f` also disables compose's automatic
+`docker-compose.override.yml` pickup, which is why the knobs live in the
+committed file rather than in a per-machine override.
 
 The Temporal service is `temporalio/auto-setup`, which stores its history and
 visibility data in the **same Postgres** as the application, in two databases it
@@ -249,14 +282,25 @@ pnpm --filter @metrika/web test:e2e
 ```
 
 It starts its own server — `pnpm build && pnpm start` in `apps/web`, on
-`127.0.0.1:3000` — rather than assuming one is up, and it supplies the two
-`NEXT_PUBLIC_` keys itself, so no `.env` is needed for it. A production build,
-not `next dev`: dev-mode hydration and CSS delivery differ enough that a green
-dev run says nothing about what ships.
+`127.0.0.1:$WEB_PORT` (3000 by default) — rather than assuming one is up, and it
+supplies the two `NEXT_PUBLIC_` keys itself, so no `.env` is needed for it. A
+production build, not `next dev`: dev-mode hydration and CSS delivery differ
+enough that a green dev run says nothing about what ships.
+
+`WEB_PORT` is read from the **shell**, not from `.env` — neither
+pnpm nor Playwright loads that file. On a machine where those ports are moved,
+export them for this command or the suite runs against the defaults:
+
+```bash
+WEB_PORT=3100 pnpm --filter @metrika/web test:e2e
+```
 
 One thing to know before trusting a red-to-green cycle: `reuseExistingServer` is
-on outside CI, so a `pnpm dev` you forgot about on port 3000 will be used
-as-is and will serve an old build. If a change does not show up, kill that first.
+on outside CI, so a `pnpm dev` you forgot about on that port will be used as-is
+and will serve an old build. If a change does not show up, kill that first. The
+worse version of the same mechanism is why the ports are variables at all: if
+some **other** project holds the port, its server is adopted and graded, and
+every assertion is about an application this repository has never seen.
 
 There is deliberately no root `pnpm test:e2e`: it would put a browser download in
 the path of `pnpm verify`, which is what everyone runs before every push. CI pays
@@ -314,19 +358,22 @@ _(Plan 0B-3, intended and not yet done)_ — `debugpy` in dev mode, with the cor
 
 ## 7. Common problems
 
-| Symptom                                                                         | Cause                                                     | Fix                                                                                                                                           |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Cannot find module '@metrika/contracts'`                                       | Packages not resolved, or not built                       | `pnpm install`, then `pnpm build` — the package resolves to `dist/`, not `src/`                                                               |
-| Prisma client type errors after a schema edit                                   | Client not regenerated                                    | `pnpm db:generate`                                                                                                                            |
-| `pnpm install` exits 1 with `ERR_PNPM_IGNORED_BUILDS`                           | A new dependency has an install script                    | Add it to `allowBuilds` in `pnpm-workspace.yaml`                                                                                              |
-| `PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_ADMIN_URL` | A Prisma command was run from inside `packages/database`  | Use the root `pnpm db:*` scripts — Prisma 7 loads no `.env` at all, so `--env-file-if-exists` in those scripts is the only thing that sets it |
-| `Cyclic dependency detected` from Turbo                                         | Something added `@metrika/database` to `packages/testing` | Remove it; the dependency runs one way only — `database` and `api` depend on `testing`, never the reverse                                     |
-| Integration tests hang                                                          | Docker not running                                        | Start Docker                                                                                                                                  |
-| Temporal worker not picking up tasks                                            | Namespace or task queue mismatch                          | Check `.env`; confirm the worker registered in the Temporal UI                                                                                |
-| Uploads fail with a signature error                                             | MinIO path-style addressing                               | `S3_FORCE_PATH_STYLE=true` in `.env`                                                                                                          |
-| Empty query results in `psql`                                                   | RLS active                                                | `SET app.current_org_id = '<uuid>';`                                                                                                          |
-| `exactOptionalPropertyTypes` errors on a Prisma update                          | Expected                                                  | Use the conditional-spread pattern in [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#the-exactoptionalpropertytypes--prisma-pattern) |
-| Slicing never completes locally                                                 | Real slicer selected without its container                | Unset `METRIKA_SLICER` or start the `slicer` compose profile                                                                                  |
+| Symptom                                                                                                                                                              | Cause                                                                                                                                                                                 | Fix                                                                                                                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Cannot find module '@metrika/contracts'`                                                                                                                            | Packages not resolved, or not built                                                                                                                                                   | `pnpm install`, then `pnpm build` — the package resolves to `dist/`, not `src/`                                                                                                                  |
+| Prisma client type errors after a schema edit                                                                                                                        | Client not regenerated                                                                                                                                                                | `pnpm db:generate`                                                                                                                                                                               |
+| `pnpm install` exits 1 with `ERR_PNPM_IGNORED_BUILDS`                                                                                                                | A new dependency has an install script                                                                                                                                                | Add it to `allowBuilds` in `pnpm-workspace.yaml`                                                                                                                                                 |
+| `PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_ADMIN_URL`                                                                                      | A Prisma command was run from inside `packages/database`                                                                                                                              | Use the root `pnpm db:*` scripts — Prisma 7 loads no `.env` at all, so `--env-file-if-exists` in those scripts is the only thing that sets it                                                    |
+| `Cyclic dependency detected` from Turbo                                                                                                                              | Something added `@metrika/database` to `packages/testing`                                                                                                                             | Remove it; the dependency runs one way only — `database` and `api` depend on `testing`, never the reverse                                                                                        |
+| Integration tests hang                                                                                                                                               | Docker not running                                                                                                                                                                    | Start Docker                                                                                                                                                                                     |
+| Integration tests fail with `Port mapping for container … is not available`, then a cascade of `409 … container name "/testcontainers-ryuk-…" is already in use`     | Docker published the port after testcontainers read it. `metrika_core`'s `conftest.py` patches `DockerClient.port` to wait for the binding; the comment there carries the measurement | If it recurs, check no reaper survived an interrupted run: `docker ps -aq --filter name=testcontainers-ryuk`, then `docker rm -f` each — its name carries a session id a later run collides with |
+| Temporal worker not picking up tasks                                                                                                                                 | Namespace or task queue mismatch                                                                                                                                                      | Check `.env`; confirm the worker registered in the Temporal UI                                                                                                                                   |
+| Uploads fail with a signature error                                                                                                                                  | MinIO path-style addressing                                                                                                                                                           | `S3_FORCE_PATH_STYLE=true` in `.env`                                                                                                                                                             |
+| Empty query results in `psql`                                                                                                                                        | RLS active                                                                                                                                                                            | `SET app.current_org_id = '<uuid>';`                                                                                                                                                             |
+| `exactOptionalPropertyTypes` errors on a Prisma update                                                                                                               | Expected                                                                                                                                                                              | Use the conditional-spread pattern in [TYPESCRIPT_AND_TOOLING.md](./TYPESCRIPT_AND_TOOLING.md#the-exactoptionalpropertytypes--prisma-pattern)                                                    |
+| Slicing never completes locally                                                                                                                                      | Real slicer selected without its container                                                                                                                                            | Unset `METRIKA_SLICER` or start the `slicer` compose profile                                                                                                                                     |
+| `infra:up` fails with `address already in use`, or with Docker Desktop's `bind: An attempt was made to access a socket in a way forbidden by its access permissions` | A native service or another project's compose stack already owns that host port                                                                                                       | Move it with the matching `*_HOST_PORT` in `.env` (§2), and change the URL that names it in the same edit. `docker ps --format '{{.Names}}\t{{.Ports}}'` finds the other owner                   |
+| E2E passes against changes that are not in the build, or asserts against a page you do not recognise                                                                 | `reuseExistingServer` adopted a server that was already on the port                                                                                                                   | Export `WEB_PORT` before `pnpm --filter @metrika/web test:e2e` — Playwright reads neither `.env` nor turbo's environment                                                                         |
 
 ---
 
@@ -360,9 +407,24 @@ HEALTH_DEEP_TOKEN=local-health-deep-token
 DATABASE_URL=postgresql://metrika_app:metrika_app@localhost:5432/metrika_dev
 DATABASE_ADMIN_URL=postgresql://metrika:metrika@localhost:5432/metrika_dev
 
+# --- Local infrastructure host ports ---
+# Read only by infra/docker/docker-compose.yml, through scripts/compose.mjs.
+# Every value is the documented default; override one when the port is already
+# owned on this machine, and change the URL that names it in the same edit —
+# nothing here is derived. See §2.
+POSTGRES_HOST_PORT=5432
+REDIS_HOST_PORT=6379
+MINIO_HOST_PORT=9000
+MINIO_CONSOLE_HOST_PORT=9001
+TEMPORAL_HOST_PORT=7233
+TEMPORAL_UI_HOST_PORT=8233
+MAILPIT_SMTP_HOST_PORT=1025
+MAILPIT_UI_HOST_PORT=8025
+
 # --- Web ---
-# WEB_PORT is expanded in the shell by apps/web's own scripts, so it moves the
-# port only when it is exported; see §2. Both NEXT_PUBLIC_ keys are read at
+# WEB_PORT is expanded in the shell by apps/web's own scripts. `pnpm dev` honours
+# it (turbo.json's `dev` task declares it); `pnpm --filter @metrika/web start`
+# and `test:e2e` need it EXPORTED. See §2. Both NEXT_PUBLIC_ keys are read at
 # module scope and are what `next build` fails without.
 WEB_PORT=3000
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001

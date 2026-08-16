@@ -1,10 +1,24 @@
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 const run = promisify(execFile);
 const packageRoot = path.resolve(import.meta.dirname, '..');
+
+/**
+ * `node <resolved tsc.js>`, not `pnpm exec tsc`: `pnpm` on Windows is a `.CMD`
+ * shim, which `execFile` cannot start without a shell, and this test failed
+ * there with `Error: spawn pnpm ENOENT` on a tree whose tsconfig is correct.
+ */
+const tsc = (() => {
+  const require = createRequire(import.meta.url);
+  const manifest = require.resolve('typescript/package.json');
+  const bin = (JSON.parse(readFileSync(manifest, 'utf8')) as { bin: Record<string, string> }).bin;
+  return path.resolve(path.dirname(manifest), bin['tsc'] ?? '');
+})();
 
 /**
  * `@metrika/eslint-config`'s `nest()` profile suppresses
@@ -25,7 +39,7 @@ const packageRoot = path.resolve(import.meta.dirname, '..');
  */
 describe('tsconfig.json — DI suppression preconditions', () => {
   it('resolves experimentalDecorators and emitDecoratorMetadata to true', async () => {
-    const { stdout } = await run('pnpm', ['exec', 'tsc', '--showConfig', '-p', 'tsconfig.json'], {
+    const { stdout } = await run(process.execPath, [tsc, '--showConfig', '-p', 'tsconfig.json'], {
       cwd: packageRoot,
     });
     const resolved = JSON.parse(stdout) as {

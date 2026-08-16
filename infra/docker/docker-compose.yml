@@ -20,7 +20,30 @@ services:
       POSTGRES_PASSWORD: metrika
       POSTGRES_DB: metrika_dev
     ports:
-      - '127.0.0.1:5432:5432'
+      # EVERY published host port in this file is `${*_HOST_PORT:-<default>}`,
+      # and every default is the number the documentation, the `.env.example`
+      # URLs and docs/LOCAL_DEVELOPMENT.md's table already name. Nothing changes
+      # for a machine that has those ports free.
+      #
+      # The overrides exist because a host port is shared with the whole
+      # machine, not just with this project. A native Postgres service on 5432,
+      # or a second project's compose stack, and this one cannot start at all:
+      # Docker reports `bind: An attempt was made to access a socket in a way
+      # forbidden by its access permissions` (or `address already in use`),
+      # which names neither the port's owner nor which service of yours wanted
+      # it. All of them rather than only the ones that have collided so far,
+      # because "why does only Postgres have a knob" is a worse question than
+      # eight symmetric lines.
+      #
+      # Two things do NOT follow automatically, and both are in `.env`: the host
+      # half of DATABASE_URL / DATABASE_ADMIN_URL / REDIS_URL / S3_ENDPOINT /
+      # SMTP_URL, and the ports the two apps listen on (API_PORT, WEB_PORT).
+      # Change a knob here and change its URL there in the same edit.
+      #
+      # CONTAINER ports never move. `temporal` reaches Postgres by
+      # POSTGRES_SEEDS + DB_PORT on the compose network, and every other
+      # in-network consumer likewise, so none of this is visible to them.
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # One source of truth for the metrika_app role: the same file
@@ -57,7 +80,9 @@ services:
     image: redis:7-alpine
     command: ['redis-server', '--save', '', '--appendonly', 'no']
     ports:
-      - '127.0.0.1:6379:6379'
+      # Host-port override; see the `postgres` block above. REDIS_URL in `.env`
+      # must name the same number.
+      - '127.0.0.1:${REDIS_HOST_PORT:-6379}:6379'
     healthcheck:
       # Real budget ~= 2s x 30 = 60s: redis-cli ping is effectively instant,
       # so interval x retries is not an underestimate here (contrast MinIO
@@ -74,8 +99,12 @@ services:
       MINIO_ROOT_USER: metrika
       MINIO_ROOT_PASSWORD: metrika-local
     ports:
-      - '127.0.0.1:9000:9000'
-      - '127.0.0.1:9001:9001'
+      # Host-port overrides; see the `postgres` block above. S3_ENDPOINT in
+      # `.env` must name MINIO_HOST_PORT. The console port is the one
+      # docs/LOCAL_DEVELOPMENT.md links; `--console-address :9001` in `command`
+      # is the CONTAINER side and does not move with it.
+      - '127.0.0.1:${MINIO_HOST_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-9001}:9001'
     volumes:
       - minio-data:/data
     healthcheck:
@@ -164,7 +193,11 @@ services:
       # crossing the container boundary, and still only on loopback.
       BIND_ON_IP: '0.0.0.0'
     ports:
-      - '127.0.0.1:7233:7233'
+      # Host-port override; see the `postgres` block above. This is what a
+      # worker or a client dials from the host. The healthcheck below stays on
+      # `127.0.0.1:7233` deliberately — it runs INSIDE the container, where the
+      # port never moves.
+      - '127.0.0.1:${TEMPORAL_HOST_PORT:-7233}:7233'
     healthcheck:
       # `namespace describe default`, not `nc -z 127.0.0.1 7233`, for the same
       # reason postgres above passes `-h 127.0.0.1`: the weaker check reports
@@ -237,11 +270,14 @@ services:
       # The UI is a browser client of its own server, and the browser's origin
       # is the PUBLISHED port (8233), not the container's (8080). Without this
       # every API call from the page is blocked by CORS.
-      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+      TEMPORAL_CORS_ORIGINS: http://localhost:${TEMPORAL_UI_HOST_PORT:-8233}
     ports:
-      # 8233 on the host, matching what `temporal server start-dev` publishes,
-      # so the URL in docs/LOCAL_DEVELOPMENT.md is the one people already know.
-      - '127.0.0.1:8233:8080'
+      # 8233 on the host by default, matching what `temporal server start-dev`
+      # publishes, so the URL in docs/LOCAL_DEVELOPMENT.md is the one people
+      # already know. Host-port override; see the `postgres` block above — and
+      # note TEMPORAL_CORS_ORIGINS just above must name the same number, since
+      # it is the browser origin this UI is reached at.
+      - '127.0.0.1:${TEMPORAL_UI_HOST_PORT:-8233}:8080'
     healthcheck:
       # The image is busybox-based and has wget but no curl. `-q -O -` because
       # busybox wget writes to ./index.html otherwise, in a read-only-ish
@@ -255,8 +291,11 @@ services:
   mailpit:
     image: axllent/mailpit:v1.30.7
     ports:
-      - '127.0.0.1:1025:1025'
-      - '127.0.0.1:8025:8025'
+      # Host-port overrides; see the `postgres` block above. SMTP_URL in `.env`
+      # must name MAILPIT_SMTP_HOST_PORT; the UI port is what
+      # docs/LOCAL_DEVELOPMENT.md links.
+      - '127.0.0.1:${MAILPIT_SMTP_HOST_PORT:-1025}:1025'
+      - '127.0.0.1:${MAILPIT_UI_HOST_PORT:-8025}:8025'
     healthcheck:
       # Real budget ~= 3s x 30 = 90s: readyz is effectively instant once the
       # process is up. No start_period: mailpit has no init to wait out.

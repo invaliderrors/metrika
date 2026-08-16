@@ -45,15 +45,18 @@
 // and not sufficient — `turbo.json` has to declare it on the task as well.
 // MEASURED: a task declaring no `env` at all still sees `NEXT_PUBLIC_*` (turbo
 // infers those from the `nextjs` framework) but does NOT see `WEB_PORT`.
-import { spawnSync } from 'node:child_process';
+//
+// Turbo is launched through `runBin` rather than `pnpm exec turbo`, for the
+// reason in `run-bin.mjs`: the latter is a `.cmd` shim on Windows, which
+// `spawnSync` cannot start, and this file's `?? 1` turned that into a silent
+// exit 1 with no output on the four most-used scripts in the repository.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { runBin } from './run-bin.mjs';
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const result = spawnSync('pnpm', ['exec', 'turbo', ...process.argv.slice(2)], {
-  cwd: repoRoot,
-  stdio: 'inherit',
-});
+const result = runBin('turbo', process.argv.slice(2), { from: repoRoot, cwd: repoRoot });
 
 process.exit(result.status ?? 1);
