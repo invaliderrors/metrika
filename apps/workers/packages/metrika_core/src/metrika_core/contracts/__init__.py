@@ -162,6 +162,35 @@ class OrganizationId(RootModel[StrictStr]):
     ]
 
 
+class OrganizationKind(StrEnum):
+    PERSONAL = "PERSONAL"
+    TEAM = "TEAM"
+
+
+class OrganizationMemberId(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            pattern="^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        ),
+    ]
+
+
+class OrganizationRole(StrEnum):
+    OWNER = "OWNER"
+    ADMIN = "ADMIN"
+    MEMBER = "MEMBER"
+    BILLING = "BILLING"
+
+
+class PlatformRole(StrEnum):
+    PLATFORM_ADMIN = "PLATFORM_ADMIN"
+    OPERATIONS = "OPERATIONS"
+    MANUFACTURING_OPERATOR = "MANUFACTURING_OPERATOR"
+    FINANCE = "FINANCE"
+    SUPPORT = "SUPPORT"
+
+
 class PrintJobId(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
