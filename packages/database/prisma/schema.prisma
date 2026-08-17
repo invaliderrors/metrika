@@ -79,10 +79,13 @@ model User {
   authProvider   String
   externalAuthId String
 
-  // Lowercased by the writer, not by the database. Postgres has no
-  // case-insensitive text type without `citext`, and `User_email_key` is a
-  // plain unique index, so `A@x.com` and `a@x.com` are two rows as far as the
-  // constraint is concerned. Task 6 owns the normalisation.
+  // Lowercased by the writer AND required to be lowercase by the database.
+  // Postgres has no case-insensitive text type without `citext` and
+  // `User_email_key` is a plain unique index, so `A@x.com` and `a@x.com` would
+  // be two rows as far as that constraint is concerned — MEASURED, both rows
+  // inserted. Task 6 owns the normalisation; the `User_email_lowercase` CHECK
+  // in the migration's hand-written block is what makes forgetting it a refused
+  // write rather than a second account for the same person.
   email       String
   displayName String
   locale      String    @default("es-CO")
@@ -105,6 +108,17 @@ model User {
 /// The tenant boundary. Every user gets a PERSONAL organization at signup,
 /// which removes "a resource with no organization" as a branch from every
 /// policy and every query (`docs/DOMAIN_MODEL.md:62`).
+///
+/// That last sentence is a PRODUCT invariant, not a database one, and the
+/// difference matters to whoever writes the next reader.
+/// `Organization_personal_owner_required` is one-directional on purpose (so Plan
+/// 1C's convert-to-team is an UPDATE rather than a constraint fight), which
+/// means a two-step UPDATE to `kind = 'TEAM'` and then `personalOwnerUserId =
+/// NULL` leaves a user with no personal organization and violates nothing —
+/// MEASURED. Nothing requires a `User` to be referenced by any `Organization` at
+/// all. So treat `User.personalOrganization` as genuinely nullable rather than
+/// as an impossible branch; ADR-0040 decision 4 records the cost and what would
+/// close it.
 model Organization {
   id String @id @default(uuid(7)) @db.Uuid
 
@@ -114,8 +128,11 @@ model Organization {
   // ISO-3166-1 alpha-2, uppercase. `@db.Char(2)` follows the fixed-width code
   // precedent in `docs/DOMAIN_MODEL.md:491-493` (`Char(3)` currency,
   // `Char(64)` hash). There is no ISO-3166 vocabulary in `packages/contracts`
-  // and 1A does not create one, so the member set is checked at the API
-  // boundary and the width is checked here.
+  // and 1A does not create one, so the MEMBER set is checked at the API
+  // boundary. `@db.Char(2)` is a MAXIMUM width and nothing more — MEASURED,
+  // `'c'` was accepted and stored blank-padded at length 1 — so the FORMAT is
+  // checked by the `Organization_country_code_format` CHECK in the migration's
+  // hand-written block, not by this type.
   countryCode     String           @db.Char(2)
   defaultCurrency CurrencyCode
   // NIT in Colombia. Stored, never used in core logic
@@ -155,10 +172,18 @@ model Organization {
 /// `soft-delete-coverage.test.ts` asserts that correspondence in both
 /// directions.
 ///
-/// Its policy names no other table, and Plan 1C must keep it that way: a
+/// Its policies name no other table, and Plan 1C must keep it that way: a
 /// policy here that reads `User` or `Organization` closes a cycle with the two
 /// policies that already read this table, and Postgres answers a cycle with
 /// `42P17 infinite recursion detected in policy for relation`. See ADR-0040.
+///
+/// THIS TABLE IS THE SET THE `User` POLICY READS THROUGH, which is why its write
+/// half admits only the caller's own `userId` and why a second, restrictive
+/// policy narrows DELETE back to the organization in context. A row here whose
+/// `userId` is X makes X's whole `User` row readable to everybody scoped to that
+/// organization — so an unconstrained `userId` on the write side was a
+/// privilege escalation, measured, not theorised. Plan 1C owns the widening that
+/// "an ADMIN adds a member directly" needs.
 model OrganizationMember {
   id String @id @default(uuid(7)) @db.Uuid
 

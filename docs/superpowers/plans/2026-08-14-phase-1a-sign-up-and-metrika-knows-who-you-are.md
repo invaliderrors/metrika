@@ -417,10 +417,15 @@ leak into any other read.
 
 Record in ADR-0040: **three** tenancy primitives, not two, with each function's definition and
 the reason it fails closed; the four predicates below; the consequence in Step 3 that follows
-from `WITH CHECK`; and the identity-bootstrap repository method as the **one declared exception**
-to ADR-0013 decision 2 ("`AuthContext` in every repository signature"), with its reason —
-the method's whole purpose is to run before an `AuthContext` can exist, and its predicate is
-narrower than any `AuthContext` would make it.
+from `WITH CHECK`; and the **two declared exceptions** to ADR-0013 decision 2
+("`AuthContext` in every repository signature"), named by symbol, with their reasons —
+`findByExternalAuthId(identity)` (Task 5), whose whole purpose is to run before an
+`AuthContext` can exist and whose predicate is narrower than any `AuthContext` would make
+it, and `provisionIdentity(identity, profile)` (Task 6), which creates the rows an
+`AuthContext` would be derived from and therefore mints its context rather than receiving
+it. **CORRECTED DURING EXECUTION**: this paragraph said "one declared exception", which
+contradicted the File-structure table above, Task 6 Step 2 and the Definition of Done, all
+three of which require two. Two is right, and ADR-0040 names both.
 
 - [ ] **Step 2: Write the schema**
 
@@ -704,8 +709,8 @@ pnpm test:integration; echo "EXIT=$?"
 - [ ] **Step 8: Mutations — seven, and each one has a named victim**
 
 1. Delete `ALTER TABLE "User" FORCE ROW LEVEL SECURITY`. Expected: **non-zero**, `migration-sql.test.ts` — and it must fail in `pnpm verify`, with no Docker.
-2. Change `WITH CHECK` on `OrganizationMember` to `WITH CHECK (true)`. Expected: **non-zero**, the meta-gate's "references a tenancy function" assertion **and** the behavioural cross-org insert test.
-3. Delete the whole `CREATE POLICY "User_tenant_isolation"` block. Expected: **non-zero**, the meta-gate's `qual` assertion is still satisfied by `User_identity_bootstrap`, so the victim here is the **behavioural** suite — cases 3 and 6. Say which assertion caught it; if only one did, that is the coverage report for this policy.
+2. Change `WITH CHECK` on `OrganizationMember` to `WITH CHECK (true)`. Expected: **non-zero**, the meta-gate's "references a tenancy function" assertion **and** the behavioural cross-org insert test. **MEASURED, and only the first fired**: Prisma's `create` emits `RETURNING`, so the row it refuses is refused by the SELECT policy, and the two Postgres messages are byte-identical — the same row inserted with no `RETURNING` SUCCEEDED under the mutation. The behavioural case now uses `createMany` as well as `create` for exactly this reason.
+3. Delete the whole `CREATE POLICY "User_tenant_isolation"` block. Expected: **non-zero**, the meta-gate's `qual` assertion is still satisfied by `User_identity_bootstrap`, so the victim here is the **behavioural** suite — cases 3 and 6. Say which assertion caught it; if only one did, that is the coverage report for this policy. **MEASURED, and the victim is neither**: the `beforeAll` SEED fails, because deleting the policy removes the only INSERT-capable predicate on `User`, so Vitest reports `15 tests | 15 skipped` with zero failures and cases 3 and 6 never execute. Detection by setup rather than by assertion; ADR-0040 consequence 11 records it, and what happens to it if the seed is ever moved onto the owner connection.
 4. Delete the whole `CREATE POLICY "User_identity_bootstrap"` block. Expected: **non-zero**, behavioural case 7 — and, once Task 6 lands, the second-sign-in fixture. This is the mutation that proves the pre-identity read has a predicate rather than an assumption.
 5. Remove `User` from `SOFT_DELETABLE_MODELS`. Expected: **non-zero**, `soft-delete-coverage.test.ts`.
 6. Drop `Organization_personal_owner_required`. Expected: **non-zero**, behavioural case 8.

@@ -19,6 +19,15 @@ import { HardDeleteForbiddenError } from '../errors.js';
  * (`docs/DOMAIN_MODEL.md:13`), and naming it here would make every read of it
  * inject a filter on a column that does not exist.
  *
+ * ONE CONSEQUENCE OF THAT ABSENCE IS WORTH KNOWING BEFORE READING
+ * `REFUSED_OPERATIONS` BELOW: `delete`/`deleteMany` on `OrganizationMember` pass
+ * straight through this extension to Postgres, so the only thing bounding them is
+ * row-level security. That is why the migration carries a restrictive
+ * `FOR DELETE` policy on that table and on no other — this extension is the
+ * mitigation for the two models it names, and a table it does not name has to be
+ * bounded in the database. MEASURED before that policy existed: one `deleteMany`
+ * removed rows from three organizations at once. See ADR-0040 consequence 1.
+ *
  * THIS SET IS HAND-MAINTAINED AND THE SCHEMA IS NOT, so the correspondence is
  * asserted rather than trusted: `test/soft-delete-coverage.test.ts` reads
  * Prisma's datamodel and fails if a model has `deletedAt` and is missing here,

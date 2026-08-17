@@ -4,8 +4,9 @@
 [ADR-0013](./0013-authorization.md). Decisions 1 and 3 of that ADR are unchanged
 — policy functions still take the loaded resource, and RLS is still the backstop
 rather than the primary control. What this one narrows is decision 2,
-"`AuthContext` in every repository signature": there is now exactly one method
-that runs before an `AuthContext` can exist, and it is named here.
+"`AuthContext` in every repository signature": there are **exactly two** methods
+that run before an `AuthContext` can exist, both named by symbol in decision 7,
+and the list does not grow without a new ADR.
 
 > **Every claim below is labelled MEASURED, INHERITED or INFERENCE.** MEASURED
 > means run against this tree during Plan 1A Task 3, on PostgreSQL 16.15 and
@@ -74,9 +75,66 @@ looks correct and by a suite that only ever tested a first sign-in.
   default, because Prisma implements `@updatedAt` client-side and emits no
   trigger. MEASURED.
 - **The applied catalog.** All three new tables read `relrowsecurity = t` and
-  `relforcerowsecurity = t`. Five policies exist in schema `public`, every one of
-  them `PERMISSIVE` with `roles = {public}`; `HealthCheck` and
+  `relforcerowsecurity = t`, owned by `metrika` and not `metrika_app`, whose grants
+  on them are exactly `arwd` — no `TRUNCATE`, which would bypass RLS entirely — and
+  whose privilege on schema `public` is `USAGE` only, so the unqualified
+  `app_current_*()` calls in the policies cannot be shadowed by a function the app
+  role creates. Six policies exist in schema `public`, all with
+  `roles = {public}`; five are `PERMISSIVE` and
+  `OrganizationMember_delete_in_context` is `RESTRICTIVE`. `HealthCheck` and
   `_prisma_migrations` are the only public tables with RLS off. MEASURED.
+- **Three writes that the first pass of these predicates permitted, found by
+  attacking them as `metrika_app` rather than by reading them.** All three have
+  the same shape — a `WITH CHECK` that constrains the tenant COLUMN and leaves the
+  rest of the row free — and all three are closed by the predicates recorded in
+  decision 2. MEASURED, before the fix, as `metrika_app` (`rolsuper` `f`,
+  `rolbypassrls` `f`, asserted in-session) scoped to ORG_A as USER_A:
+
+  1. **A stranger's whole `User` row, through a membership row the caller wrote.**
+     `SELECT … FROM "User" WHERE id = <stranger>` → **0 rows**;
+     `INSERT INTO "OrganizationMember" (<ORG_A>, <stranger>, 'OWNER')` →
+     `INSERT 0 1`; the same `SELECT` → the stranger's `id`, `email`,
+     `displayName`, `authProvider` **and** `externalAuthId`. The same escalation
+     through `UPDATE "OrganizationMember" SET "userId" = <stranger>` → `UPDATE 1`.
+  2. **Membership rows in other organizations, deleted.**
+     `DELETE FROM "OrganizationMember" WHERE "organizationId" = <ORG_B>` →
+     `DELETE 1`; a bare `DELETE FROM "OrganizationMember"` with no `WHERE` →
+     `DELETE 4`, spanning **three** organizations.
+  3. **A personal organization fabricated for a stranger.**
+     `UPDATE "Organization" SET "personalOwnerUserId" = <stranger>` → `UPDATE 1`,
+     consuming that stranger's `Organization_personalOwnerUserId_key` slot
+     permanently; and with the organization GUC set to a fresh uuid, an `INSERT`
+     of `kind = 'PERSONAL'` owned by the stranger → `INSERT 0 1`, followed by a
+     membership row making the attacker its only `OWNER`.
+
+  Re-measured after the fix, same role, same fixture: rejections 1 and 3 both
+  answer `new row violates row-level security policy`, the cross-organization
+  `DELETE` answers `DELETE 0`, the bare `DELETE` answers `DELETE 2` (this
+  organization's rows only), and the four positive controls — a self-membership
+  write, the caller's own `personalOwnerUserId`, clearing it to NULL, and the
+  widened reads — all still succeed.
+
+- **`@db.Char(2)` and a plain unique index are each half of what a comment
+  claimed.** `countryCode = 'c'` was accepted and read back at `length() = 1`,
+  blank-padded; `Probe-A@example.test` inserted alongside `probe-a@example.test`
+  as a second row. Both MEASURED, and both are now CHECK constraints
+  (decision 8).
+
+- **A `FOR INSERT` policy reads back with a NULL `qual`.** MEASURED on a throwaway
+  table: `CREATE POLICY … FOR INSERT WITH CHECK (…)` gives `cmd = INSERT`,
+  `qual IS NULL`, `with_check` non-null — PostgreSQL does not permit `USING` on
+  `INSERT`. So the coverage gate keys its `qual` assertion on `cmd` for the same
+  reason it keys its `with_check` assertion on `cmd`; consequence 9 records both.
+
+- **A unique violation aborts the transaction.** In one transaction as
+  `metrika_app`: insert a `User`; insert a second whose
+  `(authProvider, externalAuthId)` collides →
+  `duplicate key value violates unique constraint
+"User_authProvider_externalAuthId_key"`; then ANY statement →
+  `current transaction is aborted, commands ignored until end of transaction
+block` (`25P02`). MEASURED, and it is the property Plan 1A Task 6 Step 3's retry
+  boundary rests on.
+
 - **The next `migrate dev` proposes reverting none of the hand-written block.**
   With the migration applied and the schema formatted,
   `pnpm db:migrate --create-only` emits `-- This is an empty migration.` — 30
@@ -108,16 +166,17 @@ halves: a caller who sets only one matches no row (MEASURED above). Its two
 functions return `text` rather than an enum type, and that is mechanical rather
 than stylistic — see decision 5.
 
-**2. Four policies over three tables, and two of them are asymmetric on
-purpose.** `USING` filters what a statement can SEE; `WITH CHECK` constrains what
-it can WRITE. Where the two differ, the read half is the widened one.
+**2. Five policies over three tables: two asymmetric, one read-only, one
+restrictive.** `USING` filters what a statement can SEE; `WITH CHECK` constrains
+what it can WRITE. Where the two differ, the read half is the widened one.
 
-| Table                | Policy                                | `cmd`    | `USING`                                                                                                | `WITH CHECK`                                   |
-| -------------------- | ------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| `Organization`       | `Organization_tenant_isolation`       | `ALL`    | `id = app_current_org_id()` **OR** the caller is a member of it                                        | `id = app_current_org_id()`                    |
-| `OrganizationMember` | `OrganizationMember_tenant_isolation` | `ALL`    | `organizationId = app_current_org_id()` **OR** `userId = app_current_user_id()`                        | `organizationId = app_current_org_id()`        |
-| `User`               | `User_tenant_isolation`               | `ALL`    | `id = app_current_user_id()` **OR** they are a member of the organization in context                   | `id = app_current_user_id()`                   |
-| `User`               | `User_identity_bootstrap`             | `SELECT` | `authProvider = app_current_auth_provider()` **AND** `externalAuthId = app_current_external_auth_id()` | none — a `FOR SELECT` policy has no write half |
+| Table                | Policy                                 | Kind          | `cmd`    | `USING`                                                                                                | `WITH CHECK`                                                                                         |
+| -------------------- | -------------------------------------- | ------------- | -------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `Organization`       | `Organization_tenant_isolation`        | `PERMISSIVE`  | `ALL`    | `id = app_current_org_id()` **OR** the caller is a member of it                                        | `id = app_current_org_id()` **AND** (`personalOwnerUserId` **IS NULL OR** `= app_current_user_id()`) |
+| `OrganizationMember` | `OrganizationMember_tenant_isolation`  | `PERMISSIVE`  | `ALL`    | `organizationId = app_current_org_id()` **OR** `userId = app_current_user_id()`                        | `organizationId = app_current_org_id()` **AND** `userId = app_current_user_id()`                     |
+| `OrganizationMember` | `OrganizationMember_delete_in_context` | `RESTRICTIVE` | `DELETE` | `organizationId = app_current_org_id()`                                                                | none — a `FOR DELETE` policy has no write half                                                       |
+| `User`               | `User_tenant_isolation`                | `PERMISSIVE`  | `ALL`    | `id = app_current_user_id()` **OR** they are a member of the organization in context                   | `id = app_current_user_id()`                                                                         |
+| `User`               | `User_identity_bootstrap`              | `PERMISSIVE`  | `SELECT` | `authProvider = app_current_auth_provider()` **AND** `externalAuthId = app_current_external_auth_id()` | none — a `FOR SELECT` policy has no write half                                                       |
 
 The two widenings exist for one screen each. `OrganizationMember`'s read half is
 what lets `/me` list a caller's memberships across every organization without an
@@ -133,13 +192,61 @@ row-level security policy for table "Organization"`, as is an
 `OrganizationMember` stamped with a third organization's id, as is an `UPDATE` of
 a co-member's `User` row. MEASURED.
 
-**3. The widening is bounded by the policy it reads through, which is why
-`OrganizationMember`'s policy must never name another table.** Both subquery
-policies read `OrganizationMember`, and a policy expression that reads an
-RLS-protected table has that table's policies applied to it. `EXPLAIN` on
+**Each write half constrains every column that another predicate reads, not only
+the tenant key**, and the two extra conjuncts are the whole of what the first pass
+got wrong (see the three measured writes above). `OrganizationMember.userId` is
+read by `User_tenant_isolation`'s subquery, so leaving it free let a caller
+enlarge their own read surface; `Organization.personalOwnerUserId` carries a
+GLOBAL unique index and binds a tenant to a person, so leaving it free let a
+caller claim a stranger's slot. **The rule to carry into 1B-1D: a `WITH CHECK`
+must constrain the tenant key AND every column any policy predicate reads.** A
+predicate is only as narrow as the narrowest thing it depends on.
+
+**The restrictive policy is a fifth policy and a construct nothing else in the
+tree uses, and it is here because `DELETE` has no `WITH CHECK` half at all.**
+Restrictive policies AND with the permissive set rather than ORing into it, so
+they can only narrow; it is also the only way to take back part of an
+already-stated `USING` half without a `DROP POLICY`, which the migration history
+grep forbids. It is scoped to the organization in context rather than to `false`
+because the boundary this migration owns is the TENANT one: whether a MEMBER may
+remove a co-member from an organization they are both in is an authorization
+question with a role in it, which RLS cannot express here (see decision 3's
+recursion note) and which the application policies own.
+
+**What the narrowed `OrganizationMember` write half costs, stated because it will
+be met as a surprise otherwise.** `WITH CHECK` is evaluated against the whole new
+row, so requiring `userId = app_current_user_id()` makes RLS admit
+**self-membership writes only**: an ADMIN cannot add another person, and cannot
+change a co-member's `role`, through the app role. An invitation ACCEPTED by its
+recipient satisfies the predicate as written, which is why 1A and an accept-based
+1C flow are unaffected. Plan 1C owns the choice between widening this conjunct and
+routing administrative membership writes through Plan 1D's audited elevated
+client. It is deliberately the narrow direction: widening a shipped predicate is
+an `ALTER POLICY`, narrowing one is a data migration.
+`packages/database/test/identity-rls.integration.test.ts` case 4 asserts the cost
+as well as the protection, so a 1C author meets a test that expected it rather
+than concluding the policy is broken.
+
+**3. The widening is bounded by the policy it reads through — and that sentence
+is worth nothing on its own, because the bound is a table the app role WRITES.**
+Both subquery policies read `OrganizationMember`, and a policy expression that
+reads an RLS-protected table has that table's policies applied to it. `EXPLAIN` on
 `SELECT * FROM "User"` shows the `SubPlan` over `OrganizationMember` carrying
-`OrganizationMember`'s own predicate (MEASURED), so the widening cannot outgrow
-that policy. It also means the widened `Organization` read is **dead with the
+`OrganizationMember`'s own predicate (MEASURED). **The first pass of this ADR
+stopped there and concluded that the widening "cannot outgrow that policy", which
+was false**: the `SubPlan` predicate is real, but it bounds the widening to rows
+the caller can insert, and that policy's `WITH CHECK` did not constrain `userId`.
+Measured consequence: a stranger's whole `User` row, `externalAuthId` included
+(see the measurements above). The claim is true only with the conjunct decision 2
+now records — with writes narrowed to the caller's own `userId`, the only way to
+enlarge this widening is to add YOURSELF to an organization, which reveals that
+organization's members and nobody else's.
+
+**The residual risk therefore lives in the VALUE of `app.current_org_id`, and
+consequence 10 records what closes it.** Nothing in any predicate anchors that GUC
+to a membership row.
+
+It also means the widened `Organization` read is **dead with the
 organization GUC alone**: with org B set and the user GUC unset,
 `SELECT` on `"Organization"` returns only org B, because the subquery row is
 visible only through `userId = app_current_user_id()` (MEASURED — and it is the
@@ -156,6 +263,20 @@ on purpose, so that Plan 1C converting a personal organization into a team is an
 `UPDATE` rather than a constraint fight. Held by
 `identity-rls.integration.test.ts`; MEASURED as `new row for relation
 "Organization" violates check constraint "Organization_personal_owner_required"`.
+
+**What that one-directionality costs, recorded rather than left implicit: "every
+user has a personal organization" is a PRODUCT invariant, not a database one.**
+The two-step evasion is permitted by construction — MEASURED as `metrika_app` with
+the organization GUC on the target row: `UPDATE … SET "kind" = 'TEAM'` →
+`UPDATE 1`, then `UPDATE … SET "personalOwnerUserId" = NULL` → `UPDATE 1`, leaving
+the row `TEAM`/NULL and the user with zero personal organizations. Nothing
+requires a `User` to be referenced by any `Organization` in the first place
+either. So the claim in `docs/DOMAIN_MODEL.md` that this "removes 'a resource with
+no organization' as a branch from every policy and every query" holds for the
+policies (none of them carries such a branch) and **does not** license a reader of
+`User.personalOrganization` to treat absence as impossible: treat it as a real
+branch. Enforcing it properly needs a deferred constraint trigger, which cannot be
+specified until 1C settles conversion semantics.
 
 **5. `User.authProvider` is `text`, not a Postgres enum, and the reason is a
 failure mode rather than a preference.** `app_current_auth_provider()` returns
@@ -176,29 +297,62 @@ each policy using its own: `OrganizationMember_organizationId_userId_key` for th
 `User` policy, `OrganizationMember_userId_idx` for the `Organization` policy.
 MEASURED.
 
-**7. The identity-bootstrap repository method is the ONE declared exception to
-ADR-0013 decision 2, and to `docs/ROADMAP.md:275`'s "`AuthContext` required on
-every repository method".** Both documents are named here because both say it.
-The exception is narrow in three ways at once, and it is the combination rather
+**7. There are EXACTLY TWO declared exceptions to ADR-0013 decision 2, and to
+`docs/ROADMAP.md:275`'s "`AuthContext` required on every repository method", and
+both are named here by symbol.** Both documents are named because both say it.
+
+| Method                                 | Task | Why it cannot take an `AuthContext`                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `findByExternalAuthId(identity)`       | 5    | It runs **before** an `AuthContext` can exist. An `AuthContext` carries `userId` and the caller's roles, read from our database; this method is what finds the row those are read from. Requiring the parameter would not make it safer, it would make it unwritable.                                                                                        |
+| `provisionIdentity(identity, profile)` | 6    | It **creates** the rows an `AuthContext` would be derived from. The `WITH CHECK` predicates in decision 2 force it to mint the `User` and `Organization` ids and set both tenancy GUCs from them **before** either row exists, so the context it runs under is minted rather than derived — there is nothing for an `AuthContext` parameter to have carried. |
+
+The list is exactly two and does not grow without a new ADR. The guard 1A can
+afford is a type-level test asserting the `auth`-first shape over the repository
+interface, plus the review surface of a two-name list.
+
+Each exception is narrow in three ways at once, and it is the combination rather
 than any one of them that makes it acceptable:
 
-- **Its whole purpose is to run before an `AuthContext` can exist.** An
-  `AuthContext` carries `userId` and the caller's roles, read from our database;
-  this method is what finds the row those are read from. Requiring the parameter
-  would not make it safer, it would make it unwritable.
-- **Its predicate is narrower than any `AuthContext` would make it.** The GUCs it
-  sets restrict it to the single `User` row whose external identifier the token
-  verifier already proved by signature. An `AuthContext`-scoped read of `User`
-  would admit every co-member in the organization in context.
-- **It is `FOR SELECT`, so it cannot write.** MEASURED: an `INSERT` into `"User"`
-  in bootstrap context is rejected, because `User_identity_bootstrap` has no
-  write half and `User_tenant_isolation`'s `WITH CHECK` compares against an unset
+- **Neither can be written with the parameter**, for the reasons in the table.
+- **Each runs under a predicate narrower than any `AuthContext` would make it.**
+  `findByExternalAuthId` sets the bootstrap pair, which restricts it to the single
+  `User` row whose external identifier the token verifier already proved by
+  signature — an `AuthContext`-scoped read of `User` would admit every co-member in
+  the organization in context. `provisionIdentity` runs with
+  `app.current_user_id` and `app.current_org_id` equal to the two ids it is
+  creating, which is the narrowest context that exists: exactly one row per table.
+- **The read-only one cannot write.** MEASURED: an `INSERT` into `"User"` in
+  bootstrap context is rejected, because `User_identity_bootstrap` has no write
+  half and `User_tenant_isolation`'s `WITH CHECK` compares against an unset
   `app.current_user_id`.
 
-The exception is to the **signature**, not to the backstop. Nothing here bypasses
-RLS; the method runs under a narrower predicate than the general one, not outside
-it. Plan 1A Task 4 owns the method and its typed context setter, and it is the
-only place either bootstrap GUC may be set.
+The exception is to the **signature**, not to the backstop. Neither method
+bypasses RLS; both run under a narrower predicate than the general one, not
+outside it. Plan 1A Task 4 owns both entry points and their typed context setters,
+and they are the only places either bootstrap GUC may be set.
+
+**8. Two format CHECK constraints, because a column type was carrying a
+guarantee it does not make.** Both were added after the measurements above
+falsified a schema comment, and both are constraints rather than conventions for
+the reason CLAUDE.md gives: a constraint is a guarantee and a check is a hope.
+
+- **`User_email_lowercase` — `CHECK ("email" = lower("email"))`.** `User_email_key`
+  is a plain unique index and Postgres has no case-insensitive text type without
+  `citext`, so `Probe-A@example.test` and `probe-a@example.test` were two rows
+  (MEASURED). "One email, one user" was an application convention wearing a
+  constraint's name. Plan 1A Task 6 still owns the normalisation; this makes
+  forgetting it a refused write rather than a second account for the same person.
+  Deliberately **not** a functional or partial unique index on `lower("email")`: an
+  index is the one construct in this block that Prisma manages, and sub-decision
+  (c) defers that class of change until its drift behaviour has been measured. A
+  CHECK is invisible to Prisma's differ (MEASURED).
+- **`Organization_country_code_format` — `CHECK ("countryCode" ~ '^[A-Z]{2}$')`.**
+  `@db.Char(2)` is a MAXIMUM width and nothing more: `'c'` was accepted and stored
+  blank-padded at `length() = 1` (MEASURED). The MEMBER set remains an
+  API-boundary check — there is still no ISO-3166 vocabulary in
+  `packages/contracts` and 1A does not create one — but every alpha-2 code
+  satisfies this format by definition, and every lowercased, truncated or
+  blank-padded value does not. See consequence 8.
 
 ## `WITH CHECK` means a row's identifier exists before the row does
 
@@ -296,7 +450,7 @@ PostgreSQL.
 
 **The drift argument has to be made about the right construct, and the
 measurement above narrows it.** Hand-written SQL is _not_ generally at risk here:
-the CHECK constraint, all four policies and all three functions survive the next
+the CHECK constraints, all five policies and all three functions survive the next
 `migrate dev` untouched, which emits an empty migration. An index is the
 exception, because it is the one construct in the block's class that Prisma
 **does** manage — it emits `CREATE UNIQUE INDEX "User_email_key"` from
@@ -319,7 +473,10 @@ error that points at a row the extension has made invisible. Compounding it: a
 unique violation aborts the whole transaction, so Postgres answers every
 subsequent statement with `25P02` until rollback, and a recovery branch written
 after the failing `INSERT` inside the same `client.$transaction` cannot execute at
-all. **Plan 1A Task 6 Step 3 is where this is handled rather than discovered**:
+all — MEASURED, in one transaction as `metrika_app`, by colliding
+`User_authProvider_externalAuthId_key` and then issuing an ordinary `SELECT`,
+which answered `current transaction is aborted, commands ignored until end of
+transaction block`. **Plan 1A Task 6 Step 3 is where this is handled rather than discovered**:
 the re-read must run inside `withDeleted()` and must distinguish "an active row
 exists, return it" from "a soft-deleted row occupies this identifier", which is
 not a race and must fail loudly with its own error rather than retry.
@@ -346,28 +503,64 @@ not a race and must fail loudly with its own error rather than retry.
   widening would then have no name in `pg_policies`, no `FOR SELECT` of its own to
   prove it cannot write, and no way to be retired independently the day an
   elevated client makes it unnecessary.
-- **A `RESTRICTIVE FOR DELETE USING (false)` policy on `User` and
-  `Organization`**, to stop the widened read half from also widening `DELETE` (see
-  Consequences). Rejected for this slice: it is a fifth and sixth policy the plan
-  does not specify, `AS RESTRICTIVE` is a policy kind nothing else in the tree
-  uses, and the exposure it closes is unreachable today for the two independent
-  reasons listed below. **Revisit in Plan 1C**, which decides what removing a
-  member means and is the first slice that could make it reachable.
+- **A `RESTRICTIVE FOR DELETE` policy on `User` and `Organization`**, to stop the
+  widened read half from also widening `DELETE` (see consequence 1). Deferred, not
+  rejected on principle — the same construct IS used on `OrganizationMember`,
+  because there the exposure was measured reachable and neither mitigation covered
+  it. On these two it is unreachable for the two independent reasons consequence 1
+  now names table by table, and the cost of writing it anyway is two more policies
+  and two more golden-map entries in a slice that has already grown one policy.
+  **Revisit in Plan 1C**, which decides what removing a member means, or the first
+  time a soft-deletable model arrives with no membership child.
+- **A `SECURITY DEFINER` role-check helper to gate `OrganizationMember` writes**,
+  so that "an ADMIN adds a member" could be expressed in the policy without
+  recursion. Its argument differs from the rejected bootstrap one — it reads the
+  actor's OWN role and is not an RLS-bypassing read door — but it is still an
+  owner-privileged function reachable by the app role, shipped in the slice with
+  no audit trail, and invisible to the coverage gate. Rejected for 1A on the same
+  ordering rule; 1C may take it, or may route administrative membership writes
+  through 1D's audited elevated client.
+- **Splitting `authProvider` and `externalAuthId` into a `UserIdentity` table**
+  whose only policies are `userId = app_current_user_id()` plus the bootstrap
+  pair, so that the widened co-member read of `User` could not reach the provider
+  subject at all. It is a real answer to the escalation measured above and a
+  better one at rest, but it is a second table, a second migration's worth of
+  relations, and a rewrite of Tasks 5 and 6 against a shape the plan does not
+  describe. The narrowed `WITH CHECK` closes the same escalation with one
+  conjunct. Worth revisiting the day `User` grows a second credential-shaped
+  column.
 
 ## Consequences
 
 1. **The widened read half also widens `DELETE`, because `DELETE` is filtered by
-   `USING` and has no `WITH CHECK` half.** A caller who can see org B's
-   `Organization` row through membership can, as far as RLS is concerned, delete
-   it. Two independent things make that unreachable today and **neither of them is
-   the policy**: the soft-delete extension refuses `delete`/`deleteMany` on both
-   models with `HardDeleteForbiddenError`, and `OrganizationMember`'s
-   `onDelete: Restrict` foreign keys block deleting any `User` or `Organization`
-   that has a membership row — which is every row provisioning creates. It is
-   written down because a future model that is soft-deletable but has no
-   membership child inherits the gap, and because "the mitigation is not the
-   policy" is exactly the shape of thing this repository asks to be recorded.
-   INFERENCE from Postgres's documented `USING`/`WITH CHECK` split; not measured.
+   `USING` and has no `WITH CHECK` half — and the mitigations have to be named
+   table by table, because they do not all cover all three.** The first pass of
+   this ADR named two mitigations for "both models" and did not notice that the one
+   table where the gap was reachable was covered by neither.
+
+   - **`User` and `Organization`: unreachable, and neither reason is the policy.**
+     The soft-delete extension refuses `delete`/`deleteMany` on both with
+     `HardDeleteForbiddenError`, and `OrganizationMember`'s `onDelete: Restrict`
+     foreign keys block deleting any `User` or `Organization` that has a membership
+     row — which is every row provisioning creates, and being a co-member is what
+     made the row visible in the first place. A future model that is
+     soft-deletable but has no membership child inherits the gap. INFERENCE from
+     Postgres's documented `USING`/`WITH CHECK` split.
+   - **`OrganizationMember`: it was REACHABLE, and it is closed by a policy.** The
+     model has no `deletedAt`, so it is deliberately absent from
+     `SOFT_DELETABLE_MODELS` and `delete`/`deleteMany` pass straight through the
+     extension; and no table carries a foreign key TO it, so there is nothing to
+     restrict. MEASURED: `DELETE 1` across organizations, and `DELETE 4` spanning
+     three for a bare `DELETE` with no `WHERE`.
+     `OrganizationMember_delete_in_context` (decision 2) narrows it back to the
+     organization in context — re-measured as `DELETE 0` and `DELETE 2`
+     respectively, with `identity-rls.integration.test.ts` case 10 holding both the
+     narrowing and the fact that in-context deletes still work.
+
+   The general lesson, which is the reason this consequence is written at length:
+   **the soft-delete extension and `onDelete: Restrict` are mitigations for
+   soft-deletable models with membership children, and a table outside that
+   intersection has neither.** Check the intersection, not the sentence.
 
 2. **Referential integrity bypasses RLS, so a foreign key can point at a row the
    inserting caller cannot read.** `OrganizationMember.invitedById` is the live
@@ -412,25 +605,106 @@ not a race and must fail loudly with its own error rather than retry.
    `Address` is not a Phase 1 table, and a nullable UUID with no referent is a fact
    nobody can check. It returns with `Address`.
 
-8. **`Organization.countryCode` and `Organization.taxIdentifier` carry no member
-   or format constraint.** There is no ISO-3166 vocabulary in `packages/contracts`
-   and 1A does not create one, so the column is `@db.Char(2)` — a width guarantee,
-   following the `Char(3)` currency and `Char(64)` hash precedents — and the member
-   set is checked at the API boundary. `taxIdentifier` gets nothing at all on
-   purpose: a wrong NIT regex rejects a real taxpayer, and the domain model says the
-   value is stored and never used in core logic.
+8. **`Organization.countryCode` carries a FORMAT constraint and no MEMBER
+   constraint; `taxIdentifier` carries neither.** There is no ISO-3166 vocabulary in
+   `packages/contracts` and 1A does not create one, so the member set is checked at
+   the API boundary. The column is `@db.Char(2)`, following the `Char(3)` currency
+   and `Char(64)` hash precedents — but `Char(2)` is a MAXIMUM width and nothing
+   more (MEASURED: `'c'` accepted, stored blank-padded at length 1), so the format
+   is `Organization_country_code_format` and not the type. `taxIdentifier` gets
+   nothing at all on purpose: a wrong NIT regex rejects a real taxpayer, and the
+   domain model says the value is stored and never used in core logic.
 
-9. **`permissive` and `roles` are the two columns a coverage gate can pass while
-   proving nothing, and their values are recorded here so it can pin them.** All
-   five applied policies read `PERMISSIVE` with `roles = {public}` (MEASURED). A
-   `RESTRICTIVE` policy, or one scoped `TO some_other_role`, would satisfy every
-   assertion about `qual` and `with_check` and still not constrain `metrika_app` —
-   restrictive policies AND with the permissive set rather than granting anything,
-   and a policy naming another role never applies. The gate should assert both
-   columns; this ADR does not decide its shape, but it removes the excuse that the
-   expected values were unknown.
+9. **`permissive`, `roles`, and "does the predicate MENTION a tenancy function or
+   CONSTRAIN with one" are the three ways a coverage gate passes while proving
+   nothing.** All six applied policies read `roles = {public}`; five are
+   `PERMISSIVE` and `OrganizationMember_delete_in_context` is `RESTRICTIVE`
+   (MEASURED).
 
-10. **This ADR is frozen the moment Plan 1A Task 4 acts on it**, per
+   - **`roles` is asserted per policy**: a policy scoped `TO some_other_role`
+     never applies to `metrika_app` and is invisible to every predicate assertion.
+   - **`PERMISSIVE` is asserted PER TABLE, as an existence check, not per policy
+     as a prohibition.** A table whose ONLY policy is restrictive denies
+     everything while satisfying every `qual`/`with_check` assertion, which is the
+     property worth policing — but banning `AS RESTRICTIVE` outright bans the only
+     construct that can narrow a shipped `USING` half without a `DROP POLICY`,
+     i.e. the gate would forbid its own remedy. It did, briefly, in the first pass.
+   - **The predicate itself is PINNED, not pattern-matched.** MEASURED, and this
+     is the one that mattered: a table carrying `ENABLE`, `FORCE` and one
+     `PERMISSIVE` policy `TO public` whose `USING` and `WITH CHECK` were both
+     `(true OR app_current_org_id() IS NOT NULL)` passed the whole suite — 55/55,
+     exit 0 — while a row written under one organization was readable from another
+     and readable with no context set at all. PostgreSQL does not constant-fold a
+     policy expression at `CREATE POLICY` time, so the harmless mention survives
+     into `pg_policies` and a substring test reads it as a predicate. So the gate
+     holds a golden map of catalog-rendered `{cmd, qual, with_check}` per policy
+     and asserts set equality in both directions — this repository's own
+     "the golden-file diff is the review" rule applied to policy predicates.
+     The shape assertions are kept as the cheap first line, because they are what
+     polices a table nobody has written yet; they are not sufficient on their own.
+   - **`qual` is keyed on `cmd`, for the same reason `with_check` is.** `qual` is
+     NULL by definition for a `FOR INSERT` policy (MEASURED), so a blanket
+     non-null assertion would reject a correct insert-only policy — and the
+     cheapest way out of that for its author is to widen the policy to `FOR ALL`.
+
+10. **Nothing anchors `app.current_org_id` to a membership row, so a wrong value
+    is not a degraded boundary — it is no boundary.** RLS is the backstop for the
+    primary control and it consumes the primary control's own output unchecked.
+    MEASURED as `metrika_app` with `app.current_org_id` = ORG_C and
+    `app.current_user_id` = USER_A, having asserted in the same transaction that
+    USER_A has **zero** membership rows in ORG_C: ORG_C's `Organization` row read
+    in full, its entire roster read, its members' `User` rows read including
+    `email` and `externalAuthId`, `UPDATE "Organization" SET name = …` →
+    `UPDATE 1`, self inserted into ORG_C as `OWNER` → `INSERT 0 1`.
+
+    This migration is the first point at which the membership anchor became
+    expressible at all — `app_current_user_id()` did not exist before it — and the
+    new primitive was used exclusively to WIDEN reads. Two obligations follow:
+
+    - **Plan 1A Task 4's `withTenantContext` must derive the organization id from a
+      membership lookup, never from request input or a header.** That is the
+      primary control for this, and there is no backstop behind it on the three
+      identity tables: conjoining the anchor into their policies would break
+      creation (`Organization`'s `WITH CHECK` runs before any membership row
+      exists) and would recurse on `OrganizationMember`.
+    - **Every tenant-scoped CHILD table from Phase 2 onward should conjoin the
+      anchor**, where it is safe to:
+      `"organizationId" = app_current_org_id() AND EXISTS (SELECT 1 FROM
+"OrganizationMember" m WHERE m."organizationId" = app_current_org_id() AND
+m."userId" = app_current_user_id())`.
+
+11. **Two things in the behavioural suite are single-assertion dependencies, and
+    one thing is detection by SETUP rather than by assertion.** All three measured
+    by mutation, and recorded so that a future author trimming
+    "redundant-looking" cases knows what they are removing.
+
+    - Deleting `User_identity_bootstrap` is caught by case 7a and only 7a; 7b-7f
+      all assert emptiness or refusal, which a deleted policy preserves. Reducing
+      its `AND` to the external-id half alone is caught by 7c and only 7c.
+    - Deleting `User_tenant_isolation` is caught by the `beforeAll` SEED, not by an
+      assertion: it removes the only INSERT-capable predicate on `User`, so Vitest
+      reports `15 tests | 15 skipped` with zero failures and cases 3 and 6 never
+      execute. The diagnostic is good (the seed re-throws with exactly this
+      scenario named) but the detector is the part most likely to be refactored —
+      moving the seed onto the owner connection for speed transfers the duty to
+      case 3, whose co-member and self positive controls both go null without the
+      policy.
+    - Deleting the whole behavioural file leaves both gates GREEN (MEASURED: 8
+      files / 40 tests, exit 0; `test:unit` exit 0). Nothing pins a test file's
+      existence, no coverage floor covers this package, and neither CI suppression
+      grep looks at test inventory. The golden map above is the real mitigation —
+      with it, removing the behavioural suite no longer removes ALL of the
+      boundary's coverage at once — and the gate additionally asserts that the file
+      exists and is non-trivial. That residual risk is accepted rather than closed:
+      a `describe`-count or case-name inventory rots on the first legitimate
+      refactor, and a rotting assertion gets deleted.
+
+12. **This ADR is frozen the moment Plan 1A Task 4 acts on it**, per
     `docs/adr/README.md:7`, which is why the `WITH CHECK` consequence and the two
     policy-composition edges are written here on the first pass rather than left for
-    a correction. A later correction costs a new ADR.
+    a correction. A later correction costs a new ADR. **This document was amended
+    once before it was pushed** — after an adversarial review of Task 3 measured
+    three permitted writes that decision 2 was believed to prevent, a coverage gate
+    that could pass on a leaking policy, and a claim in decision 3 that the
+    measurements falsified. Everything in it below the amendment is the state of the
+    tree; nothing was corrected after the freeze.
