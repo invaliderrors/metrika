@@ -1,6 +1,6 @@
 # ADR-0018 — Brand entity IDs and money-adjacent units; nothing else
 
-**Status:** Accepted · **Date:** 2026-08-07
+**Status:** Accepted · **Date:** 2026-08-07 · Scoped in part by [ADR-0041](./0041-repository-location.md)
 
 ## Context
 

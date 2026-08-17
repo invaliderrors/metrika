@@ -538,6 +538,8 @@ modules/quotes/
 
 **Layer rule:** `api → application → domain`, and `application → infrastructure` through interfaces defined in `application`. `domain` imports nothing but `contracts`. A controller that contains an `if` about business state is a bug.
 
+**`infrastructure/` above is a persistence zone**, and that is enforced rather than conventional: `prismaImportBoundary` exempts `src/modules/*/infrastructure/**` alongside `src/infrastructure/persistence/**`, and nowhere else may import `@prisma/client`, `@metrika/database` or the `brandUnsafe` helper. The `*` matches one segment, so `modules/quotes/application/infrastructure/` is **not** a zone. Until [ADR-0041](./adr/0041-repository-location.md) the glob named only the top-level directory, and a repository written at the location this section documents could not import the database package at all.
+
 ### Module catalogue
 
 | Module                | Responsibility                                                                                               | Depends on                                   | Domain or infrastructure     |

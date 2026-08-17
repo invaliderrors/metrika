@@ -1,6 +1,6 @@
 # ADR-0013 — Pure policy functions + `AuthContext` repositories + Postgres RLS
 
-**Status:** Accepted · **Date:** 2026-08-07
+**Status:** Accepted · **Date:** 2026-08-07 · Scoped in part by [ADR-0041](./0041-repository-location.md)
 
 ## Context
 

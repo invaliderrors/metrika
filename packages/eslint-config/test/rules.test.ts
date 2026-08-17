@@ -149,6 +149,43 @@ describe('prisma boundary — ignores glob, exercised through an apps/api-shaped
     const rules = await lintProbe('src/infrastructure/persistence/raw-queries.ts');
     expect(rules.filter((r) => r === 'no-restricted-syntax')).toHaveLength(2);
   });
+
+  // ── ADR-0041: the second exempt zone, and the three ways it must NOT widen ──
+
+  it('allows @metrika/database inside a module’s own infrastructure/ — the location ARCHITECTURE.md documents', async () => {
+    const rules = await lintProbe('src/modules/users/infrastructure/repository.ts');
+    expect(rules.filter((r) => r === 'no-restricted-imports')).toHaveLength(0);
+  });
+
+  it('still forbids it one segment outside that zone — `*` matches a single segment', async () => {
+    // Without this, `src/modules/**/infrastructure/**` would pass the row above
+    // while also exempting `src/modules/users/application/infrastructure/**`,
+    // which is not a persistence zone and was never meant to be one.
+    expect(await lintProbe('src/modules/users/application/service.ts')).toContain(
+      'no-restricted-imports',
+    );
+  });
+
+  it('forbids reaching branding.js from outside a persistence zone', async () => {
+    // ADR-0018's guarantee is that a branded id cannot be minted from a bare
+    // string wherever `brandUnsafe` is reachable, so the helper is confined to
+    // the same zone as Prisma itself.
+    expect(await lintProbe('src/modules/users/application/branding-reach.ts')).toContain(
+      'no-restricted-imports',
+    );
+  });
+
+  it('lets the branding TEST import branding.js while still banning the packages — the narrowing stayed narrow', async () => {
+    // THE NEGATIVE CONTROL FOR THE EXEMPTION ITSELF. Flat config replaces a
+    // rule's options wholesale, so a second config object naming
+    // `no-restricted-imports` for this path drops every entry it does not
+    // repeat. This fixture imports BOTH `branding.js` (must be allowed) and
+    // `@metrika/database` (must still be rejected); asserting only the first
+    // would pass just as well against an exemption that had silently deleted
+    // the package bans.
+    const rules = await lintProbe('test/branding.test.ts');
+    expect(rules.filter((r) => r === 'no-restricted-imports')).toHaveLength(1);
+  });
 });
 
 describe('nest profile', () => {

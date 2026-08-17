@@ -1,7 +1,25 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    /**
+     * Fixtures are INPUTS to the assertions, never assertions themselves, and
+     * one of them is now named like a test on purpose.
+     *
+     * `prismaImportBoundary`'s narrow exemption is scoped to the literal path
+     * `test/branding.test.ts` — that is the file in `apps/api` it exists for —
+     * and an `ignores`/`files` glob resolves relative to the CONSUMING config,
+     * so the probe can only exercise it from
+     * `test/fixtures/persistence-probe/test/branding.test.ts`. Vitest's default
+     * `include` then collects that fixture as a real suite and fails the run
+     * with "No test suite found", which is a green boundary reported as a red
+     * package.
+     *
+     * Spread `configDefaults.exclude` rather than replacing it: the defaults
+     * carry the node_modules and dist globs, and dropping them would put every
+     * dependency's tests into this package's run.
+     */
+    exclude: [...configDefaults.exclude, 'test/fixtures/**'],
     /**
      * Vitest's 5 s default is a RESOURCE assumption, and this package breaks it
      * under load rather than because anything is wrong.
