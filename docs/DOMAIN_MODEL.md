@@ -61,6 +61,8 @@ model PrinterProfileVersion {             // Version — immutable
 
 **`Organization`** — the tenant boundary. Every user gets a **personal organization** on signup (`kind: PERSONAL | TEAM`), which removes the "resource with no organization" branch from every policy and every query. Holds `name`, `slug` (unique), `kind`, `countryCode`, `defaultCurrency`, `taxIdentifier` (NIT in Colombia — stored, never used in core logic), `billingAddressId`, `deletedAt`.
 
+Two amendments from the migration that created the table ([ADR-0040](./adr/0040-tenant-context-gucs.md)). It also holds **`personalOwnerUserId`** — unique, nullable, restricted FK to `User` — because nothing else expresses "at most one personal organization per user", and a unique index on a nullable column is only half of that: Postgres treats NULLs as distinct, so the other half is the `Organization_personal_owner_required` CHECK (`kind <> 'PERSONAL' OR personalOwnerUserId IS NOT NULL`), hand-written because Prisma's DSL cannot express it. And `billingAddressId` is **not** in the schema: `Address` is not a Phase 1 table, and a nullable UUID with no referent is a fact nobody can check.
+
 **`OrganizationMember`** — `(organizationId, userId)` unique, plus `role: OWNER | ADMIN | MEMBER | BILLING`, `invitedById`, `joinedAt`. An organization must always have at least one `OWNER`, enforced in application logic inside the transaction that removes a member (a database constraint cannot express it).
 
 **`OrganizationInvitation`** — `email`, `role`, `token` (hashed, never stored plain), `expiresAt`, `acceptedAt`, `revokedAt`. Metrika owns this, not the auth provider.
@@ -497,6 +499,9 @@ Scale is stored on `PrintConfiguration`, participates in the content hash, and t
 ### Cascade behaviour — deliberate, per relation
 
 ```
+Organization → OrganizationMember  onDelete: Restrict   // who was in a tenant, and when, is forensic
+User         → OrganizationMember  onDelete: Restrict
+User         → Organization        onDelete: Restrict   // personalOwnerUserId
 Organization → Project             onDelete: Restrict   // never cascade a tenant away
 Project      → Model               onDelete: Restrict
 Model        → ModelVersion        onDelete: Restrict
@@ -517,7 +522,12 @@ Soft delete applies to `User`, `Organization`, `Project`, `Model` — entities a
 
 It explicitly does **not** apply to `Quote`, `Order`, `SliceResult`, `GeometryAnalysis`, `AuditLog`, `StatusTransition`, `Payment`. Those are immutable or ledger entities; they are archived by state, never deleted. A soft-delete flag on an immutable record invites someone to hide commercial evidence.
 
-Soft delete is applied by a Prisma client extension that injects `deletedAt: null` into every `find`/`count` on the affected models, plus an explicit `withDeleted()` escape hatch for admin queries. Doing it in an extension rather than by convention means it cannot be forgotten — which matters more than usual when an agent is writing the queries.
+Soft delete is applied by a Prisma client extension that injects `deletedAt: null` into every `find`/`count` on the affected models, plus an explicit `withDeleted()` escape hatch for admin queries. Doing it in an extension rather than by convention means it cannot be forgotten — which matters more than usual when an agent is writing the queries. `delete` and `deleteMany` do not filter, they **throw**: a hard delete of a soft-deletable model is refused, not silently rewritten.
+
+Two properties of that extension are decisions rather than gaps, recorded in [ADR-0040](./adr/0040-tenant-context-gucs.md) and repeated here because they bite at the schema level:
+
+- **`update`, `updateMany` and `upsert` are not filtered, and that is how restore is expressed** — `update({ data: { deletedAt: null } })` needs no escape hatch. The cost is that an `upsert` on a soft-deleted row finds it, takes the `update` branch, and leaves `deletedAt` set unless the payload clears it: the call returns a row that the next `findUnique` cannot see. Do not use `upsert` on a soft-deletable model in a provisioning path.
+- **Unique constraints on soft-deletable models are total, not partial.** A soft-deleted `Organization` permanently occupies its slug and a soft-deleted `User` permanently occupies their email. Since `findUnique`, `findFirst` and `count` **are** filtered, a create-then-re-read provisioning path raises the unique violation on every attempt while its re-read branch reads `null` on every attempt — a retry that never terminates, reporting an error pointing at a row the extension has hidden. The re-read must run inside `withDeleted()` and treat "a soft-deleted row occupies this identifier" as its own loud failure rather than as a lost race. Partial unique indexes (`WHERE "deletedAt" IS NULL`) are the eventual fix and are deliberately deferred; Prisma's DSL cannot express them.
 
 ### JSONB policy
 
@@ -551,15 +561,28 @@ Every JSONB payload has a Zod schema in `packages/contracts` and is parsed on re
 
 ### Row-level security
 
-Every tenant-scoped table carries `organizationId` and an RLS policy:
+**Every table in schema `public` has RLS enabled and forced, or is named in an exemption list with a reason** (`packages/database/test/rls-coverage.integration.test.ts`). Adding a table means adding a policy or arguing in that list; an omission is a failure, not a silence. Today the only exemptions are `HealthCheck` and Prisma's own `_prisma_migrations`.
+
+The ordinary case is a table that carries `organizationId`:
 
 ```sql
 ALTER TABLE "Project" ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON "Project"
-  USING ("organizationId" = current_setting('app.current_org_id', true)::uuid);
+ALTER TABLE "Project" FORCE ROW LEVEL SECURITY;
+CREATE POLICY "Project_tenant_isolation" ON "Project"
+  USING ("organizationId" = app_current_org_id())
+  WITH CHECK ("organizationId" = app_current_org_id());
 ```
 
-A Prisma client extension sets `app.current_org_id` at the start of every transaction from `AuthContext`. Platform-admin operations use a separate connection with a role that bypasses RLS and always writes an `AuditLog` row.
+Four things in that shape are non-negotiable, and each replaces something the earlier draft of this section got wrong:
+
+- **`FORCE`, not just `ENABLE`.** `ENABLE` alone exempts the table owner — which is the role `prisma migrate` runs as and the role a local psql session connects as — so without `FORCE` the policy is invisible to exactly the connection a developer uses to convince themselves RLS works. The local compose `metrika` role is additionally a bootstrap superuser and bypasses RLS regardless, so `pg_class.relforcerowsecurity` is the trustworthy check, never a psql probe against the local stack.
+- **`WITH CHECK` as well as `USING`.** `USING` filters what a statement can see; `WITH CHECK` constrains what it can write. Without it a caller in org A can insert a row stamped with org B's id and then never see it again.
+- **The function, not an inline `current_setting`.** `app_current_org_id()` is `STABLE` and returns NULL for an unset setting, so deny-by-default is a property of the primitive rather than of each policy that spells it out.
+- **A named policy, per table.** A wrong predicate is corrected by `ALTER POLICY` or by a second named policy, never by dropping and recreating — `packages/database/test/migration-sql.test.ts` greps the whole migration history for the reopening statements.
+
+**Not every tenant-scoped table has an `organizationId`, and the tenancy vocabulary is three primitives rather than one.** `Organization`'s predicate is on `id`; `User` has no organization at all, because a person belongs to many; and the read that turns a verified provider `sub` into a `User` row runs before either tenant is known, so it has a primitive of its own. `app.current_user_id` and the `app.current_auth_provider` + `app.current_external_auth_id` pair are read through their own functions with the same deny-by-default property. Two of the four Phase 1A policies are deliberately **asymmetric** — the read half widened to a caller's memberships, the write half not — and a policy expression that reads another RLS-protected table has that table's policies applied to it, which bounds the widening and makes a cycle a query-time `42P17`. [ADR-0040](./adr/0040-tenant-context-gucs.md) has every predicate, every reason, and the surprising consequence that a row's identifier must exist before its `INSERT`.
+
+A Prisma client extension sets the tenancy GUCs at the start of every transaction from `AuthContext`. Platform-admin operations use a separate connection with a role that bypasses RLS and always writes an `AuditLog` row.
 
 This is defence in depth, not the primary control — application-level policies remain. RLS is what catches the one query written at 2 a.m. that forgot its `where`.
 
