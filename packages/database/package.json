@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "db:generate": "node --env-file-if-exists=../../.env ../../scripts/prisma.mjs generate",
-    "build": "pnpm db:generate && tsc -b tsconfig.build.json",
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -b --force",
     "lint": "eslint .",
     "test:unit": "vitest run --config vitest.config.ts",
