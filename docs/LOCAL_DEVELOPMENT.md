@@ -75,7 +75,9 @@ pnpm test:integration           # Testcontainers; needs Docker, not `infra:up`
 
 `pnpm dev` covers the two Node runtimes; the Python workers join it in Plan
 0B-3. `pnpm db:seed` does not exist yet. `pnpm db:migrate`
-(`prisma migrate dev`) is for authoring a new migration; `pnpm db:deploy` is
+(`prisma migrate dev`) is for authoring a new migration — see
+[Authoring a migration](#authoring-a-migration) for the shadow-database
+constraint it imposes on every migration file; `pnpm db:deploy` is
 what a fresh clone wants.
 
 `WEB_PORT` reaches `pnpm dev`, and it takes two mechanisms to do it.
@@ -222,7 +224,9 @@ pnpm infra:reset               # stop them AND drop the volumes — this is what
                                # packages/database/sql/00-app-role.sql on a fresh Postgres
 
 pnpm db:generate               # regenerate the Prisma client
-pnpm db:migrate                # create + apply a migration (prisma migrate dev)
+pnpm db:migrate                # create + apply a migration (prisma migrate dev).
+                               # Add --create-only --name <name> to write the SQL
+                               # without applying it — see §"Authoring a migration"
 pnpm db:deploy                 # apply committed migrations (prisma migrate deploy)
 pnpm db:reset                  # drop and re-migrate — destructive
 pnpm db:studio                 # Prisma Studio, on :51212 — Prisma 7's default port.
@@ -249,6 +253,48 @@ nothing else in the chain would put it there. The error above comes from
 `prisma.config.ts` resolving `env('DATABASE_ADMIN_URL')`, before any database is
 contacted — a different subsystem from Prisma 6's `Environment variable not
 found`, which is unreachable on 7. See [ADR-0037](./adr/0037-prisma-7-driver-adapter.md).
+
+### Authoring a migration
+
+`pnpm db:migrate --create-only --name <snake_case_name>` is the authoring
+command: it writes `packages/database/prisma/migrations/<timestamp>_<name>/migration.sql`
+without applying it, so the RLS block can be hand-appended before the SQL ever
+touches a database. `pnpm db:deploy` then applies it. Drop `--create-only` to
+create and apply in one step.
+
+`migrate dev` — which is what `db:migrate` runs — does something `migrate deploy`
+never does: it creates a throwaway **shadow database** and replays the entire
+committed migration history into it to detect drift. Two consequences, both
+measured on Prisma 7.9.1:
+
+- **A migration must survive being replayed into an empty database.** The shadow
+  has no `_prisma_migrations` table (Prisma keeps that bookkeeping in the target,
+  not in the shadow) and no rows anywhere. It does share the **cluster**, so
+  roles, extensions and anything else server-wide _are_ visible there. A guard on
+  `pg_roles` therefore says nothing about whether a table exists — the trap that
+  broke `20260809030000_revoke_prisma_migrations_from_app_role`, which passed a
+  cluster-wide role check and then failed with `42P01` against a database-scoped
+  table. Guard database-scoped objects with `to_regclass('"name"') IS NOT NULL`,
+  not `::regclass` (the cast raises instead of returning `NULL`).
+- **Editing an already-applied migration costs a reset on your machine only.**
+  `migrate dev` compares each migration file against the checksum recorded in
+  your local `_prisma_migrations` and refuses to continue:
+
+  ```
+  The migration `20260809030000_revoke_prisma_migrations_from_app_role` was
+  modified after it was applied.
+  We need to reset the "public" schema at "localhost:5442"
+  ```
+
+  It exits **130**, not 1, because it is waiting on an interactive confirmation
+  it cannot get from a script. Recover with `pnpm infra:reset && pnpm infra:up`
+  (drops the volumes, so `00-app-role.sql` is re-run on a fresh Postgres) then
+  `pnpm db:deploy`. Note that `pnpm db:deploy` does **not** re-verify the
+  checksums of migrations it has already applied — it reports `No pending
+migrations to apply` and exits 0 — so an amended migration is invisible until
+  something runs `migrate dev`. CI and `pnpm test:integration` are unaffected
+  either way: both build a fresh Testcontainers Postgres and replay the history
+  from zero, computing checksums as they go.
 
 **`pnpm build`, `pnpm dev`, `pnpm test:unit` and `pnpm test:integration` load the
 root `.env`**, through `scripts/turbo.mjs` (`node --env-file-if-exists=.env`).
