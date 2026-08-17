@@ -723,11 +723,26 @@ pnpm test:integration; echo "EXIT=$?"
    prove nothing**: the meta-gate enumerates `pg_class` in a live Testcontainers database, which
    reflects the migrations under `prisma/migrations/`, and `migrate deploy` applies files rather
    than diffing the schema — so a schema-only edit leaves `pg_class` unchanged and the suite
-   green. Note in the step that `migration-sql.test.ts` **cannot** see this table either: its
+   green. **MEASURED both ways**: three meta-gate assertions fire (`relrowsecurity`/`FORCE`, "at
+   least one policy", and the per-table `PERMISSIVE` existence check), and `pnpm test:unit` with the
+   bare table still appended exits **0** — the asymmetry below, confirmed rather than argued. Note
+   in the step that `migration-sql.test.ts` **cannot** see this table either: its
    `FORCE`-for-every-`ENABLE` loop starts from tables that say `ENABLE`, so one that says nothing
    is invisible to it. That asymmetry is the entire reason the meta-gate exists.
 
 **If any mutation leaves the suite green, say so plainly rather than adjusting the test.**
+**RUN, and six standing mutations the seven above do not cover.** All thirteen exit non-zero from
+the committed tree. Six are worth re-running whenever 1B, 1C or 1D touches the tenancy predicates,
+because each is the only proof that a specific fix is still in place: reverting
+`OrganizationMember`'s `WITH CHECK` to `("organizationId" = app_current_org_id())` alone (case 4
+three times over, plus the golden map); reverting `Organization`'s to `("id" =
+app_current_org_id())` alone (case 11, plus the golden map); deleting
+`OrganizationMember_delete_in_context` (case 10 measures `2` where `1` is correct, plus the golden
+map); dropping either format CHECK (case 12); **appending a table DRESSED to pass** — `ENABLE`,
+`FORCE`, one `PERMISSIVE` policy `TO public` whose halves are both `(true OR app_current_org_id()
+IS NOT NULL)`, which satisfied every shape assertion before the golden map existed while its rows
+crossed tenants; and **deleting the behavioural suite outright**, which passed both gates before
+the gate asserted that file's existence.
 
 - [ ] **Step 9: Commit**
 
