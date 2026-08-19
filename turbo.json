@@ -21,6 +21,44 @@
     // is static precisely so it does not depend on a `.env` being absent —
     // it asserts that every `env()` in prisma.config.ts is declared here, for
     // every task that runs a Prisma subcommand. See ADR-0037.
+    // THE ONLY WRITER of the generated Prisma client, and that is a correctness
+    // property rather than tidiness.
+    //
+    // `prisma generate` does not write inside `packages/database`. It writes to
+    // `node_modules/.pnpm/@prisma+client@…/node_modules/@prisma/client`, which
+    // every package in the workspace resolves through the same symlink — so it
+    // is a SHARED directory, and any task reading it while a generator rewrites
+    // it sees a half-written module.
+    //
+    // `packages/database`'s `build` script used to open with `pnpm db:generate
+    // &&`, which made a second writer. MEASURED with `turbo run lint
+    // --dry=json`: `@metrika/database#build` and `@metrika/database#lint` are
+    // SIBLINGS — both depend on this task, neither depends on the other — so
+    // turbo runs them in parallel, and the build's copy of the generator
+    // rewrote the client under the lint's TypeScript program. The symptom is
+    // 582 `@typescript-eslint/no-unsafe-*` errors starting at the first
+    // `new PrismaClient(...)`, because the whole module resolves to `error`
+    // rather than one symbol going missing. It is nondeterministic: the same
+    // commit failed CI and then passed a bare re-run, which is the worse
+    // failure mode, because a re-run makes it look like a flake.
+    //
+    // With the script reduced to `tsc -b`, `build` writes only its own `dist/`
+    // and this task is the sole writer of the client. Every reader is ordered
+    // after it: `@metrika/database`'s own tasks by naming it here, and every
+    // other package's by `^build`, which reaches it through
+    // `@metrika/database#build`.
+    //
+    // `cache: false` because the output is outside the package, so turbo cannot
+    // declare it in `outputs` and therefore cannot restore it — a cached hit
+    // would report success with nothing on disk. It therefore runs once per
+    // turbo invocation, which is four times per `pnpm verify`; that is cheap
+    // (~0.3s) and is not the thing to optimise away by reintroducing a second
+    // writer.
+    //
+    // CONSEQUENCE: `pnpm --filter @metrika/database build` no longer generates
+    // the client on its own, because it bypasses this graph. Run `pnpm
+    // db:generate` first, or use the root `pnpm build`, which is what every
+    // documented path already does.
     "db:generate": { "cache": false, "passThroughEnv": ["DATABASE_ADMIN_URL"] },
     "build": {
       "dependsOn": ["^build", "db:generate"],
