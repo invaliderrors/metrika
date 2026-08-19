@@ -171,7 +171,15 @@ VALID_PAYLOADS: dict[str, object] = {
     "PrintJobId": VALID_UUID,
     "MaterialId": VALID_UUID,
     "PrinterProfileVersionId": VALID_UUID,
+    "OrganizationMemberId": VALID_UUID,
 }
+# The three tenancy enums that arrived with OrganizationMemberId need no row
+# here: a generated StrEnum is not a BaseModel subclass, so
+# `test_every_generated_model_has_a_sample` never asks for one, and
+# `test_every_generated_enum_round_trips_a_member_and_rejects_a_stranger` is
+# parametrized over whatever the module defines. The ID's probe and its twin are
+# derived
+# from the `endswith("Id")` comprehensions below, so they arrive too.
 
 # A payload that must be REJECTED by every pattern-carrying model, and its ASCII
 # TWIN, which must be accepted. The pair is the whole design: the probe differs

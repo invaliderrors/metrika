@@ -5,6 +5,7 @@ import type {
   ModelVersionId,
   OrderId,
   OrganizationId,
+  OrganizationMemberId,
   PrintJobId,
   PrinterProfileVersionId,
   ProjectId,
@@ -14,7 +15,7 @@ import type {
 } from '../src/index.js';
 
 /**
- * The complete 55-pair distinctness matrix, in 11 assertions.
+ * The complete 66-pair distinctness matrix, in 12 assertions.
  *
  * The previous version of this file asserted a declaration-order ring
  * (UserId≠OrganizationId, OrganizationId≠ProjectId, …). A ring catches an
@@ -24,10 +25,16 @@ import type {
  * `AssignableMember<U, T>` distributes over the union `U` and yields `true`
  * if ANY single member is assignable to `T`, `never` otherwise. Asserting the
  * result is `never` therefore fails on one collision anywhere in the matrix,
- * not just on a neighbouring one. Each of the 11 `NoCollision<K>` checks
- * compares one ID against the union of the other 10 in a single distributed
- * conditional; 11 checks × 10 others each covers all 55 unordered pairs, in
+ * not just on a neighbouring one. Each of the 12 `NoCollision<K>` checks
+ * compares one ID against the union of the other 11 in a single distributed
+ * conditional; 12 checks × 11 others each covers all 66 unordered pairs, in
  * both assignability directions.
+ *
+ * `OrganizationMemberId` joined in Plan 1A Task 2 and is asserted here for the
+ * reason the matrix exists: `brandedUuid('OrganizationId')` written where
+ * `brandedUuid('OrganizationMemberId')` was meant emits an IDENTICAL JSON
+ * Schema, so `pnpm contracts:emit`, the pydantic diff and every runtime test
+ * stay green. The brand is only observable in the type system.
  *
  * Mutation-tested against four cases — each edit made to src/ids.ts, `pnpm
  * --filter @metrika/contracts typecheck` and `test:unit` re-run to confirm
@@ -70,6 +77,7 @@ interface IdMap {
   PrintJobId: PrintJobId;
   MaterialId: MaterialId;
   PrinterProfileVersionId: PrinterProfileVersionId;
+  OrganizationMemberId: OrganizationMemberId;
 }
 
 type OtherIds<K extends keyof IdMap> = IdMap[Exclude<keyof IdMap, K>];
@@ -93,6 +101,7 @@ type _SliceJobIdIsUnique = Expect<NoCollision<'SliceJobId'>>;
 type _PrintJobIdIsUnique = Expect<NoCollision<'PrintJobId'>>;
 type _MaterialIdIsUnique = Expect<NoCollision<'MaterialId'>>;
 type _PrinterProfileVersionIdIsUnique = Expect<NoCollision<'PrinterProfileVersionId'>>;
+type _OrganizationMemberIdIsUnique = Expect<NoCollision<'OrganizationMemberId'>>;
 
 describe('branded IDs', () => {
   it('lets a ModelId be used wherever a string is expected', () => {

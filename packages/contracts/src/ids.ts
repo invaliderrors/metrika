@@ -12,6 +12,7 @@ export const SliceJobId = brandedUuid('SliceJobId');
 export const PrintJobId = brandedUuid('PrintJobId');
 export const MaterialId = brandedUuid('MaterialId');
 export const PrinterProfileVersionId = brandedUuid('PrinterProfileVersionId');
+export const OrganizationMemberId = brandedUuid('OrganizationMemberId');
 
 export type UserId = z.infer<typeof UserId>;
 export type OrganizationId = z.infer<typeof OrganizationId>;
@@ -24,3 +25,4 @@ export type SliceJobId = z.infer<typeof SliceJobId>;
 export type PrintJobId = z.infer<typeof PrintJobId>;
 export type MaterialId = z.infer<typeof MaterialId>;
 export type PrinterProfileVersionId = z.infer<typeof PrinterProfileVersionId>;
+export type OrganizationMemberId = z.infer<typeof OrganizationMemberId>;

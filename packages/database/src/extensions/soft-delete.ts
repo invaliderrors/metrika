@@ -12,8 +12,42 @@ import { HardDeleteForbiddenError } from '../errors.js';
  *
  * Phase 1 adds User, Organization, Project and Model. RlsProbe is here now so
  * the behaviour has a regression fixture from the first migration onward.
+ *
+ * `User` and `Organization` joined in Plan 1A Task 3, with the migration that
+ * created them. `OrganizationMember` deliberately did NOT: it has no
+ * `deletedAt` column, because it is not an Identity entity
+ * (`docs/DOMAIN_MODEL.md:13`), and naming it here would make every read of it
+ * inject a filter on a column that does not exist.
+ *
+ * ONE CONSEQUENCE OF THAT ABSENCE IS WORTH KNOWING BEFORE READING
+ * `REFUSED_OPERATIONS` BELOW: `delete`/`deleteMany` on `OrganizationMember` pass
+ * straight through this extension to Postgres, so the only thing bounding them is
+ * row-level security. That is why the migration carries a restrictive
+ * `FOR DELETE` policy on that table and on no other — this extension is the
+ * mitigation for the two models it names, and a table it does not name has to be
+ * bounded in the database. MEASURED before that policy existed: one `deleteMany`
+ * removed rows from three organizations at once. See ADR-0040 consequence 1.
+ *
+ * THIS SET IS HAND-MAINTAINED AND THE SCHEMA IS NOT, so the correspondence is
+ * asserted rather than trusted: `test/soft-delete-coverage.test.ts` reads
+ * Prisma's datamodel and fails if a model has `deletedAt` and is missing here,
+ * or is named here and has no `deletedAt`. Without it, a later model gains the
+ * column, nobody edits this string set, and the model is silently unfiltered
+ * AND hard-deletable — two defects from one omission, neither of which shows up
+ * as a type error.
+ *
+ * Membership here changes two behaviours, and only the first is obvious.
+ * `delete`/`deleteMany` start THROWING `HardDeleteForbiddenError` (see
+ * `REFUSED_OPERATIONS`, checked before any filtering), so a Task 4-6 cleanup or
+ * provisioning-rollback path that calls `.delete()` on `User` or `Organization`
+ * now fails. `update`/`updateMany`/`upsert` are NOT filtered, which is what
+ * makes restore expressible — see ADR-0040 for what that costs.
  */
-export const SOFT_DELETABLE_MODELS: ReadonlySet<string> = new Set(['RlsProbe']);
+export const SOFT_DELETABLE_MODELS: ReadonlySet<string> = new Set([
+  'RlsProbe',
+  'User',
+  'Organization',
+]);
 
 const FILTERED_OPERATIONS: ReadonlySet<string> = new Set([
   'findFirst',

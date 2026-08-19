@@ -3,7 +3,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as z from 'zod';
 import * as contracts from '../src/index.js';
-import { EMITTED, contractsJsonSchemaDocument, emitJsonSchemas } from '../src/json-schema.js';
+import {
+  EMITTED,
+  TS_ONLY,
+  contractsJsonSchemaDocument,
+  emitJsonSchemas,
+} from '../src/json-schema.js';
 
 describe('emitJsonSchemas', () => {
   const schemas = emitJsonSchemas();
@@ -22,6 +27,10 @@ describe('emitJsonSchemas', () => {
         'Money',
         'OrderId',
         'OrganizationId',
+        'OrganizationKind',
+        'OrganizationMemberId',
+        'OrganizationRole',
+        'PlatformRole',
         'PrintJobId',
         'PrinterProfileVersionId',
         'ProjectId',
@@ -108,8 +117,21 @@ describe('emitJsonSchemas', () => {
  * cannot be satisfied by editing one place: a new Zod export must appear in
  * `EMITTED` *and* in the test above, in the same commit, or one of the two
  * fails.
+ *
+ * SINCE ADR-0039 THE QUESTION IS "WHICH TABLE", NOT "IS IT IN THE TABLE".
+ * `EMITTED` and `TS_ONLY` partition the exported schemas: their union is exactly
+ * the exported set and their intersection is empty. Both halves are asserted,
+ * because the union alone is satisfied by a name appearing TWICE — and a schema
+ * in both tables leaves it ambiguous whether it crosses to Python, with
+ * `emitJsonSchemas()` answering "yes" regardless of what `TS_ONLY` says.
+ *
+ * `emitJsonSchemas()` is deliberately NOT taught about `TS_ONLY`: it walks
+ * `EMITTED` alone, which is what makes a `TS_ONLY` schema physically incapable of
+ * reaching the pydantic models rather than merely forbidden from it. What the
+ * union assertion adds is the other direction — a schema falling out of BOTH
+ * tables and reaching neither the Python boundary nor a reviewer's attention.
  */
-describe('the emitted set covers every Zod schema the package exports', () => {
+describe('the two declared tables partition every Zod schema the package exports', () => {
   function exportedSchemaNames(): string[] {
     return Object.entries(contracts)
       .filter(([, value]) => value instanceof z.ZodType)
@@ -125,11 +147,56 @@ describe('the emitted set covers every Zod schema the package exports', () => {
     expect(exportedSchemaNames().length).toBeGreaterThan(10);
   });
 
-  it('emits exactly the exported schemas — no more, no fewer', () => {
+  it('EMITTED and TS_ONLY together cover exactly the Zod schemas the package exports', () => {
+    const declared = [...Object.keys(EMITTED), ...Object.keys(TS_ONLY)].sort();
     expect(
-      Object.keys(emitJsonSchemas()).sort(),
-      'a Zod schema exported from packages/contracts is not reaching the Python side (or a name in EMITTED no longer exists)',
+      declared,
+      'a Zod schema exported from packages/contracts is in neither table (or a name in one of them no longer exists). Put it in EMITTED if the Python side needs it and it survives the allowlist below; put it in TS_ONLY if it is a wire type apps/workers has no use for. See ADR-0039.',
     ).toEqual(exportedSchemaNames());
+  });
+
+  // The two tables are a partition, not two overlapping opinions. A name in both would
+  // satisfy the assertion above while leaving it ambiguous whether the schema crosses to
+  // Python — and `emitJsonSchemas()` would answer "yes" regardless of what TS_ONLY says.
+  it('no schema is in both tables', () => {
+    expect(
+      Object.keys(EMITTED).filter((name) => name in TS_ONLY),
+      'EMITTED and TS_ONLY must be disjoint: a name in both crosses to Python while claiming not to. See ADR-0039.',
+    ).toEqual([]);
+  });
+
+  /**
+   * The third leg, and the two above cannot stand without it: BOTH of them
+   * compare NAMES, and a table is a name→schema map.
+   *
+   * MEASURED on this tree: swapping two values while keeping both keys —
+   * `{ OrganizationKind: PlatformRole, PlatformRole: OrganizationKind }` — left
+   * the suite passing 1537/1537 at 100% coverage, while `emitJsonSchemas()`
+   * emitted `OrganizationKind` carrying `PLATFORM_ADMIN … SUPPORT` and
+   * `PlatformRole` carrying `PERSONAL, TEAM`. Every other guard here is blind to
+   * it by construction: the union, the overlap and the hand-written list compare
+   * names, `declares a class for every emitted schema` regexes class NAMES, and
+   * `carries every emitted enum member` flattens the whole document into one set
+   * and asks whether each member appears SOMEWHERE in the Python source — so a
+   * member landing on the wrong class is invisible to it.
+   *
+   * The only thing that would have noticed is CI's re-emit diff, whose failure
+   * message says "run `pnpm contracts:emit` and commit the result" — which makes
+   * the diff clean and ships the swap with every gate green. That is the
+   * CI-only-gate shape the last block in this file exists to close, and
+   * `EMITTED`'s own docstring already claims the property ("by the name it is
+   * given"). This is the assertion behind the claim.
+   */
+  it('binds every declared name to the export of that name', () => {
+    const exported = new Map<string, unknown>(Object.entries(contracts));
+    const misbound = [...Object.entries(EMITTED), ...Object.entries(TS_ONLY)]
+      .filter(([name, schema]) => exported.get(name) !== schema)
+      .map(([name]) => name);
+
+    expect(
+      misbound,
+      'a name in EMITTED or TS_ONLY points at a different schema than the export of that name. The emitted `$defs` key comes from the TABLE key, so the generated pydantic class carries this name and validates some other schema. See ADR-0039.',
+    ).toEqual([]);
   });
 });
 
@@ -309,18 +376,26 @@ describe('every emitted schema is built only from constructs that survive emissi
     overwrite: '`.trim()` / `.toLowerCase()` / another value mutation',
   };
 
+  /** One node the walk reached: where it was, and the schema object that was there. */
+  interface Node {
+    readonly at: string;
+    readonly schema: z.ZodType;
+  }
+
   /**
    * Every construct in `schema` that cannot cross, and every node it visited on
-   * the way. The visited list is what keeps an empty offender list from being
-   * vacuous — a walk that reaches nothing reports nothing.
+   * the way. The node list is what keeps an empty offender list from being
+   * vacuous — a walk that reaches nothing reports nothing — and it carries the
+   * schema OBJECT beside the path, which is what lets the `TS_ONLY` assertion
+   * below ask about identity rather than settle for a count.
    */
   function walk(
     schema: z.ZodType,
     at: string,
-  ): { readonly offenders: readonly string[]; readonly visited: readonly string[] } {
+  ): { readonly offenders: readonly string[]; readonly nodes: readonly Node[] } {
     const definition = definitionOf(schema);
     const offenders: string[] = [];
-    const visited: string[] = [at];
+    const nodes: Node[] = [{ at, schema }];
 
     function offenceIn(kind: string, format: string | undefined): string | undefined {
       if (!ALLOWED_CHECKS.has(kind)) {
@@ -357,25 +432,28 @@ describe('every emitted schema is built only from constructs that survive emissi
     for (const [key, child] of Object.entries(definition.shape ?? {})) {
       const inner = walk(child, `${at}.${key}`);
       offenders.push(...inner.offenders);
-      visited.push(...inner.visited);
+      nodes.push(...inner.nodes);
     }
 
-    return { offenders, visited };
+    return { offenders, nodes };
   }
 
-  function walkEmitted(): { readonly offenders: readonly string[]; readonly visited: string[] } {
+  function walkEmitted(): {
+    readonly offenders: readonly string[];
+    readonly nodes: readonly Node[];
+  } {
     const offenders: string[] = [];
-    const visited: string[] = [];
+    const nodes: Node[] = [];
     for (const [name, schema] of Object.entries(EMITTED)) {
       const result = walk(schema, name);
       offenders.push(...result.offenders);
-      visited.push(...result.visited);
+      nodes.push(...result.nodes);
     }
-    return { offenders, visited };
+    return { offenders, nodes };
   }
 
   it('reaches every emitted schema and descends into their properties', () => {
-    const { visited } = walkEmitted();
+    const visited = walkEmitted().nodes.map(({ at }) => at);
 
     expect(visited).toContain('Money');
     expect(visited).toContain('Money.amountMinor');
@@ -385,7 +463,49 @@ describe('every emitted schema is built only from constructs that survive emissi
     // nested nodes in the package today. An exact count rather than a lower
     // bound, so that a schema growing a nested object nobody walked shows up
     // here rather than passing by not being looked at.
-    expect(visited.length).toBe(Object.keys(EMITTED).length + 3);
+    expect(
+      visited.length,
+      "`walk()` reached a different number of nodes than there are entries in EMITTED plus `Money`'s three properties, so an emitted schema grew or lost a nested shape. Do NOT just update the number: a nested schema that is not itself registered is INLINED into the pydantic models under a generated class name. See ADR-0039, and the TS_ONLY assertion below for the case this count cannot see.",
+    ).toBe(Object.keys(EMITTED).length + 3);
+  });
+
+  /**
+   * The direction ADR-0039 forbids, asserted directly rather than by arithmetic.
+   *
+   * A `TS_ONLY` schema may reference an `EMITTED` one; the reverse is the defect,
+   * because an unregistered schema nested inside a registered one is INLINED
+   * rather than `$ref`'d — which is how a second Python enum called `Currency` was
+   * once generated beside `CurrencyCode`. MEASURED: an `EMITTED` object with a
+   * `MembershipSummary` property emits that property as a full inline copy of its
+   * five fields, with no `$ref` and no `MembershipSummary` in `$defs`, and the
+   * allowlist walk reports ZERO offenders for it — `MembershipSummary` is built
+   * entirely from admitted constructs.
+   *
+   * The exact-count assertion above does catch the ADDED property (35 nodes where
+   * 28 were expected), and it is still a proxy on two counts. It says nothing
+   * about what the extra node IS, so its message invites exactly one repair —
+   * changing the number, after which the crossing is permanent and silent. And it
+   * is INVARIANT under substitution, which is the same crossing with no node
+   * added: MEASURED, moving `CurrencyCode` into `TS_ONLY` while `Money.currency`
+   * still references it leaves the count matching at 26, the union assertion
+   * passing and the overlap assertion passing.
+   *
+   * This asks the question the count was standing in for, and it cannot be
+   * repaired by editing a number.
+   */
+  it('reaches no TS_ONLY schema, in any position', () => {
+    const names = new Map<unknown, string>(
+      Object.entries(TS_ONLY).map(([name, schema]) => [schema, name]),
+    );
+    const crossings = walkEmitted().nodes.flatMap(({ at, schema }) => {
+      const name = names.get(schema);
+      return name === undefined ? [] : [`${at}: ${name}`];
+    });
+
+    expect(
+      crossings,
+      'an EMITTED schema reaches a TS_ONLY schema. An unregistered schema nested inside a registered one is INLINED, so this one crosses into the pydantic models anonymously while TS_ONLY claims it does not. Move it into EMITTED and let the allowlist walk judge it, or restructure the emitted schema. See ADR-0039.',
+    ).toEqual([]);
   });
 
   it('finds nothing unsurvivable in the tree as it stands', () => {
@@ -553,6 +673,29 @@ describe('the committed pydantic models still match these schemas', () => {
     );
 
     expect(missing, 'run `pnpm contracts:emit` and commit the result').toEqual([]);
+  });
+
+  // The other half, and ADR-0039 consequence 6 states it as a check to run by
+  // HAND. It is a fixture instead. The partition assertions and the allowlist
+  // walk both stop on the TypeScript side; this is the only place that asks the
+  // ARTEFACT whether the fork held.
+  //
+  // It stops being redundant the moment `TS_ONLY` holds a schema the allowlist
+  // would have admitted — a flat object of strings and enums, which the next API
+  // request schema plausibly is. Move that one into `EMITTED` by mistake and the
+  // walk, the union assertion and the overlap assertion are all green; the only
+  // complaint is the hand-written name list above, whose natural repair is to add
+  // the name and ship the schema to a package with no user for it.
+  it('declares no class for a TS_ONLY schema', () => {
+    const source = pythonSource();
+    const crossed = Object.keys(TS_ONLY).filter((name) =>
+      new RegExp(`^class ${name}\\b`, 'm').test(source),
+    );
+
+    expect(
+      crossed,
+      'a TS_ONLY schema has a generated pydantic class, so it reached the emitter after all and the fork is not real. See ADR-0039.',
+    ).toEqual([]);
   });
 
   it('carries every emitted pattern verbatim', () => {

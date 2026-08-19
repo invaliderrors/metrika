@@ -13,11 +13,41 @@
 -- container init, via docker-entrypoint-initdb.d, strictly before
 -- `prisma migrate deploy` ever runs, so `_prisma_migrations` does not exist
 -- yet when it executes — a REVOKE there would fail with
--- "relation \"_prisma_migrations\" does not exist". It has to run as a
--- migration: by the time the migrate engine applies ANY migration.sql
--- (including the very first one), it has already created
--- `_prisma_migrations` for its own bookkeeping, so the table is guaranteed to
--- exist here.
+-- "relation \"_prisma_migrations\" does not exist". So it has to run as a
+-- migration.
+--
+-- The TABLE is not guaranteed to exist here either, and an earlier version of
+-- this file asserted that it was: "by the time the migrate engine applies ANY
+-- migration.sql (including the very first one), it has already created
+-- `_prisma_migrations` for its own bookkeeping". That is true of
+-- `migrate deploy`, which applies migrations to the real target database, and
+-- FALSE of `migrate dev`, which first replays the whole committed history into
+-- a throwaway SHADOW database to compute drift. The shadow database has no
+-- `_prisma_migrations` at replay time — Prisma tracks its bookkeeping in the
+-- target, not in the shadow — so this statement raised 42P01 there and every
+-- `pnpm db:migrate` in the repository failed with P3006/P3018, blocking the
+-- authoring of any NEW migration. MEASURED on Prisma 7.9.1.
+--
+-- The reason the original guard did not catch it is worth keeping, because it
+-- is the general trap: a ROLE is a CLUSTER-wide object and a TABLE is a
+-- DATABASE-scoped one. The shadow database lives on the same server as the
+-- target, so `pg_roles` says `metrika_app` exists there — TRUE, correctly —
+-- and the EXECUTE fired against a database that had no such table. The guard
+-- tested cluster state to protect a database-scoped statement. MEASURED: in a
+-- freshly created, empty database on this same server, the `pg_roles` branch
+-- is true and `to_regclass` is NULL.
+--
+-- Hence BOTH predicates below. `to_regclass` and not `::regclass`: the cast
+-- RAISES 42P01 on a missing relation, which would reintroduce the same
+-- failure inside the guard meant to prevent it, whereas `to_regclass` returns
+-- NULL. It is spelled unqualified, exactly as the REVOKE spells it, so both
+-- resolve through the same `search_path` and the guard is testing precisely
+-- the object the statement will touch.
+--
+-- Skipping the REVOKE in the shadow database is correct and not merely
+-- tolerable: the shadow exists only so Migrate can diff the resulting SCHEMA,
+-- it is dropped immediately afterwards, and a grant is not part of that diff.
+-- Drift detection is unaffected.
 --
 -- The role is NOT guaranteed to exist, though, and this statement is not
 -- allowed to assume it does. `REVOKE ... FROM metrika_app` against a role
@@ -46,7 +76,8 @@
 -- an unconditional REVOKE without re-deriving that production invariant.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'metrika_app') THEN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'metrika_app')
+     AND to_regclass('"_prisma_migrations"') IS NOT NULL THEN
     EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE "_prisma_migrations" FROM metrika_app';
   END IF;
 END $$;

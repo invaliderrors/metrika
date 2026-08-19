@@ -1,3 +1,4 @@
+export * from './auth.js';
 export * from './brand.js';
 export * from './errors.js';
 export * from './hashing.js';
@@ -11,6 +12,7 @@ export * from './ids.js';
 // the index costs nothing; one that is re-exported costs whatever the bundler
 // fails to prove.
 export * from './money.js';
+export * from './organization.js';
 export * from './redaction.js';
 export * from './result.js';
 export * from './sentry-event.js';

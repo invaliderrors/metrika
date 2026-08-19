@@ -116,35 +116,94 @@ export const contractsBoundary = [
  * `$queryRawUnsafe` ban from the one package most exposed to it. Neither
  * failure produces an error; both produce a green build with a missing control.
  */
+const PERSISTENCE_MESSAGE =
+  'Prisma access goes through a persistence zone: apps/api/src/infrastructure/persistence/** ' +
+  'or apps/api/src/modules/*/infrastructure/** — see ADR-0041 (scopes ADR-0005)';
+
+/**
+ * The package bans, hoisted so the two config objects below cannot drift.
+ *
+ * They are repeated rather than merged because flat config REPLACES a rule's
+ * options wholesale when a later object names the same rule id and supplies
+ * options — it merges nothing. So the narrow exemption below has to carry
+ * everything it displaces, and the only way to guarantee that is for both to
+ * read from one constant. `FORBIDDEN_WEB_PACKAGES` is the same pattern, for the
+ * same reason, and `boundaries.js`' apps/web section explains the hazard at
+ * length: it has already happened once in this repository.
+ */
+const PRISMA_PACKAGE_PATHS = [
+  { name: '@prisma/client', message: PERSISTENCE_MESSAGE },
+  { name: '@metrika/database', message: PERSISTENCE_MESSAGE },
+];
+
+const PRISMA_PACKAGE_PATTERNS = [
+  { group: ['@prisma/client/*', '@metrika/database/*'], message: PERSISTENCE_MESSAGE },
+];
+
+/**
+ * `brandUnsafe` mints a branded id from a bare string, which dissolves the
+ * guarantee ADR-0018 exists for wherever it is reachable — so it is confined to
+ * the same zone as Prisma itself, and for the same reason. ADR-0018's own
+ * wording is "importable only from apps/api/src/infrastructure/persistence,
+ * enforced by an ESLint zone"; ADR-0041 widens that zone and records it.
+ *
+ * A pattern rather than a path because the specifier is relative and its depth
+ * varies with the importing file.
+ */
+const BRANDING_PATTERN = {
+  group: ['**/infrastructure/persistence/branding*', '**/persistence/branding*'],
+  message:
+    'brandUnsafe and newUuidV7 stay inside a persistence zone — see ADR-0041 (scopes ADR-0018)',
+};
+
 export const prismaImportBoundary = [
   {
     files: ['**/*.ts'],
-    ignores: ['src/infrastructure/persistence/**/*.ts'],
+    // ADR-0041 answer (b): the blueprint is the source of truth, and
+    // `docs/ARCHITECTURE.md:527-539` puts a module's repositories at
+    // `modules/<name>/infrastructure/`. The single-directory glob was written
+    // when there was one module; a repository at the documented location could
+    // not import `@metrika/database` at all.
+    //
+    // `*` matches ONE path segment, deliberately: `src/modules/users/
+    // infrastructure/**` is exempt and a stray `src/modules/users/application/
+    // infrastructure/**` is not. The fixture rows in
+    // `packages/eslint-config/test/rules.test.ts` pin both directions, through
+    // the persistence probe — `ignores` resolves relative to the CONSUMING
+    // config's location, so a flat fixture file can never assert anything about
+    // one.
+    ignores: ['src/infrastructure/persistence/**/*.ts', 'src/modules/*/infrastructure/**/*.ts'],
     languageOptions: { parser: tseslint.parser },
     rules: {
       'no-restricted-imports': [
         'error',
         {
-          paths: [
-            {
-              name: '@prisma/client',
-              message:
-                'Prisma access goes through apps/api/src/infrastructure/persistence — see ADR-0005',
-            },
-            {
-              name: '@metrika/database',
-              message:
-                'Prisma access goes through apps/api/src/infrastructure/persistence — see ADR-0005',
-            },
-          ],
-          patterns: [
-            {
-              group: ['@prisma/client/*', '@metrika/database/*'],
-              message:
-                'Prisma access goes through apps/api/src/infrastructure/persistence — see ADR-0005',
-            },
-          ],
+          paths: PRISMA_PACKAGE_PATHS,
+          patterns: [...PRISMA_PACKAGE_PATTERNS, BRANDING_PATTERN],
         },
+      ],
+    },
+  },
+  {
+    // The ONE file outside a persistence zone that may import `branding.js`:
+    // the test that proves `newUuidV7` emits a v7 and not a v4. `apps/api`'s
+    // lint script is `eslint .` and ignores only dist/, coverage/ and openapi/,
+    // so `test/**` is linted like source.
+    //
+    // IT CARRIES WHAT IT DISPLACES. This object names `no-restricted-imports`
+    // and supplies options, so it REPLACES the entry above for this file —
+    // listing only the branding exemption would silently drop the
+    // `@prisma/client` and `@metrika/database` bans here. Both come from the
+    // shared constants above, and the last row of the fixture table in
+    // `rules.test.ts` is the negative control proving the narrowing stayed
+    // narrow. `featureBoundary` and `serverActionBoundary` do exactly this to
+    // `webBoundary`; the hazard is documented in the apps/web section below.
+    files: ['test/branding.test.ts'],
+    languageOptions: { parser: tseslint.parser },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { paths: PRISMA_PACKAGE_PATHS, patterns: PRISMA_PACKAGE_PATTERNS },
       ],
     },
   },

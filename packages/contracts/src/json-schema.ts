@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MeResponse, MembershipSummary } from './auth.js';
 import { DomainErrorCode } from './errors.js';
 import {
   MaterialId,
@@ -6,6 +7,7 @@ import {
   ModelVersionId,
   OrderId,
   OrganizationId,
+  OrganizationMemberId,
   PrintJobId,
   PrinterProfileVersionId,
   ProjectId,
@@ -14,6 +16,7 @@ import {
   UserId,
 } from './ids.js';
 import { CurrencyCode, Money } from './money.js';
+import { OrganizationKind, OrganizationRole, PlatformRole } from './organization.js';
 import { RedactedFieldName } from './redaction.js';
 import { CubicMillimeters, Grams, Millimeters, Seconds, SquareMillimeters } from './units.js';
 
@@ -77,9 +80,10 @@ import { CubicMillimeters, Grams, Millimeters, Seconds, SquareMillimeters } from
  * Hand-written, and deliberately not derived from `index.ts`'s exports: a list
  * generated from the exports would agree with them by construction and assert
  * nothing. Adding a schema here is the review step that says a worker is allowed
- * to see it. `test/json-schema.test.ts` asserts this list is exactly the set of
- * Zod schemas the package exports, so the two cannot drift apart silently — the
- * check is on the pair, not on either half.
+ * to see it. `test/json-schema.test.ts` asserts that this list AND `TS_ONLY`
+ * below together are exactly the set of Zod schemas the package exports, and
+ * that no name is in both, so the three cannot drift apart silently — the check
+ * is on the partition, not on either half.
  *
  * `brandedUuid` is absent because it is a factory, not a schema; every ID it
  * builds is here.
@@ -106,6 +110,10 @@ export const EMITTED = {
   Money,
   OrderId,
   OrganizationId,
+  OrganizationKind,
+  OrganizationMemberId,
+  OrganizationRole,
+  PlatformRole,
   PrintJobId,
   PrinterProfileVersionId,
   ProjectId,
@@ -115,6 +123,55 @@ export const EMITTED = {
   SliceJobId,
   SquareMillimeters,
   UserId,
+} as const satisfies Record<string, z.ZodType>;
+
+/**
+ * Every schema the Python side is deliberately NOT given, by the name it is
+ * exported under.
+ *
+ * The second half of ADR-0039's partition. `EMITTED ∪ TS_ONLY` is exactly the
+ * package's exported `z.ZodType`s and `EMITTED ∩ TS_ONLY` is empty, both
+ * asserted in `test/json-schema.test.ts`; what a name in this table declares is
+ * "this is a wire type between `apps/api` and `apps/web`, and `apps/workers` has
+ * no use for it".
+ *
+ * NOTHING IN THIS FILE READS `TS_ONLY`, AND THAT IS THE FENCE. `emitJsonSchemas()`
+ * walks `Object.entries(EMITTED)`, `contractsJsonSchemaDocument()` walks
+ * `emitJsonSchemas()`, and `scripts/contracts-emit.mjs` hands that one object to
+ * `datamodel-codegen` as its `--input`. There is no other iteration in the
+ * chain, so a `TS_ONLY` schema is not FORBIDDEN from reaching the pydantic
+ * models — it is absent from the only loop that could carry it there. Teaching
+ * any of those three about this table is the single edit that removes the
+ * guarantee.
+ *
+ * A `TS_ONLY` schema may reference an `EMITTED` one; the reverse is a defect.
+ * An unregistered schema nested inside a REGISTERED one is INLINED rather than
+ * `$ref`'d — that is how a second Python enum called `Currency` was once
+ * generated beside `CurrencyCode` — so `MeResponse` referencing
+ * `OrganizationRole` is safe (the parent is never registered and never walked)
+ * while an `EMITTED` schema referencing `MembershipSummary` would cross
+ * anonymously. The guard is `reaches no TS_ONLY schema, in any position` in
+ * `test/json-schema.test.ts`: the allowlist walk already descends every emitted
+ * shape, so it asserts by IDENTITY that no node it reached is a value in this
+ * table. The exact-count assertion beside it is kept and is NOT that guard — a
+ * count is invariant under SUBSTITUTING one property's schema for another, which
+ * is the same crossing with no node added. MEASURED both ways: moving
+ * `CurrencyCode` into this table while `Money.currency` still references it
+ * leaves the count at 26 of 26 and fails only the identity assertion, naming
+ * `Money.currency`.
+ *
+ * The tables are asserted to be BOUND correctly as well as named correctly:
+ * `EMITTED.X` must be the export called `X`. The `$defs` key comes from the table
+ * key, so swapping two values while keeping both keys renames two generated
+ * Python classes onto each other's members — and every name-based check in the
+ * suite is blind to it by construction.
+ *
+ * EXPORTED for `test/json-schema.test.ts` only, and not through `index.ts`, for
+ * the same reason as `EMITTED` — see the note there.
+ */
+export const TS_ONLY = {
+  MeResponse,
+  MembershipSummary,
 } as const satisfies Record<string, z.ZodType>;
 
 /** Where a `$defs` entry lives in the assembled document, for `$ref` purposes. */
@@ -155,13 +212,16 @@ export function emitJsonSchemas(): Record<string, unknown> {
 /**
  * The single JSON Schema document `datamodel-codegen` consumes.
  *
- * One document with `$defs`, not nineteen files: the generator names a model
- * after the `$defs` key, so this is what makes the Python class called `Money`
- * rather than after whatever the input filename happened to be.
+ * One document with a `$defs` entry per contract, not one file each: the
+ * generator names a model after the `$defs` key, so this is what makes the Python
+ * class called `Money` rather than after whatever the input filename happened to
+ * be. (No count here on purpose. `EMITTED` is the count, it moves every time a
+ * contract is added, and a number restated in prose is a number that goes stale
+ * in prose.)
  *
  * Two keys are lifted out of every definition:
  *
- *   - `$schema`, stated once at the root instead of nineteen times.
+ *   - `$schema`, stated once at the root instead of once per definition.
  *   - `$id`, which Zod sets to the `uri` above (`#/$defs/Money`). A
  *     fragment-only `$id` has not been legal since JSON Schema 2019-09 — it is
  *     a `$ref` TARGET spelled as an identifier — and leaving it inside a
